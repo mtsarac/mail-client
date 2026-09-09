@@ -11,7 +11,7 @@ public static class HealthEndpoints
             .WithName("HealthCheck")
             .WithTags("Health");
 
-        app.MapGet("/health/db", async (AppDbContext db, CancellationToken cancellationToken) =>
+        app.MapGet("/health/db", async (AppDbContext db, ILoggerFactory loggers, CancellationToken cancellationToken) =>
         {
             try
             {
@@ -23,8 +23,9 @@ public static class HealthEndpoints
             }
             catch (Exception ex)
             {
+                loggers.CreateLogger("Health").LogWarning(ex, "Database health check failed.");
                 return Results.Json(
-                    new DbHealthResponse("Unhealthy", [new DbCheckStatus("postgres", "Unhealthy", ex.Message)]),
+                    new DbHealthResponse("Unhealthy", [new DbCheckStatus("postgres", "Unhealthy", "Database connection failed.")]),
                     statusCode: StatusCodes.Status503ServiceUnavailable);
             }
         })
