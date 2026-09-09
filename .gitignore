@@ -73,6 +73,9 @@ flutter_client/macos/Pods/
 # Local data-protection key ring
 **/data/protection-keys/
 
+# Local attachment storage (Task 5 writes here at runtime)
+data/attachments/
+
 # Private planning docs
 docs/
 backend/docs/

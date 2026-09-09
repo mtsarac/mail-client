@@ -32,9 +32,12 @@ The frontend team can place the Flutter project in `flutter_client/`. That path 
 
 - Target framework: `net10.0`
 - Database: PostgreSQL via EF Core
-- Domain entities: `Mail`, `Attachment`, `DeviceToken`, `SyncState`, `SentMail`
+- Domain entities: `User`, `MailAccount`, `MailFolder`, `Mail`, `Attachment`, `DeviceToken`, `SyncState`
+- Auth: JWT (register/login, admin user lifecycle), Swagger UI with Bearer support in Development
+- Mail accounts: per-user IMAP/SMTP configuration with encrypted credentials and connection testing
+- Folder discovery: IMAP special-use mapping, Inbox/Sent sync-enabled by default
 - API testing: Swagger UI in Development
-- Next backend work: EF migration, then IMAP sync service
+- Next backend work: Task 5 background IMAP sync service
 
 ## Backend Setup
 
