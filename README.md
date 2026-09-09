@@ -1,40 +1,61 @@
 # Mail Client
 
-Backend-first mail bridge project for a Flutter mail client.
+Mail Client is a Flutter + ASP.NET Core mail bridge for hosting-provider email accounts.
 
-The Flutter app talks only to this ASP.NET Core backend. The backend owns PostgreSQL persistence and will later handle IMAP/SMTP access, mail sync, attachments, authentication, and push notifications.
+The Flutter app does not connect to IMAP or SMTP directly. It calls this backend over HTTP. The backend stores mail metadata in PostgreSQL and will handle mail sync, sending, attachments, authentication, and push notifications.
 
-## Current Status
+## Architecture
 
-- ASP.NET Core `net10.0` backend solution under `backend/`
-- EF Core PostgreSQL persistence foundation
-- Core mail entities: `Mail`, `Attachment`, `DeviceToken`, `SyncState`, `SentMail`
-- Swagger UI enabled in Development for API testing
-- Frontend can be added under `flutter_client/`
+```text
+Flutter app
+  -> ASP.NET Core Web API
+      -> PostgreSQL
+      -> IMAP/SMTP hosting mailbox
+      -> Firebase Cloud Messaging
+```
 
-## Repository Layout
+Current backend structure:
 
 ```text
 backend/
   MailClient.slnx
   src/
-    MailClient.Api/
-    MailClient.Application/
-    MailClient.Domain/
-    MailClient.Infrastructure/
-flutter_client/
-  # Flutter app goes here when added by the frontend team
-docs/
-  superpowers/plans/
+    MailClient.Api/             # HTTP API, Swagger, configuration
+    MailClient.Application/     # application services and contracts
+    MailClient.Domain/          # mail domain entities
+    MailClient.Infrastructure/  # EF Core, PostgreSQL, future mail adapters
 ```
+
+The frontend team can place the Flutter project in `flutter_client/`. That path is already expected by the repository docs and `.gitignore`.
+
+## Current Status
+
+- Target framework: `net10.0`
+- Database: PostgreSQL via EF Core
+- Domain entities: `Mail`, `Attachment`, `DeviceToken`, `SyncState`, `SentMail`
+- API testing: Swagger UI in Development
+- Next backend work: EF migration, then IMAP sync service
 
 ## Backend Setup
 
-Build the backend:
+Prerequisites:
+
+- .NET 10 SDK
+- PostgreSQL running locally on port `5432`
+
+Build:
 
 ```bash
 dotnet build backend/MailClient.slnx
 ```
+
+Configure local database credentials:
+
+```bash
+cp backend/src/MailClient.Api/appsettings.Local.example.json backend/src/MailClient.Api/appsettings.Local.json
+```
+
+Edit `backend/src/MailClient.Api/appsettings.Local.json`. This file is ignored by git and overrides the committed Development config.
 
 Run the API:
 
@@ -42,27 +63,42 @@ Run the API:
 dotnet run --project backend/src/MailClient.Api/MailClient.Api.csproj
 ```
 
-Open Swagger at the URL shown by `dotnet run`, then visit `/swagger`.
+Open Swagger:
 
-## Local Configuration
-
-Development PostgreSQL is expected on `localhost:5432`.
-
-Use one of these local-only options for real credentials:
-
-```bash
-cp backend/src/MailClient.Api/appsettings.Local.example.json backend/src/MailClient.Api/appsettings.Local.json
+```text
+http://localhost:<shown-port>/swagger
 ```
 
-Then edit `appsettings.Local.json`. It is ignored by git and overrides `appsettings.Development.json`.
+## Database
 
-Or use an environment variable:
+The committed placeholder connection string points at:
+
+```text
+Host=localhost;Port=5432;Database=PostaKoprusu
+```
+
+After credentials are set, create and apply the first EF migration from the API project:
+
+```bash
+dotnet ef migrations add InitialSchema --project backend/src/MailClient.Infrastructure --startup-project backend/src/MailClient.Api
+dotnet ef database update --project backend/src/MailClient.Infrastructure --startup-project backend/src/MailClient.Api
+```
+
+If `dotnet ef` is missing:
+
+```bash
+dotnet tool install --global dotnet-ef
+```
+
+## Local Secrets
+
+Do not commit real credentials. Use either `appsettings.Local.json` or environment variables:
 
 ```bash
 export ConnectionStrings__Default="Host=localhost;Port=5432;Database=PostaKoprusu;Username=postgres;Password=change-me"
 ```
 
-Do not commit real credentials.
+See `.env.example` and `backend/src/MailClient.Api/appsettings.Local.example.json` for examples.
 
 ## License
 
