@@ -11,5 +11,6 @@ public class AttachmentConfiguration : IEntityTypeConfiguration<Attachment>
         builder.Property(attachment => attachment.FileName).HasMaxLength(255);
         builder.Property(attachment => attachment.ContentType).HasMaxLength(150);
         builder.Property(attachment => attachment.StoragePath).HasMaxLength(1_000);
+        builder.Property(attachment => attachment.ContentId).HasMaxLength(998);
     }
 }
