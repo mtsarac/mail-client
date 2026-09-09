@@ -5,4 +5,7 @@
     <Project Path="src/MailClient.Domain/MailClient.Domain.csproj" />
     <Project Path="src/MailClient.Infrastructure/MailClient.Infrastructure.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/MailClient.Infrastructure.Tests/MailClient.Infrastructure.Tests.csproj" />
+  </Folder>
 </Solution>
