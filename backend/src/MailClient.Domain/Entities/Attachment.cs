@@ -9,5 +9,6 @@ public class Attachment
     public long SizeBytes { get; set; }
     public string StoragePath { get; set; } = string.Empty;
     public bool IsInline { get; set; }
+    public string ContentId { get; set; } = string.Empty;
     public Mail? Mail { get; set; }
 }
