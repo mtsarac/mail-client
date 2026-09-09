@@ -1,6 +1,7 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
+using MailClient.Application.Auth;
 using MailClient.Domain.Entities;
 using MailClient.Domain.Enums;
 using MailClient.Infrastructure.Persistence;
@@ -15,13 +16,23 @@ public static class AuthEndpoints
 {
     public static IEndpointRouteBuilder MapAuthEndpoints(this IEndpointRouteBuilder app)
     {
-        var group = app.MapGroup("/api/auth").WithTags("Auth");
+        var group = app.MapGroup("/api/auth").WithTags("Auth").RequireRateLimiting("auth");
 
         group.MapPost("/register", async (RegisterRequest request, AppDbContext db, IPasswordHasher<User> passwords, IConfiguration config, CancellationToken ct) =>
         {
             var email = request.Email.Trim().ToLowerInvariant();
             if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(request.Password))
                 return Results.ValidationProblem(new Dictionary<string, string[]> { ["credentials"] = ["Email and password are required."] });
+
+            try
+            {
+                PasswordPolicy.ValidateEmail(email);
+                PasswordPolicy.ValidatePassword(request.Password);
+            }
+            catch (ArgumentException ex)
+            {
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["credentials"] = [ex.Message] });
+            }
 
             if (await db.Users.AnyAsync(user => user.Email == email, ct))
                 return Results.Conflict(new { error = "Email is already registered." });

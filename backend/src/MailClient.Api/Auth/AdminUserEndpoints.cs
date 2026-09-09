@@ -1,3 +1,4 @@
+using MailClient.Application.Auth;
 using MailClient.Domain.Entities;
 using MailClient.Domain.Enums;
 using MailClient.Infrastructure.Persistence;
@@ -15,6 +16,15 @@ public static class AdminUserEndpoints
         group.MapPost("/", async (CreateUserRequest request, AppDbContext db, IPasswordHasher<User> passwords, CancellationToken ct) =>
         {
             var email = request.Email.Trim().ToLowerInvariant();
+            try
+            {
+                PasswordPolicy.ValidateEmail(email);
+                PasswordPolicy.ValidatePassword(request.Password);
+            }
+            catch (ArgumentException ex)
+            {
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["user"] = [ex.Message] });
+            }
             if (await db.Users.AnyAsync(user => user.Email == email, ct)) return Results.Conflict();
             var user = new User { Email = email, DisplayName = request.DisplayName.Trim(), Status = request.Status, Role = request.Role, CreatedAt = DateTime.UtcNow };
             user.PasswordHash = passwords.HashPassword(user, request.Password);
@@ -27,6 +37,14 @@ public static class AdminUserEndpoints
         group.MapPatch("/{id:guid}/enable", (Guid id, AppDbContext db, CancellationToken ct) => SetStatus(id, UserStatus.Active, db, ct));
         group.MapPost("/{id:guid}/reset-password", async (Guid id, ResetPasswordRequest request, AppDbContext db, IPasswordHasher<User> passwords, CancellationToken ct) =>
         {
+            try
+            {
+                PasswordPolicy.ValidatePassword(request.Password);
+            }
+            catch (ArgumentException ex)
+            {
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["password"] = [ex.Message] });
+            }
             var user = await db.Users.FindAsync([id], ct);
             if (user is null) return Results.NotFound();
             user.PasswordHash = passwords.HashPassword(user, request.Password);
