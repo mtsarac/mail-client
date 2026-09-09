@@ -1,9 +1,7 @@
 using MailClient.Application.Interfaces;
-using MailClient.Domain.Enums;
 using MailClient.Infrastructure.Persistence;
 using MailKit;
 using MailKit.Net.Imap;
-using MailKit.Security;
 using Microsoft.EntityFrameworkCore;
 
 namespace MailClient.Infrastructure.Services;
@@ -50,7 +48,7 @@ public sealed class MailFolderService(AppDbContext db, ICredentialProtector cred
         {
             var password = credentials.Unprotect(account.EncryptedPassword);
             using var imap = new ImapClient();
-            await imap.ConnectAsync(account.ImapHost, account.ImapPort, ToSocketOptions(account.ImapSecurity), cancellationToken);
+            await imap.ConnectAsync(account.ImapHost, account.ImapPort, MailSecurityMapper.ToSocketOptions(account.ImapSecurity), cancellationToken);
             await imap.AuthenticateAsync(account.Username, password, cancellationToken);
 
             var discovered = new List<DiscoveredMailFolder>();
@@ -163,14 +161,6 @@ public sealed class MailFolderService(AppDbContext db, ICredentialProtector cred
         foreach (var child in children)
             await CollectAsync(child, discovered, seen, cancellationToken);
     }
-
-    private static SecureSocketOptions ToSocketOptions(MailSecurity security) => security switch
-    {
-        MailSecurity.None => SecureSocketOptions.None,
-        MailSecurity.SslOnConnect => SecureSocketOptions.SslOnConnect,
-        MailSecurity.StartTls => SecureSocketOptions.StartTls,
-        _ => throw new ArgumentOutOfRangeException(nameof(security))
-    };
 
     private static MailFolderResponse ToResponse(MailClient.Domain.Entities.MailFolder folder) => new(
         folder.Id, folder.Name, folder.FullName, folder.FolderType, folder.UidValidity, folder.IsSyncEnabled);

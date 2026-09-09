@@ -4,7 +4,6 @@ using MailClient.Domain.Enums;
 using MailClient.Infrastructure.Persistence;
 using MailKit.Net.Imap;
 using MailKit.Net.Smtp;
-using MailKit.Security;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 
@@ -100,12 +99,12 @@ public sealed class MailAccountService(
         {
             var password = credentials.Unprotect(account.EncryptedPassword);
             using var imap = new ImapClient();
-            await imap.ConnectAsync(account.ImapHost, account.ImapPort, ToSocketOptions(account.ImapSecurity), cancellationToken);
+            await imap.ConnectAsync(account.ImapHost, account.ImapPort, MailSecurityMapper.ToSocketOptions(account.ImapSecurity), cancellationToken);
             await imap.AuthenticateAsync(account.Username, password, cancellationToken);
             await imap.DisconnectAsync(true, cancellationToken);
 
             using var smtp = new SmtpClient();
-            await smtp.ConnectAsync(account.SmtpHost, account.SmtpPort, ToSocketOptions(account.SmtpSecurity), cancellationToken);
+            await smtp.ConnectAsync(account.SmtpHost, account.SmtpPort, MailSecurityMapper.ToSocketOptions(account.SmtpSecurity), cancellationToken);
             await smtp.AuthenticateAsync(account.Username, password, cancellationToken);
             await smtp.DisconnectAsync(true, cancellationToken);
             return new MailAccountTestResponse(true, "IMAP and SMTP connections succeeded.");
@@ -132,14 +131,6 @@ public sealed class MailAccountService(
         if (!environment.IsDevelopment() && !environment.IsEnvironment("Test") && (request.ImapSecurity == MailSecurity.None || request.SmtpSecurity == MailSecurity.None))
             throw new ArgumentException("MailSecurity.None is allowed only in Development or Test.");
     }
-
-    private static SecureSocketOptions ToSocketOptions(MailSecurity security) => security switch
-    {
-        MailSecurity.None => SecureSocketOptions.None,
-        MailSecurity.SslOnConnect => SecureSocketOptions.SslOnConnect,
-        MailSecurity.StartTls => SecureSocketOptions.StartTls,
-        _ => throw new ArgumentOutOfRangeException(nameof(security))
-    };
 
     private static MailAccountResponse ToResponse(MailAccount account) => new(
         account.Id, account.EmailAddress, account.DisplayName, account.Username,
