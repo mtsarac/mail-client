@@ -69,3 +69,6 @@ flutter_client/macos/Pods/
 # Local dev databases
 *.db
 *.db-journal
+
+# OpenCode / agent artifacts
+.omo/
