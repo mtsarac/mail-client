@@ -1,14 +1,6 @@
-using System.IdentityModel.Tokens.Jwt;
-using System.Security.Claims;
-using System.Text;
-using MailClient.Application.Auth;
-using MailClient.Domain.Entities;
+using MailClient.Application;
+using MailClient.Application.Interfaces;
 using MailClient.Domain.Enums;
-using MailClient.Infrastructure.Persistence;
-using Microsoft.AspNetCore.Identity;
-using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Options;
-using Microsoft.IdentityModel.Tokens;
 
 namespace MailClient.Api.Auth;
 
@@ -18,69 +10,48 @@ public static class AuthEndpoints
     {
         var group = app.MapGroup("/api/auth").WithTags("Auth").RequireRateLimiting("auth");
 
-        group.MapPost("/register", async (RegisterRequest request, AppDbContext db, IPasswordHasher<User> passwords, IConfiguration config, CancellationToken ct) =>
+        group.MapPost("/register", async (RegisterRequest? request, IAuthenticationService auth, IConfiguration config, CancellationToken ct) =>
         {
-            var email = request.Email.Trim().ToLowerInvariant();
-            if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(request.Password))
-                return Results.ValidationProblem(new Dictionary<string, string[]> { ["credentials"] = ["Email and password are required."] });
+            if (request is null)
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["request"] = ["Request body is required."] });
 
-            try
+            var result = await auth.RegisterAsync(
+                new RegisterUserRequest(request.Email, request.Password, request.DisplayName),
+                config["Registration:Mode"] ?? "ApprovalRequired",
+                ct);
+
+            return result.Outcome switch
             {
-                PasswordPolicy.ValidateEmail(email);
-                PasswordPolicy.ValidatePassword(request.Password);
-            }
-            catch (ArgumentException ex)
-            {
-                return Results.ValidationProblem(new Dictionary<string, string[]> { ["credentials"] = [ex.Message] });
-            }
-
-            if (await db.Users.AnyAsync(user => user.Email == email, ct))
-                return Results.Conflict(new { error = "Email is already registered." });
-
-            var mode = config["Registration:Mode"] ?? "ApprovalRequired";
-            if (string.Equals(mode, "Disabled", StringComparison.OrdinalIgnoreCase))
-                return Results.BadRequest(new { error = "Registration is disabled." });
-
-            var user = new User
-            {
-                Email = email,
-                DisplayName = request.DisplayName.Trim(),
-                Status = string.Equals(mode, "Open", StringComparison.OrdinalIgnoreCase) ? UserStatus.Active : UserStatus.Pending,
-                CreatedAt = DateTime.UtcNow
+                ServiceOutcome.Ok => Results.Created(
+                    $"/api/admin/users/{result.Value!.Id}",
+                    new { result.Value.Id, result.Value.Email, result.Value.DisplayName, result.Value.Status }),
+                ServiceOutcome.Conflict => Results.Conflict(new { error = "Email is already registered." }),
+                _ => Results.ValidationProblem(result.Errors.ToDictionary(entry => entry.Key, entry => entry.Value))
             };
-            user.PasswordHash = passwords.HashPassword(user, request.Password);
-            db.Users.Add(user);
-            await db.SaveChangesAsync(ct);
-            return Results.Created($"/api/admin/users/{user.Id}", new { user.Id, user.Email, user.DisplayName, user.Status });
         }).AllowAnonymous();
 
-        group.MapPost("/login", async (LoginRequest request, AppDbContext db, IPasswordHasher<User> passwords, IOptions<JwtOptions> jwtOptions, CancellationToken ct) =>
+        group.MapPost("/login", async (LoginRequest? request, IAuthenticationService auth, IJwtTokenIssuer tokens, CancellationToken ct) =>
         {
-            var email = request.Email.Trim().ToLowerInvariant();
-            var user = await db.Users.SingleOrDefaultAsync(candidate => candidate.Email == email, ct);
-            if (user is null || passwords.VerifyHashedPassword(user, user.PasswordHash, request.Password) == PasswordVerificationResult.Failed)
-                return Results.Unauthorized();
-            if (user.Status != UserStatus.Active)
-                return Results.Forbid();
+            if (request is null)
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["request"] = ["Request body is required."] });
 
-            user.LastLoginAt = DateTime.UtcNow;
-            await db.SaveChangesAsync(ct);
-            return Results.Ok(new LoginResponse(CreateToken(user, jwtOptions.Value), user.Id, user.Email, user.Role));
+            var result = await auth.LoginAsync(new LoginUserRequest(request.Email, request.Password), ct);
+            if (!result.Succeeded)
+            {
+                return result.Outcome switch
+                {
+                    ServiceOutcome.Forbidden => Results.Forbid(),
+                    ServiceOutcome.Invalid => Results.ValidationProblem(result.Errors.ToDictionary(entry => entry.Key, entry => entry.Value)),
+                    _ => Results.Unauthorized()
+                };
+            }
+
+            var user = result.Value!;
+            var token = tokens.IssueToken(user.Id, user.Role, user.TokenVersion);
+            return Results.Ok(new LoginResponse(token, user.Id, user.Email, user.Role));
         }).AllowAnonymous();
 
         return app;
-    }
-
-    private static string CreateToken(User user, JwtOptions options)
-    {
-        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(options.Key));
-        var token = new JwtSecurityToken(
-            options.Issuer,
-            options.Audience,
-            [new(JwtRegisteredClaimNames.Sub, user.Id.ToString()), new(ClaimTypes.Role, user.Role.ToString())],
-            expires: DateTime.UtcNow.AddHours(12),
-            signingCredentials: new SigningCredentials(key, SecurityAlgorithms.HmacSha256));
-        return new JwtSecurityTokenHandler().WriteToken(token);
     }
 }
 

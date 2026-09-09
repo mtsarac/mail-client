@@ -1,5 +1,4 @@
-using MailClient.Infrastructure.Persistence;
-using Microsoft.EntityFrameworkCore;
+using MailClient.Application.Interfaces;
 
 namespace MailClient.Api.Health;
 
@@ -11,23 +10,18 @@ public static class HealthEndpoints
             .WithName("HealthCheck")
             .WithTags("Health");
 
-        app.MapGet("/health/db", async (AppDbContext db, ILoggerFactory loggers, CancellationToken cancellationToken) =>
+        app.MapGet("/health/db", async (IHealthProbe probe, CancellationToken cancellationToken) =>
         {
-            try
+            if (await probe.CheckDatabaseAsync(cancellationToken))
             {
-                await db.Database.OpenConnectionAsync(cancellationToken);
-                await db.Database.CloseConnectionAsync();
                 return Results.Json(
                     new DbHealthResponse("Healthy", [new DbCheckStatus("postgres", "Healthy", null)]),
                     statusCode: StatusCodes.Status200OK);
             }
-            catch (Exception ex)
-            {
-                loggers.CreateLogger("Health").LogWarning(ex, "Database health check failed.");
-                return Results.Json(
-                    new DbHealthResponse("Unhealthy", [new DbCheckStatus("postgres", "Unhealthy", "Database connection failed.")]),
-                    statusCode: StatusCodes.Status503ServiceUnavailable);
-            }
+
+            return Results.Json(
+                new DbHealthResponse("Unhealthy", [new DbCheckStatus("postgres", "Unhealthy", "Database connection failed.")]),
+                statusCode: StatusCodes.Status503ServiceUnavailable);
         })
         .WithName("DbHealthCheck")
         .WithTags("Health")

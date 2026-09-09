@@ -1,9 +1,6 @@
-using MailClient.Application.Auth;
-using MailClient.Domain.Entities;
+using MailClient.Application;
+using MailClient.Application.Interfaces;
 using MailClient.Domain.Enums;
-using MailClient.Infrastructure.Persistence;
-using Microsoft.AspNetCore.Identity;
-using Microsoft.EntityFrameworkCore;
 
 namespace MailClient.Api.Auth;
 
@@ -12,58 +9,60 @@ public static class AdminUserEndpoints
     public static IEndpointRouteBuilder MapAdminUserEndpoints(this IEndpointRouteBuilder app)
     {
         var group = app.MapGroup("/api/admin/users").RequireAuthorization(policy => policy.RequireRole(UserRole.Admin.ToString())).WithTags("Admin Users");
-        group.MapGet("/", async (AppDbContext db, CancellationToken ct) => await db.Users.OrderBy(user => user.Email).Select(user => new UserResponse(user.Id, user.Email, user.DisplayName, user.Role, user.Status)).ToListAsync(ct));
-        group.MapPost("/", async (CreateUserRequest request, AppDbContext db, IPasswordHasher<User> passwords, CancellationToken ct) =>
+
+        group.MapGet("/", async (IUserAdministrationService users, CancellationToken ct) =>
+            Results.Ok(await users.ListAsync(ct)));
+
+        group.MapPost("/", async (CreateUserRequest? request, IUserAdministrationService users, CancellationToken ct) =>
         {
-            var email = request.Email.Trim().ToLowerInvariant();
-            try
+            if (request is null)
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["request"] = ["Request body is required."] });
+
+            var result = await users.CreateAsync(
+                new AdminCreateUserRequest(request.Email, request.Password, request.DisplayName, request.Role, request.Status), ct);
+
+            return result.Outcome switch
             {
-                PasswordPolicy.ValidateEmail(email);
-                PasswordPolicy.ValidatePassword(request.Password);
-            }
-            catch (ArgumentException ex)
-            {
-                return Results.ValidationProblem(new Dictionary<string, string[]> { ["user"] = [ex.Message] });
-            }
-            if (await db.Users.AnyAsync(user => user.Email == email, ct)) return Results.Conflict();
-            var user = new User { Email = email, DisplayName = request.DisplayName.Trim(), Status = request.Status, Role = request.Role, CreatedAt = DateTime.UtcNow };
-            user.PasswordHash = passwords.HashPassword(user, request.Password);
-            db.Users.Add(user);
-            await db.SaveChangesAsync(ct);
-            return Results.Created($"/api/admin/users/{user.Id}", new UserResponse(user.Id, user.Email, user.DisplayName, user.Role, user.Status));
+                ServiceOutcome.Ok => Results.Created($"/api/admin/users/{result.Value!.Id}", result.Value),
+                ServiceOutcome.Conflict => Results.Conflict(),
+                _ => Results.ValidationProblem(result.Errors.ToDictionary(entry => entry.Key, entry => entry.Value))
+            };
         });
-        group.MapPatch("/{id:guid}/approve", (Guid id, AppDbContext db, CancellationToken ct) => SetStatus(id, UserStatus.Active, db, ct));
-        group.MapPatch("/{id:guid}/disable", (Guid id, AppDbContext db, CancellationToken ct) => SetStatus(id, UserStatus.Disabled, db, ct));
-        group.MapPatch("/{id:guid}/enable", (Guid id, AppDbContext db, CancellationToken ct) => SetStatus(id, UserStatus.Active, db, ct));
-        group.MapPost("/{id:guid}/reset-password", async (Guid id, ResetPasswordRequest request, AppDbContext db, IPasswordHasher<User> passwords, CancellationToken ct) =>
+
+        group.MapPatch("/{id:guid}/approve", (Guid id, IUserAdministrationService users, CancellationToken ct) =>
+            SetStatus(id, UserStatus.Active, users, ct));
+        group.MapPatch("/{id:guid}/disable", (Guid id, IUserAdministrationService users, CancellationToken ct) =>
+            SetStatus(id, UserStatus.Disabled, users, ct));
+        group.MapPatch("/{id:guid}/enable", (Guid id, IUserAdministrationService users, CancellationToken ct) =>
+            SetStatus(id, UserStatus.Active, users, ct));
+
+        group.MapPost("/{id:guid}/reset-password", async (Guid id, ResetPasswordRequest? request, IUserAdministrationService users, CancellationToken ct) =>
         {
-            try
+            if (request is null)
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["request"] = ["Request body is required."] });
+
+            var result = await users.ResetPasswordAsync(id, new ResetUserPasswordRequest(request.Password), ct);
+            return result.Outcome switch
             {
-                PasswordPolicy.ValidatePassword(request.Password);
-            }
-            catch (ArgumentException ex)
-            {
-                return Results.ValidationProblem(new Dictionary<string, string[]> { ["password"] = [ex.Message] });
-            }
-            var user = await db.Users.FindAsync([id], ct);
-            if (user is null) return Results.NotFound();
-            user.PasswordHash = passwords.HashPassword(user, request.Password);
-            await db.SaveChangesAsync(ct);
-            return Results.NoContent();
+                ServiceOutcome.Ok => Results.NoContent(),
+                ServiceOutcome.NotFound => Results.NotFound(),
+                _ => Results.ValidationProblem(result.Errors.ToDictionary(entry => entry.Key, entry => entry.Value))
+            };
         });
         return app;
     }
 
-    private static async Task<IResult> SetStatus(Guid id, UserStatus status, AppDbContext db, CancellationToken ct)
+    private static async Task<IResult> SetStatus(Guid id, UserStatus status, IUserAdministrationService users, CancellationToken ct)
     {
-        var user = await db.Users.FindAsync([id], ct);
-        if (user is null) return Results.NotFound();
-        user.Status = status;
-        await db.SaveChangesAsync(ct);
-        return Results.NoContent();
+        var result = await users.SetStatusAsync(id, status, ct);
+        return result.Outcome switch
+        {
+            ServiceOutcome.Ok => Results.NoContent(),
+            ServiceOutcome.NotFound => Results.NotFound(),
+            _ => Results.ValidationProblem(result.Errors.ToDictionary(entry => entry.Key, entry => entry.Value))
+        };
     }
 }
 
 public sealed record CreateUserRequest(string Email, string Password, string DisplayName, UserRole Role, UserStatus Status);
 public sealed record ResetPasswordRequest(string Password);
-public sealed record UserResponse(Guid Id, string Email, string DisplayName, UserRole Role, UserStatus Status);
