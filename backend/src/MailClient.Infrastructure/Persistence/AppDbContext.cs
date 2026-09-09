@@ -10,10 +10,12 @@ public class AppDbContext : DbContext
     }
 
     public DbSet<Mail> Mails => Set<Mail>();
+    public DbSet<User> Users => Set<User>();
+    public DbSet<MailAccount> MailAccounts => Set<MailAccount>();
+    public DbSet<MailFolder> MailFolders => Set<MailFolder>();
     public DbSet<Attachment> Attachments => Set<Attachment>();
     public DbSet<DeviceToken> DeviceTokens => Set<DeviceToken>();
     public DbSet<SyncState> SyncStates => Set<SyncState>();
-    public DbSet<SentMail> SentMails => Set<SentMail>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
