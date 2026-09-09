@@ -70,6 +70,9 @@ flutter_client/macos/Pods/
 *.db
 *.db-journal
 
+# Local data-protection key ring
+**/data/protection-keys/
+
 # Private planning docs
 docs/
 backend/docs/
