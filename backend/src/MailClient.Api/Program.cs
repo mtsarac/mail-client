@@ -1,11 +1,16 @@
 using MailClient.Api.Health;
 using MailClient.Api.Auth;
+using MailClient.Api.Accounts;
+using MailClient.Application.Interfaces;
 using MailClient.Infrastructure.Persistence;
+using MailClient.Infrastructure.Security;
+using MailClient.Infrastructure.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
+using Microsoft.AspNetCore.DataProtection;
 
 var builder = WebApplication.CreateBuilder(args);
 if (builder.Environment.IsDevelopment())
@@ -18,6 +23,11 @@ builder.Services.AddOpenApi();
 builder.Services.AddSwaggerGen();
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("Default")));
+var keyPath = builder.Configuration["DataProtection:KeyPath"]
+    ?? Path.Combine(builder.Environment.ContentRootPath, "data", "protection-keys");
+builder.Services.AddDataProtection().PersistKeysToFileSystem(new DirectoryInfo(keyPath));
+builder.Services.AddScoped<ICredentialProtector, DataProtectionCredentialProtector>();
+builder.Services.AddScoped<IMailAccountService, MailAccountService>();
 builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection("Jwt"));
 builder.Services.AddScoped<IPasswordHasher<MailClient.Domain.Entities.User>, PasswordHasher<MailClient.Domain.Entities.User>>();
 var jwt = builder.Configuration.GetSection("Jwt").Get<JwtOptions>() ?? new JwtOptions();
@@ -51,5 +61,6 @@ app.UseAuthorization();
 app.MapHealthEndpoints();
 app.MapAuthEndpoints();
 app.MapAdminUserEndpoints();
+app.MapMailAccountEndpoints();
 
 app.Run();
