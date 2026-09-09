@@ -1,4 +1,5 @@
 using MailClient.Application.Interfaces;
+using MailClient.Application.Network;
 using MailClient.Domain.Enums;
 using MailClient.Domain.Entities;
 using MailClient.Infrastructure.Persistence;
@@ -7,6 +8,7 @@ using MailClient.Infrastructure.Services;
 using MailKit;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace MailClient.Infrastructure.Tests.Services;
 
@@ -53,7 +55,7 @@ public class MailFolderDiscoveryTests
         });
         await db.SaveChangesAsync();
 
-        var result = await new MailFolderService(db, CreateProtector()).ListAsync(Guid.NewGuid(), account.Id, CancellationToken.None);
+        var result = await CreateService(db).ListAsync(Guid.NewGuid(), account.Id, CancellationToken.None);
 
         Assert.Null(result);
     }
@@ -77,7 +79,7 @@ public class MailFolderDiscoveryTests
         db.AddRange(account, folder);
         await db.SaveChangesAsync();
 
-        var result = await new MailFolderService(db, CreateProtector()).SetSyncEnabledAsync(userId, account.Id, folder.Id, true, CancellationToken.None);
+        var result = await CreateService(db).SetSyncEnabledAsync(userId, account.Id, folder.Id, true, CancellationToken.None);
 
         Assert.NotNull(result);
         Assert.True(result.IsSyncEnabled);
@@ -93,12 +95,12 @@ public class MailFolderDiscoveryTests
         var account = new MailAccount { Id = Guid.NewGuid(), UserId = Guid.NewGuid() };
         db.MailAccounts.Add(account);
         await db.SaveChangesAsync();
-        var service = new MailFolderService(db, CreateProtector());
+        var service = CreateService(db);
 
         await service.UpsertAsync(account.Id,
         [
-            new DiscoveredMailFolder("INBOX", "INBOX", FolderAttributes.Inbox, 100),
-            new DiscoveredMailFolder("Archive", "Archive", FolderAttributes.Archive, 7),
+            new DiscoveredMailFolder("INBOX", "INBOX", MailFolderType.Inbox, 100, true),
+            new DiscoveredMailFolder("Archive", "Archive", MailFolderType.Archive, 7, false),
         ], CancellationToken.None);
 
         var folders = await db.MailFolders.OrderBy(folder => folder.FullName).ToListAsync();
@@ -111,8 +113,8 @@ public class MailFolderDiscoveryTests
 
         await service.UpsertAsync(account.Id,
         [
-            new DiscoveredMailFolder("INBOX", "INBOX", FolderAttributes.Inbox, 101),
-            new DiscoveredMailFolder("Archive", "Archive", FolderAttributes.Archive, 7),
+            new DiscoveredMailFolder("INBOX", "INBOX", MailFolderType.Inbox, 101, true),
+            new DiscoveredMailFolder("Archive", "Archive", MailFolderType.Archive, 7, false),
         ], CancellationToken.None);
 
         folders = await db.MailFolders.OrderBy(folder => folder.FullName).ToListAsync();
@@ -121,6 +123,43 @@ public class MailFolderDiscoveryTests
         Assert.True(folders.Single(folder => folder.FullName == "Archive").IsSyncEnabled);
     }
 
+    [Fact]
+    public async Task RefreshAsync_MapsExplorerFailureToResponse()
+    {
+        await using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString())
+            .Options);
+        var userId = Guid.NewGuid();
+        var protector = CreateProtector();
+        var account = new MailAccount
+        {
+            Id = Guid.NewGuid(),
+            UserId = userId,
+            EncryptedPassword = protector.Protect("secret")
+        };
+        db.MailAccounts.Add(account);
+        await db.SaveChangesAsync();
+        var explorer = new FailingFolderExplorer();
+        var service = new MailFolderService(db, protector, explorer, NullLogger<MailFolderService>.Instance);
+
+        var result = await service.RefreshAsync(userId, account.Id, CancellationToken.None);
+
+        Assert.NotNull(result);
+        Assert.False(result.Succeeded);
+        Assert.Empty(result.Folders);
+    }
+
+    private static MailFolderService CreateService(AppDbContext db) => new(
+        db, CreateProtector(), new FailingFolderExplorer(), NullLogger<MailFolderService>.Instance);
+
     private static ICredentialProtector CreateProtector() => new DataProtectionCredentialProtector(
         DataProtectionProvider.Create(new DirectoryInfo(Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString()))));
+
+    private sealed class FailingFolderExplorer : IMailFolderExplorer
+    {
+        public Task<IReadOnlyList<DiscoveredMailFolder>> ExploreAsync(
+            MailServerEndpoint endpoint, string username, string password, CancellationToken cancellationToken) =>
+            Task.FromException<IReadOnlyList<DiscoveredMailFolder>>(
+                new MailConnectionException(MailConnectionFailure.Network, "Could not reach the mail server."));
+    }
 }
