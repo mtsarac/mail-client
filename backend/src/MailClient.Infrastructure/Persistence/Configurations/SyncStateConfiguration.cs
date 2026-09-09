@@ -8,7 +8,10 @@ public class SyncStateConfiguration : IEntityTypeConfiguration<SyncState>
 {
     public void Configure(EntityTypeBuilder<SyncState> builder)
     {
-        builder.HasIndex(syncState => syncState.MailboxId).IsUnique();
-        builder.Property(syncState => syncState.MailboxId).HasMaxLength(100);
+        builder.HasIndex(syncState => syncState.MailFolderId).IsUnique();
+        builder.HasOne(syncState => syncState.MailFolder)
+            .WithOne(folder => folder.SyncState)
+            .HasForeignKey<SyncState>(syncState => syncState.MailFolderId)
+            .OnDelete(DeleteBehavior.Cascade);
     }
 }

@@ -10,8 +10,12 @@ public class DeviceTokenConfiguration : IEntityTypeConfiguration<DeviceToken>
     {
         builder.HasIndex(deviceToken => deviceToken.Token).IsUnique();
 
-        builder.Property(deviceToken => deviceToken.UserId).HasMaxLength(100);
         builder.Property(deviceToken => deviceToken.Token).HasMaxLength(500);
         builder.Property(deviceToken => deviceToken.Platform).HasMaxLength(30);
+
+        builder.HasOne(deviceToken => deviceToken.User)
+            .WithMany(user => user.DeviceTokens)
+            .HasForeignKey(deviceToken => deviceToken.UserId)
+            .OnDelete(DeleteBehavior.Cascade);
     }
 }
