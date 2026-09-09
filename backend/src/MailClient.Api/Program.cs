@@ -11,6 +11,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.OpenApi;
 
 var builder = WebApplication.CreateBuilder(args);
 if (builder.Environment.IsDevelopment())
@@ -20,7 +21,20 @@ if (builder.Environment.IsDevelopment())
 }
 
 builder.Services.AddOpenApi();
-builder.Services.AddSwaggerGen();
+builder.Services.AddSwaggerGen(options =>
+{
+    options.AddSecurityDefinition("bearer", new OpenApiSecurityScheme
+    {
+        Type = SecuritySchemeType.Http,
+        Scheme = "bearer",
+        BearerFormat = "JWT",
+        Description = "Enter the JWT access token. Example: 'Bearer {token}'"
+    });
+    options.AddSecurityRequirement(document => new OpenApiSecurityRequirement
+    {
+        [new OpenApiSecuritySchemeReference("bearer", document)] = []
+    });
+});
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("Default")));
 var keyPath = builder.Configuration["DataProtection:KeyPath"]
