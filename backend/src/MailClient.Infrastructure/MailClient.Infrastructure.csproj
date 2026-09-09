@@ -1,6 +1,8 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.0" />
+
     <ProjectReference Include="..\MailClient.Application\MailClient.Application.csproj" />
     <ProjectReference Include="..\MailClient.Domain\MailClient.Domain.csproj" />
   </ItemGroup>
