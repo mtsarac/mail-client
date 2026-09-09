@@ -48,10 +48,31 @@ public static class MailAccountEndpoints
         group.MapDelete("/{id:guid}", async (Guid id, ClaimsPrincipal user, IMailAccountService service, CancellationToken ct) =>
             await service.DeleteAsync(GetUserId(user), id, ct) ? Results.NoContent() : Results.NotFound());
 
-        group.MapPost("/{id:guid}/test", async (Guid id, ClaimsPrincipal user, IMailAccountService service, CancellationToken ct) =>
+        group.MapPost("/{id:guid}/test", async (Guid id, ClaimsPrincipal user, IMailAccountService service, IMailFolderService folders, CancellationToken ct) =>
         {
             var result = await service.TestAsync(GetUserId(user), id, ct);
+            if (result is null) return Results.NotFound();
+            if (result.Succeeded)
+                await folders.RefreshAsync(GetUserId(user), id, ct);
+            return Results.Ok(result);
+        });
+
+        group.MapGet("/{id:guid}/folders", async (Guid id, ClaimsPrincipal user, IMailFolderService service, CancellationToken ct) =>
+        {
+            var folders = await service.ListAsync(GetUserId(user), id, ct);
+            return folders is null ? Results.NotFound() : Results.Ok(folders);
+        });
+
+        group.MapPost("/{id:guid}/folders/refresh", async (Guid id, ClaimsPrincipal user, IMailFolderService service, CancellationToken ct) =>
+        {
+            var result = await service.RefreshAsync(GetUserId(user), id, ct);
             return result is null ? Results.NotFound() : Results.Ok(result);
+        });
+
+        group.MapPatch("/{id:guid}/folders/{folderId:guid}/sync", async (Guid id, Guid folderId, MailFolderSyncRequest request, ClaimsPrincipal user, IMailFolderService service, CancellationToken ct) =>
+        {
+            var folder = await service.SetSyncEnabledAsync(GetUserId(user), id, folderId, request.IsSyncEnabled, ct);
+            return folder is null ? Results.NotFound() : Results.Ok(folder);
         });
 
         return app;
@@ -62,4 +83,6 @@ public static class MailAccountEndpoints
         var value = user.FindFirstValue(ClaimTypes.NameIdentifier) ?? user.FindFirstValue(JwtRegisteredClaimNames.Sub);
         return Guid.TryParse(value, out var userId) ? userId : throw new UnauthorizedAccessException();
     }
+
+    public sealed record MailFolderSyncRequest(bool IsSyncEnabled);
 }

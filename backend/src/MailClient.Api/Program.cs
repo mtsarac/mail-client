@@ -28,6 +28,7 @@ var keyPath = builder.Configuration["DataProtection:KeyPath"]
 builder.Services.AddDataProtection().PersistKeysToFileSystem(new DirectoryInfo(keyPath));
 builder.Services.AddScoped<ICredentialProtector, DataProtectionCredentialProtector>();
 builder.Services.AddScoped<IMailAccountService, MailAccountService>();
+builder.Services.AddScoped<IMailFolderService, MailFolderService>();
 builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection("Jwt"));
 builder.Services.AddScoped<IPasswordHasher<MailClient.Domain.Entities.User>, PasswordHasher<MailClient.Domain.Entities.User>>();
 var jwt = builder.Configuration.GetSection("Jwt").Get<JwtOptions>() ?? new JwtOptions();
