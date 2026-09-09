@@ -48,7 +48,21 @@ Open Swagger at the URL shown by `dotnet run`, then visit `/swagger`.
 
 Development PostgreSQL is expected on `localhost:5432`.
 
-Do not commit real credentials. Keep secrets in user secrets, environment variables, or a local-only config file.
+Use one of these local-only options for real credentials:
+
+```bash
+cp backend/src/MailClient.Api/appsettings.Local.example.json backend/src/MailClient.Api/appsettings.Local.json
+```
+
+Then edit `appsettings.Local.json`. It is ignored by git and overrides `appsettings.Development.json`.
+
+Or use an environment variable:
+
+```bash
+export ConnectionStrings__Default="Host=localhost;Port=5432;Database=PostaKoprusu;Username=postgres;Password=change-me"
+```
+
+Do not commit real credentials.
 
 ## License
 
