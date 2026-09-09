@@ -70,5 +70,8 @@ flutter_client/macos/Pods/
 *.db
 *.db-journal
 
+# Private planning docs
+docs/
+
 # OpenCode / agent artifacts
 .omo/
