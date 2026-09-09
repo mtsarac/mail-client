@@ -1,14 +1,16 @@
 using MailClient.Application.Interfaces;
+using MailClient.Application.Network;
 using MailClient.Infrastructure.Persistence;
-using MailKit;
-using MailKit.Net.Imap;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace MailClient.Infrastructure.Services;
 
-public sealed record DiscoveredMailFolder(string Name, string FullName, FolderAttributes Attributes, uint UidValidity);
-
-public sealed class MailFolderService(AppDbContext db, ICredentialProtector credentials) : IMailFolderService
+public sealed class MailFolderService(
+    AppDbContext db,
+    ICredentialProtector credentials,
+    IMailFolderExplorer explorer,
+    ILogger<MailFolderService> logger) : IMailFolderService
 {
     public async Task<IReadOnlyList<MailFolderResponse>?> ListAsync(Guid userId, Guid accountId, CancellationToken cancellationToken)
     {
@@ -44,41 +46,44 @@ public sealed class MailFolderService(AppDbContext db, ICredentialProtector cred
         var account = await db.MailAccounts.SingleOrDefaultAsync(item => item.Id == accountId && item.UserId == userId, cancellationToken);
         if (account is null) return null;
 
+        IReadOnlyList<DiscoveredMailFolder> discovered;
         try
         {
             var password = credentials.Unprotect(account.EncryptedPassword);
-            using var imap = new ImapClient();
-            await imap.ConnectAsync(account.ImapHost, account.ImapPort, MailSecurityMapper.ToSocketOptions(account.ImapSecurity), cancellationToken);
-            await imap.AuthenticateAsync(account.Username, password, cancellationToken);
+            discovered = await explorer.ExploreAsync(
+                new MailServerEndpoint(account.ImapHost, account.ImapPort, account.ImapSecurity),
+                account.Username, password, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (MailConnectionException ex)
+        {
+            logger.LogWarning(ex,
+                "Mail folder discovery failed ({Failure}) for account {AccountId} of user {UserId}.",
+                ex.Failure, accountId, userId);
+            return new MailFolderRefreshResponse(false, ex.Message, []);
+        }
 
-            var discovered = new List<DiscoveredMailFolder>();
-            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            await CollectAsync(imap.Inbox, discovered, seen, cancellationToken);
-
-            foreach (var ns in imap.PersonalNamespaces)
-            {
-                var folders = await imap.GetFoldersAsync(ns, false, cancellationToken);
-                foreach (var folder in folders)
-                    await CollectAsync(folder, discovered, seen, cancellationToken);
-            }
-
-            if (discovered.Count == 0)
-            {
-                foreach (var folder in await imap.Inbox.GetSubfoldersAsync(false, cancellationToken))
-                    await CollectAsync(folder, discovered, seen, cancellationToken);
-            }
-
+        try
+        {
             var foldersResponse = await UpsertAsync(accountId, discovered, cancellationToken);
-            await imap.DisconnectAsync(true, cancellationToken);
+            logger.LogInformation(
+                "Mail folder discovery stored {Count} folders for account {AccountId} of user {UserId}.",
+                foldersResponse.Count, accountId, userId);
             return new MailFolderRefreshResponse(true, "Folder discovery succeeded.", foldersResponse);
         }
         catch (OperationCanceledException)
         {
             throw;
         }
-        catch (Exception)
+        catch (Exception ex) when (ex is DbUpdateException or InvalidOperationException)
         {
-            return new MailFolderRefreshResponse(false, "IMAP folder discovery failed.", []);
+            logger.LogError(ex,
+                "Failed to store discovered folders for account {AccountId} of user {UserId}.",
+                accountId, userId);
+            return new MailFolderRefreshResponse(false, "Failed to store discovered folders.", []);
         }
     }
 
@@ -89,7 +94,6 @@ public sealed class MailFolderService(AppDbContext db, ICredentialProtector cred
     {
         foreach (var item in discovered)
         {
-            var classification = MailFolderDiscovery.Classify(item.Attributes, item.FullName);
             var existing = await db.MailFolders.SingleOrDefaultAsync(
                 folder => folder.MailAccountId == accountId && folder.FullName == item.FullName, cancellationToken);
             if (existing is null)
@@ -100,15 +104,15 @@ public sealed class MailFolderService(AppDbContext db, ICredentialProtector cred
                     MailAccountId = accountId,
                     Name = item.Name,
                     FullName = item.FullName,
-                    FolderType = classification.FolderType,
+                    FolderType = item.FolderType,
                     UidValidity = item.UidValidity,
-                    IsSyncEnabled = classification.IsSyncEnabled
+                    IsSyncEnabled = item.IsSyncEnabled
                 });
             }
             else
             {
                 existing.Name = item.Name;
-                existing.FolderType = classification.FolderType;
+                existing.FolderType = item.FolderType;
                 existing.UidValidity = item.UidValidity;
             }
         }
@@ -120,46 +124,6 @@ public sealed class MailFolderService(AppDbContext db, ICredentialProtector cred
             .Select(folder => new MailFolderResponse(
                 folder.Id, folder.Name, folder.FullName, folder.FolderType, folder.UidValidity, folder.IsSyncEnabled))
             .ToListAsync(cancellationToken);
-    }
-
-    private static async Task CollectAsync(
-        IMailFolder folder,
-        List<DiscoveredMailFolder> discovered,
-        HashSet<string> seen,
-        CancellationToken cancellationToken)
-    {
-        if (seen.Add(folder.FullName))
-        {
-            uint uidValidity = 0;
-            if (!folder.Attributes.HasFlag(FolderAttributes.NoSelect))
-            {
-                try
-                {
-                    await folder.OpenAsync(FolderAccess.ReadOnly, cancellationToken);
-                    uidValidity = folder.UidValidity;
-                    await folder.CloseAsync(false, cancellationToken);
-                }
-                catch (Exception)
-                {
-                    uidValidity = folder.UidValidity;
-                }
-            }
-
-            discovered.Add(new DiscoveredMailFolder(folder.Name, folder.FullName, folder.Attributes, uidValidity));
-        }
-
-        IList<IMailFolder> children;
-        try
-        {
-            children = await folder.GetSubfoldersAsync(false, cancellationToken);
-        }
-        catch (Exception)
-        {
-            return;
-        }
-
-        foreach (var child in children)
-            await CollectAsync(child, discovered, seen, cancellationToken);
     }
 
     private static MailFolderResponse ToResponse(MailClient.Domain.Entities.MailFolder folder) => new(

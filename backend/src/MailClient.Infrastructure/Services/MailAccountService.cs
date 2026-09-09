@@ -1,18 +1,22 @@
 using MailClient.Application.Interfaces;
+using MailClient.Application.Network;
+using MailClient.Application.Validation;
 using MailClient.Domain.Entities;
 using MailClient.Domain.Enums;
 using MailClient.Infrastructure.Persistence;
-using MailKit.Net.Imap;
-using MailKit.Net.Smtp;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 
 namespace MailClient.Infrastructure.Services;
 
 public sealed class MailAccountService(
     AppDbContext db,
     ICredentialProtector credentials,
-    IHostEnvironment environment) : IMailAccountService
+    IHostEnvironment environment,
+    IMailConnectivityTester tester,
+    IOutboundHostValidator hosts,
+    ILogger<MailAccountService> logger) : IMailAccountService
 {
     public async Task<IReadOnlyList<MailAccountResponse>> ListAsync(Guid userId, CancellationToken cancellationToken)
     {
@@ -35,7 +39,7 @@ public sealed class MailAccountService(
 
     public async Task<MailAccountResponse> CreateAsync(Guid userId, MailAccountRequest request, CancellationToken cancellationToken)
     {
-        Validate(request);
+        Validate(request, passwordRequired: true);
         var now = DateTime.UtcNow;
         var account = new MailAccount
         {
@@ -56,10 +60,11 @@ public sealed class MailAccountService(
         };
         db.MailAccounts.Add(account);
         await db.SaveChangesAsync(cancellationToken);
+        logger.LogInformation("User {UserId} created mail account {AccountId}.", userId, account.Id);
         return ToResponse(account);
     }
 
-    public async Task<MailAccountResponse?> UpdateAsync(Guid userId, Guid accountId, MailAccountRequest request, CancellationToken cancellationToken)
+    public async Task<MailAccountResponse?> UpdateAsync(Guid userId, Guid accountId, UpdateMailAccountRequest request, CancellationToken cancellationToken)
     {
         Validate(request);
         var account = await FindOwnedAsync(userId, accountId, cancellationToken);
@@ -68,7 +73,8 @@ public sealed class MailAccountService(
         account.EmailAddress = request.EmailAddress.Trim().ToLowerInvariant();
         account.DisplayName = request.DisplayName.Trim();
         account.Username = request.Username.Trim();
-        account.EncryptedPassword = credentials.Protect(request.Password);
+        if (request.Password is not null)
+            account.EncryptedPassword = credentials.Protect(request.Password);
         account.ImapHost = request.ImapHost.Trim();
         account.ImapPort = request.ImapPort;
         account.ImapSecurity = request.ImapSecurity;
@@ -78,6 +84,7 @@ public sealed class MailAccountService(
         account.SaveSentCopy = request.SaveSentCopy;
         account.UpdatedAt = DateTime.UtcNow;
         await db.SaveChangesAsync(cancellationToken);
+        logger.LogInformation("User {UserId} updated mail account {AccountId}.", userId, accountId);
         return ToResponse(account);
     }
 
@@ -87,6 +94,7 @@ public sealed class MailAccountService(
         if (account is null) return false;
         db.MailAccounts.Remove(account);
         await db.SaveChangesAsync(cancellationToken);
+        logger.LogInformation("User {UserId} deleted mail account {AccountId}.", userId, accountId);
         return true;
     }
 
@@ -98,38 +106,84 @@ public sealed class MailAccountService(
         try
         {
             var password = credentials.Unprotect(account.EncryptedPassword);
-            using var imap = new ImapClient();
-            await imap.ConnectAsync(account.ImapHost, account.ImapPort, MailSecurityMapper.ToSocketOptions(account.ImapSecurity), cancellationToken);
-            await imap.AuthenticateAsync(account.Username, password, cancellationToken);
-            await imap.DisconnectAsync(true, cancellationToken);
-
-            using var smtp = new SmtpClient();
-            await smtp.ConnectAsync(account.SmtpHost, account.SmtpPort, MailSecurityMapper.ToSocketOptions(account.SmtpSecurity), cancellationToken);
-            await smtp.AuthenticateAsync(account.Username, password, cancellationToken);
-            await smtp.DisconnectAsync(true, cancellationToken);
+            await tester.TestImapAsync(
+                new MailServerEndpoint(account.ImapHost, account.ImapPort, account.ImapSecurity),
+                account.Username, password, cancellationToken);
+            await tester.TestSmtpAsync(
+                new MailServerEndpoint(account.SmtpHost, account.SmtpPort, account.SmtpSecurity),
+                account.Username, password, cancellationToken);
+            logger.LogInformation("Mail connection test succeeded for account {AccountId} of user {UserId}.", accountId, userId);
             return new MailAccountTestResponse(true, "IMAP and SMTP connections succeeded.");
         }
         catch (OperationCanceledException)
         {
             throw;
         }
-        catch (Exception)
+        catch (MailConnectionException ex)
         {
-            return new MailAccountTestResponse(false, "IMAP or SMTP connection/authentication failed.");
+            logger.LogWarning(ex,
+                "Mail connection test failed ({Failure}) for account {AccountId} of user {UserId}.",
+                ex.Failure, accountId, userId);
+            return new MailAccountTestResponse(false, ex.Message);
         }
     }
 
     private async Task<MailAccount?> FindOwnedAsync(Guid userId, Guid accountId, CancellationToken cancellationToken) =>
         await db.MailAccounts.SingleOrDefaultAsync(account => account.Id == accountId && account.UserId == userId, cancellationToken);
 
-    private void Validate(MailAccountRequest request)
+    private void Validate(MailAccountRequest request, bool passwordRequired)
     {
-        if (string.IsNullOrWhiteSpace(request.EmailAddress) || string.IsNullOrWhiteSpace(request.Username) || string.IsNullOrWhiteSpace(request.Password))
-            throw new ArgumentException("Email address, username, and password are required.");
-        if (request.ImapPort is < 1 or > 65535 || request.SmtpPort is < 1 or > 65535)
-            throw new ArgumentException("Mail ports must be between 1 and 65535.");
-        if (!environment.IsDevelopment() && !environment.IsEnvironment("Test") && (request.ImapSecurity == MailSecurity.None || request.SmtpSecurity == MailSecurity.None))
-            throw new ArgumentException("MailSecurity.None is allowed only in Development or Test.");
+        var errors = new Dictionary<string, string[]>();
+        RequestValidator.RequireEmail(request?.EmailAddress, "emailAddress", errors);
+        RequestValidator.RequireDisplayName(request?.DisplayName, "displayName", 250, errors);
+        if (string.IsNullOrWhiteSpace(request?.Username))
+            errors["username"] = ["Username is required."];
+        if (passwordRequired)
+            RequestValidator.RequireMailboxPassword(request?.Password, "password", errors);
+        RequestValidator.RequireHost(request?.ImapHost, "imapHost", errors);
+        RequestValidator.RequirePort(request?.ImapPort ?? 0, "imapPort", errors);
+        RequestValidator.RequireHost(request?.SmtpHost, "smtpHost", errors);
+        RequestValidator.RequirePort(request?.SmtpPort ?? 0, "smtpPort", errors);
+        CheckLiteralHost(request?.ImapHost, "imapHost", errors);
+        CheckLiteralHost(request?.SmtpHost, "smtpHost", errors);
+        if (!environment.IsDevelopment() && !environment.IsEnvironment("Test") && request is not null
+            && (request.ImapSecurity == MailSecurity.None || request.SmtpSecurity == MailSecurity.None))
+            errors["security"] = ["MailSecurity.None is allowed only in Development or Test."];
+        RequestValidator.ThrowIfInvalid(errors);
+    }
+
+    private void Validate(UpdateMailAccountRequest request)
+    {
+        var errors = new Dictionary<string, string[]>();
+        RequestValidator.RequireEmail(request?.EmailAddress, "emailAddress", errors);
+        RequestValidator.RequireDisplayName(request?.DisplayName, "displayName", 250, errors);
+        if (string.IsNullOrWhiteSpace(request?.Username))
+            errors["username"] = ["Username is required."];
+        if (request?.Password is not null)
+            RequestValidator.RequireMailboxPassword(request.Password, "password", errors);
+        RequestValidator.RequireHost(request?.ImapHost, "imapHost", errors);
+        RequestValidator.RequirePort(request?.ImapPort ?? 0, "imapPort", errors);
+        RequestValidator.RequireHost(request?.SmtpHost, "smtpHost", errors);
+        RequestValidator.RequirePort(request?.SmtpPort ?? 0, "smtpPort", errors);
+        CheckLiteralHost(request?.ImapHost, "imapHost", errors);
+        CheckLiteralHost(request?.SmtpHost, "smtpHost", errors);
+        if (!environment.IsDevelopment() && !environment.IsEnvironment("Test") && request is not null
+            && (request.ImapSecurity == MailSecurity.None || request.SmtpSecurity == MailSecurity.None))
+            errors["security"] = ["MailSecurity.None is allowed only in Development or Test."];
+        RequestValidator.ThrowIfInvalid(errors);
+    }
+
+    private void CheckLiteralHost(string? host, string field, Dictionary<string, string[]> errors)
+    {
+        if (errors.ContainsKey(field))
+            return;
+
+        var check = hosts.CheckLiteralHost(host);
+        if (!check.Allowed)
+        {
+            logger.LogDebug("Rejected {Field} value at validation: {Reason}.", field, check.Reason);
+            errors[field] = ["Mail host is not allowed."];
+        }
     }
 
     private static MailAccountResponse ToResponse(MailAccount account) => new(
