@@ -1,6 +1,11 @@
 @MailClient.Api_HostAddress = http://localhost:5223
 
-GET {{MailClient.Api_HostAddress}}/weatherforecast/
+GET {{MailClient.Api_HostAddress}}/health
+Accept: application/json
+
+###
+
+GET {{MailClient.Api_HostAddress}}/health/db
 Accept: application/json
 
 ###
