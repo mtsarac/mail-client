@@ -271,6 +271,99 @@ public sealed class MailSendServiceTests
                 userId, Command(accountId), new CancellationToken(canceled: true)));
     }
 
+    [Fact]
+    public async Task Send_InvalidRecipient_DisposesAttachmentStreams()
+    {
+        await using var db = CreateDb();
+        var (userId, accountId) = await SeedAccountAsync(db);
+        var stream = new TrackingStream("abc"u8.ToArray());
+
+        await CreateService(db, new FakeMailTransport()).SendAsync(
+            userId, Command(accountId, to: "not-an-address",
+                attachments: [new SendMailAttachment("a.txt", "text/plain", stream)]),
+            CancellationToken.None);
+
+        Assert.True(stream.Disposed);
+    }
+
+    [Fact]
+    public async Task Send_AccountNotFound_DisposesAttachmentStreams()
+    {
+        await using var db = CreateDb();
+        await SeedAccountAsync(db);
+        var stream = new TrackingStream("abc"u8.ToArray());
+
+        await CreateService(db, new FakeMailTransport()).SendAsync(
+            Guid.NewGuid(),
+            Command(Guid.NewGuid(), attachments: [new SendMailAttachment("a.txt", "text/plain", stream)]),
+            CancellationToken.None);
+
+        Assert.True(stream.Disposed);
+    }
+
+    [Fact]
+    public async Task Send_OversizedAttachment_DisposesAttachmentStreams()
+    {
+        await using var db = CreateDb();
+        var (userId, accountId) = await SeedAccountAsync(db);
+        var stream = new TrackingStream(new byte[11]);
+
+        await CreateService(db, new FakeMailTransport()).SendAsync(
+            userId, Command(accountId, attachments: [new SendMailAttachment("big.bin", "application/octet-stream", stream)]),
+            CancellationToken.None);
+
+        Assert.True(stream.Disposed);
+    }
+
+    [Fact]
+    public async Task Send_SmtpFailure_DisposesAttachmentStreams()
+    {
+        await using var db = CreateDb();
+        var (userId, accountId) = await SeedAccountAsync(db, withSentFolder: false);
+        var stream = new TrackingStream("abc"u8.ToArray());
+        var transport = new FakeMailTransport
+        {
+            SendFailure = () => new MailConnectionException(MailConnectionFailure.Network, "unreachable")
+        };
+
+        await CreateService(db, transport).SendAsync(
+            userId, Command(accountId, attachments: [new SendMailAttachment("a.txt", "text/plain", stream)]),
+            CancellationToken.None);
+
+        Assert.True(stream.Disposed);
+    }
+
+    [Fact]
+    public async Task Send_Success_DisposesAttachmentStreams()
+    {
+        await using var db = CreateDb();
+        var (userId, accountId) = await SeedAccountAsync(db, withSentFolder: false);
+        var stream = new TrackingStream("abc"u8.ToArray());
+
+        var result = await CreateService(db, new FakeMailTransport()).SendAsync(
+            userId, Command(accountId, attachments: [new SendMailAttachment("a.txt", "text/plain", stream)]),
+            CancellationToken.None);
+
+        Assert.True(result.Value!.Sent);
+        Assert.True(stream.Disposed);
+    }
+
+    [Fact]
+    public async Task Send_Cancelled_DisposesAttachmentStreams()
+    {
+        await using var db = CreateDb();
+        var (userId, accountId) = await SeedAccountAsync(db);
+        var stream = new TrackingStream("abc"u8.ToArray());
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            CreateService(db, new FakeMailTransport()).SendAsync(
+                userId,
+                Command(accountId, attachments: [new SendMailAttachment("a.txt", "text/plain", stream)]),
+                new CancellationToken(canceled: true)));
+
+        Assert.True(stream.Disposed);
+    }
+
     private static MailSendService CreateService(AppDbContext db, IMailTransport transport) =>
         new(db, transport, Options(), NullLogger<MailSendService>.Instance);
 
@@ -317,6 +410,17 @@ public sealed class MailSendServiceTests
         await db.SaveChangesAsync();
         db.ChangeTracker.Clear();
         return (userId, accountId);
+    }
+
+    private sealed class TrackingStream(byte[] bytes) : MemoryStream(bytes)
+    {
+        public bool Disposed { get; private set; }
+
+        protected override void Dispose(bool disposing)
+        {
+            Disposed = true;
+            base.Dispose(disposing);
+        }
     }
 
     private sealed class FakeMailTransport : IMailTransport

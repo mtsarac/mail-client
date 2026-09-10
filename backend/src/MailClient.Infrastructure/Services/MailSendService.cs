@@ -23,6 +23,22 @@ public sealed class MailSendService(
         SendMailCommand command,
         CancellationToken cancellationToken)
     {
+        try
+        {
+            return await SendCoreAsync(userId, command, cancellationToken);
+        }
+        finally
+        {
+            foreach (var attachment in command.Attachments)
+                await attachment.Content.DisposeAsync();
+        }
+    }
+
+    private async Task<ServiceResult<SendMailResult>> SendCoreAsync(
+        Guid userId,
+        SendMailCommand command,
+        CancellationToken cancellationToken)
+    {
         if (!MailboxAddress.TryParse(command.ToAddress.Trim(), out var to)
             || !HasLocalAndDomain(to.Address))
             return ServiceResult<SendMailResult>.Failure(
@@ -50,56 +66,48 @@ public sealed class MailSendService(
             command.Subject.Trim(), command.BodyHtml, command.BodyText, command.Attachments);
         try
         {
-            try
-            {
-                await transport.SendAsync(account, message, cancellationToken);
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                logger.LogWarning(ex, "SMTP send failed for account {AccountId}.", account.Id);
-                return ServiceResult<SendMailResult>.Success(
-                    new SendMailResult(false, false, "The message could not be sent."));
-            }
-
-            if (!account.SaveSentCopy)
-                return ServiceResult<SendMailResult>.Success(new SendMailResult(true, false, null));
-
-            var sentFullName = await db.MailFolders
-                .Where(folder => folder.MailAccountId == account.Id && folder.FolderType == MailFolderType.Sent)
-                .Select(folder => folder.FullName)
-                .SingleOrDefaultAsync(cancellationToken);
-            if (sentFullName is null)
-            {
-                logger.LogWarning("Sent copy skipped for account {AccountId}: no Sent folder discovered.", account.Id);
-                return ServiceResult<SendMailResult>.Success(new SendMailResult(
-                    true, false, "Message was sent, but no Sent folder is configured."));
-            }
-
-            try
-            {
-                RewindAttachments(command.Attachments);
-                await transport.AppendToSentAsync(account, sentFullName, message, cancellationToken);
-                return ServiceResult<SendMailResult>.Success(new SendMailResult(true, true, null));
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                logger.LogWarning(ex, "Sent append failed for account {AccountId}.", account.Id);
-                return ServiceResult<SendMailResult>.Success(new SendMailResult(
-                    true, false, "Message was sent, but the Sent copy could not be stored."));
-            }
+            await transport.SendAsync(account, message, cancellationToken);
         }
-        finally
+        catch (OperationCanceledException)
         {
-            foreach (var attachment in command.Attachments)
-                await attachment.Content.DisposeAsync();
+            throw;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "SMTP send failed for account {AccountId}.", account.Id);
+            return ServiceResult<SendMailResult>.Success(
+                new SendMailResult(false, false, "The message could not be sent."));
+        }
+
+        if (!account.SaveSentCopy)
+            return ServiceResult<SendMailResult>.Success(new SendMailResult(true, false, null));
+
+        var sentFullName = await db.MailFolders
+            .Where(folder => folder.MailAccountId == account.Id && folder.FolderType == MailFolderType.Sent)
+            .Select(folder => folder.FullName)
+            .SingleOrDefaultAsync(cancellationToken);
+        if (sentFullName is null)
+        {
+            logger.LogWarning("Sent copy skipped for account {AccountId}: no Sent folder discovered.", account.Id);
+            return ServiceResult<SendMailResult>.Success(new SendMailResult(
+                true, false, "Message was sent, but no Sent folder is configured."));
+        }
+
+        try
+        {
+            RewindAttachments(command.Attachments);
+            await transport.AppendToSentAsync(account, sentFullName, message, cancellationToken);
+            return ServiceResult<SendMailResult>.Success(new SendMailResult(true, true, null));
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Sent append failed for account {AccountId}.", account.Id);
+            return ServiceResult<SendMailResult>.Success(new SendMailResult(
+                true, false, "Message was sent, but the Sent copy could not be stored."));
         }
     }
 
