@@ -52,27 +52,40 @@ public sealed class MailKitRemoteMailFolder(IMailFolder folder) : IRemoteMailFol
     public Task OpenForUpdateAsync(CancellationToken cancellationToken) =>
         folder.OpenAsync(FolderAccess.ReadWrite, cancellationToken);
 
-    public async Task<IList<UniqueId>> SearchNewAsync(
-        uint afterUid, int maxCount, CancellationToken cancellationToken)
+    public Task<IList<UniqueId>> SearchNewAsync(
+        uint afterUid, int maxCount, CancellationToken cancellationToken) =>
+        SearchPagedAsync(
+            afterUid,
+            maxCount,
+            () => folder.UidNext?.Id ?? 0,
+            (low, high, ct) => folder.SearchAsync(
+                SearchQuery.Uids(new UniqueIdRange(new UniqueId((uint)low), new UniqueId((uint)high))), ct),
+            cancellationToken);
+
+    internal static async Task<IList<UniqueId>> SearchPagedAsync(
+        uint afterUid,
+        int maxCount,
+        Func<uint> getUidNext,
+        Func<ulong, ulong, CancellationToken, Task<IList<UniqueId>>> searchPage,
+        CancellationToken cancellationToken)
     {
+        const int MaxPages = 8;
+        const ulong GrowthFactor = 4;
         if (afterUid == uint.MaxValue || maxCount <= 0)
             return [];
         var found = new List<UniqueId>();
-        // Windowed UID-range SEARCH: each server roundtrip materializes at most
-        // one window, so a huge backlog never becomes one huge UID list.
-        // UidNext bounds the scan; sparse ranges simply yield short pages.
         var low = (ulong)afterUid + 1;
-        var window = (ulong)Math.Max(maxCount, 1);
-        while (found.Count < maxCount)
+        var window = (ulong)Math.Max(4L * maxCount, 1);
+        var pages = 0;
+        while (found.Count < maxCount && pages < MaxPages)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var uidNext = folder.UidNext?.Id ?? 0;
+            var uidNext = getUidNext();
             if (uidNext == 0 || low >= uidNext)
                 break;
             var high = Math.Min(low + window - 1, (ulong)uidNext - 1);
-            var page = await folder.SearchAsync(
-                SearchQuery.Uids(new UniqueIdRange(new UniqueId((uint)low), new UniqueId((uint)high))),
-                cancellationToken);
+            var page = await searchPage(low, high, cancellationToken);
+            pages++;
             foreach (var uid in page)
             {
                 if (found.Count >= maxCount)
@@ -83,6 +96,9 @@ public sealed class MailKitRemoteMailFolder(IMailFolder folder) : IRemoteMailFol
             if (high >= (ulong)uidNext - 1)
                 break;
             low = high + 1;
+            window = Math.Min(
+                page.Count == 0 ? window * GrowthFactor : window * 2,
+                (ulong)uint.MaxValue);
         }
 
         found.Sort((left, right) => left.Id.CompareTo(right.Id));
