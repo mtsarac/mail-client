@@ -267,6 +267,9 @@ public sealed class MailFolderSyncService(
                     .ToListAsync(cancellationToken);
                 foreach (var mail in mails)
                     mail.IsRead = true;
+                await db.SaveChangesAsync(cancellationToken);
+                foreach (var mail in mails)
+                    db.Entry(mail).State = EntityState.Detached;
             }
 
             if (toUnread.Count > 0)
@@ -278,10 +281,10 @@ public sealed class MailFolderSyncService(
                     .ToListAsync(cancellationToken);
                 foreach (var mail in mails)
                     mail.IsRead = false;
-            }
-
-            if (toRead.Count > 0 || toUnread.Count > 0)
                 await db.SaveChangesAsync(cancellationToken);
+                foreach (var mail in mails)
+                    db.Entry(mail).State = EntityState.Detached;
+            }
 
             processed += chunk.Count;
         }
