@@ -74,7 +74,7 @@ flutter_client/macos/Pods/
 **/data/protection-keys/
 
 # Local attachment storage (Task 5 writes here at runtime)
-data/attachments/
+**/data/attachments/
 
 # Private planning docs
 docs/

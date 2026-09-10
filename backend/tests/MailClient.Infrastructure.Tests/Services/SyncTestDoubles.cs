@@ -117,6 +117,7 @@ internal sealed class FakeFileStorage(
     public List<string> Saved { get; } = [];
     public List<string> Deleted { get; } = [];
     public List<Guid> DeletedAccounts { get; } = [];
+    public Dictionary<string, byte[]> Files { get; } = [];
 
     public Task<StoredFile> SaveAsync(Guid accountId, Guid mailId, Guid attachmentId,
         Func<Stream, CancellationToken, Task> write, long maxBytes, CancellationToken cancellationToken)
@@ -136,6 +137,11 @@ internal sealed class FakeFileStorage(
         Deleted.Add(relativePath);
         return Task.CompletedTask;
     }
+
+    public Task<Stream> OpenReadAsync(string relativePath, CancellationToken cancellationToken) =>
+        Files.TryGetValue(relativePath, out var bytes)
+            ? Task.FromResult<Stream>(new MemoryStream(bytes, writable: false))
+            : Task.FromException<Stream>(new FileNotFoundException("Attachment file is missing.", relativePath));
 
     public Task DeleteAccountAsync(Guid accountId, CancellationToken cancellationToken)
     {

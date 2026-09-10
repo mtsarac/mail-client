@@ -117,6 +117,7 @@ builder.Services.AddScoped<ICredentialProtector, DataProtectionCredentialProtect
 builder.Services.AddScoped<IMailAccountService, MailAccountService>();
 builder.Services.AddScoped<IMailFolderService, MailFolderService>();
 builder.Services.AddScoped<IMailReadService, MailReadService>();
+builder.Services.AddScoped<IMailQueryService, MailQueryService>();
 builder.Services.AddScoped<IFileStorage>(_ => new LocalFileStorage(attachmentRoot));
 builder.Services.AddScoped<MailFolderSyncService>();
 builder.Services.AddScoped<IMailFolderClient, MailFolderClient>();

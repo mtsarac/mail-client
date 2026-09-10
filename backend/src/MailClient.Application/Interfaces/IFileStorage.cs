@@ -12,6 +12,9 @@ public interface IFileStorage
 
     Task DeleteAsync(string relativePath, CancellationToken cancellationToken);
 
+    // Read-only stream for downloads. The caller owns disposal.
+    Task<Stream> OpenReadAsync(string relativePath, CancellationToken cancellationToken);
+
     // Path is derived from accountId only. Idempotent.
     Task DeleteAccountAsync(Guid accountId, CancellationToken cancellationToken);
 }

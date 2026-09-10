@@ -35,6 +35,15 @@ public sealed class LocalFileStorage(string rootPath) : IFileStorage
         }
     }
 
+    public Task<Stream> OpenReadAsync(string relativePath, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        Stream stream = new FileStream(
+            ScopedPath(relativePath), FileMode.Open, FileAccess.Read, FileShare.Read,
+            bufferSize: 4096, useAsync: true);
+        return Task.FromResult(stream);
+    }
+
     public Task DeleteAsync(string relativePath, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();

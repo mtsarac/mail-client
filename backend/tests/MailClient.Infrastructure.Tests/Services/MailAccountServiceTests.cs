@@ -369,6 +369,8 @@ public class MailAccountServiceTests
             DeletedAccounts.Add(accountId);
             return Task.CompletedTask;
         }
+        public Task<Stream> OpenReadAsync(string relativePath, CancellationToken cancellationToken) =>
+            Task.FromException<Stream>(new FileNotFoundException("gone"));
     }
 
     private sealed class ThrowingFileStorage : IFileStorage
@@ -377,6 +379,8 @@ public class MailAccountServiceTests
             Task.FromResult(new StoredFile("noop", 0));
         public Task DeleteAsync(string relativePath, CancellationToken cancellationToken) =>
             Task.FromException(new FileNotFoundException("gone"));
+        public Task<Stream> OpenReadAsync(string relativePath, CancellationToken cancellationToken) =>
+            Task.FromException<Stream>(new FileNotFoundException("gone"));
         public Task DeleteAccountAsync(Guid accountId, CancellationToken cancellationToken) =>
             Task.FromException(new IOException("disk failed"));
     }
@@ -387,6 +391,9 @@ public class MailAccountServiceTests
             Task.FromResult(new StoredFile("noop", 0));
 
         public Task DeleteAsync(string relativePath, CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public Task<Stream> OpenReadAsync(string relativePath, CancellationToken cancellationToken) =>
+            Task.FromResult<Stream>(Stream.Null);
 
         public Task DeleteAccountAsync(Guid accountId, CancellationToken cancellationToken) => Task.CompletedTask;
     }
