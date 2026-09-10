@@ -37,7 +37,7 @@ The frontend team can place the Flutter project in `flutter_client/`. That path 
 - Mail accounts: per-user IMAP/SMTP configuration with encrypted credentials and connection testing
 - Folder discovery: IMAP special-use mapping, Inbox/Sent sync-enabled by default
 - API testing: Swagger UI in Development
-- Next backend work: Task 5 background IMAP sync service
+- Background IMAP sync: active accounts and enabled folders poll every 30 seconds; attachment files are stored locally under `data/attachments`.
 
 ## Backend Setup
 
@@ -94,6 +94,20 @@ dotnet tool install --global dotnet-ef
 ```
 
 ## Local Secrets
+
+## Mail Sync
+
+```json
+"MailSync": {
+  "Enabled": true,
+  "PollIntervalSeconds": 30,
+  "MaxMessagesPerRun": 100,
+  "MaxAttachmentBytes": 26214400,
+  "MaxMessageAttachmentBytes": 52428800
+}
+```
+
+Set `MailSync:Enabled=false` for development or tests that should not start the hosted worker.
 
 Do not commit real credentials. Use either `appsettings.Local.json` or environment variables:
 
