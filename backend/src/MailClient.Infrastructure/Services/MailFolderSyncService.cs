@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using MailClient.Application.Interfaces;
 using MailClient.Application.Network;
 using MailClient.Application.Sync;
@@ -37,6 +38,12 @@ public sealed class MailFolderSyncService(
             {
                 throw;
             }
+            catch (CryptographicException ex)
+            {
+                logger.LogError(ex,
+                    "Mail sync failed for account {AccountId}: stored credential cannot be decrypted. Re-enter the mailbox password.",
+                    accountId);
+            }
             catch (Exception ex)
             {
                 logger.LogError(ex, "Mail sync failed for account {AccountId}.", accountId);
@@ -48,7 +55,10 @@ public sealed class MailFolderSyncService(
     {
         var account = await db.MailAccounts
             .Include(item => item.Folders)
-            .SingleAsync(item => item.Id == accountId, cancellationToken);
+            .SingleOrDefaultAsync(item => item.Id == accountId, cancellationToken);
+        // Account may have been deactivated or deleted after the poll listed it.
+        if (account is null || !account.IsActive)
+            return;
         var endpoint = new MailServerEndpoint(account.ImapHost, account.ImapPort, account.ImapSecurity);
         var password = credentials.Unprotect(account.EncryptedPassword);
 
@@ -59,6 +69,10 @@ public sealed class MailFolderSyncService(
             await using var folderLock = await FolderAdvisoryLock.AcquireAsync(db, folderId, cancellationToken);
             try
             {
+                // Re-check under the lock: deletion holds this lock while removing
+                // the account, so a missing account here means deletion won.
+                if (!await db.MailAccounts.AnyAsync(item => item.Id == accountId, cancellationToken))
+                    return;
                 var fullName = account.Folders.Single(folder => folder.Id == folderId).FullName;
                 await connections.WithImapAsync(
                     endpoint,
@@ -143,10 +157,33 @@ public sealed class MailFolderSyncService(
         }
 
         var uids = await remote.SearchNewAsync(state.LastUid, cancellationToken);
-        foreach (var uid in uids.OrderBy(item => item.Id).Take(options.MaxMessagesPerRun))
+        var batch = uids.OrderBy(item => item.Id).Take(options.MaxMessagesPerRun).ToList();
+        if (batch.Count == 0)
+        {
+            state.UidValidity = remote.UidValidity;
+            state.LastNewMailSyncAt = DateTime.UtcNow;
+            await db.SaveChangesAsync(cancellationToken);
+            return;
+        }
+
+        var batchIds = batch.Select(item => item.Id).ToList();
+        var committedUids = (await db.Mails
+            .Where(mail => mail.MailFolderId == folderId
+                && mail.UidValidity == remote.UidValidity
+                && batchIds.Contains(mail.Uid))
+            .Select(mail => mail.Uid)
+            .ToListAsync(cancellationToken)).ToHashSet();
+        var skippedUids = (await db.SyncSkippedUids
+            .Where(skip => skip.MailFolderId == folderId && batchIds.Contains(skip.Uid))
+            .Select(skip => skip.Uid)
+            .ToListAsync(cancellationToken)).ToHashSet();
+        var sizes = await remote.GetSizesAsync(batch, cancellationToken);
+
+        foreach (var uid in batch)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            await SyncOneAsync(accountId, folderId, state, remote, uid, cancellationToken);
+            await SyncOneAsync(accountId, folderId, state, remote, uid,
+                sizes.GetValueOrDefault(uid.Id), committedUids, skippedUids, cancellationToken);
         }
 
         state.UidValidity = remote.UidValidity;
@@ -160,29 +197,21 @@ public sealed class MailFolderSyncService(
         SyncState state,
         IRemoteMailFolder remote,
         UniqueId uid,
+        uint? size,
+        HashSet<uint> committedUids,
+        HashSet<uint> skippedUids,
         CancellationToken cancellationToken)
     {
-        // Idempotent retry: already committed or already skipped -> just ensure checkpoint.
-        if (await db.Mails.AnyAsync(
-                mail => mail.MailFolderId == folderId && mail.UidValidity == remote.UidValidity && mail.Uid == uid.Id,
-                cancellationToken))
+        if (committedUids.Contains(uid.Id) || skippedUids.Contains(uid.Id))
         {
             await AdvanceCheckpointAsync(state, uid.Id, cancellationToken);
             return;
         }
 
-        if (await db.SyncSkippedUids.AnyAsync(
-                skip => skip.MailFolderId == folderId && skip.Uid == uid.Id,
-                cancellationToken))
-        {
-            await AdvanceCheckpointAsync(state, uid.Id, cancellationToken);
-            return;
-        }
-
+        var checkpointBefore = state.LastUid;
         var createdPaths = new List<string>();
         try
         {
-            var size = await remote.GetSizeAsync(uid, cancellationToken);
             if (size is null)
             {
                 await SkipAndAdvanceAsync(state, folderId, uid.Id, "gone", "Message no longer exists on server.",
@@ -223,8 +252,7 @@ public sealed class MailFolderSyncService(
                 BodyHtml = incoming.BodyHtml,
                 BodyText = incoming.BodyText,
                 ReceivedAt = incoming.ReceivedAt,
-                IsRead = incoming.IsRead,
-                HasAttachments = incoming.Attachments.Count > 0
+                IsRead = incoming.IsRead
             };
             var messageAttachmentBytes = 0L;
 
@@ -275,6 +303,8 @@ public sealed class MailFolderSyncService(
                 messageAttachmentBytes += stored.SizeBytes;
             }
 
+            mail.HasAttachments = mail.Attachments.Count > 0;
+
             db.Mails.Add(mail);
             state.LastUid = uid.Id;
             try
@@ -284,7 +314,6 @@ public sealed class MailFolderSyncService(
             catch
             {
                 Detach(mail);
-                await CleanupCreatedFilesAsync(createdPaths);
                 throw;
             }
 
@@ -292,21 +321,35 @@ public sealed class MailFolderSyncService(
         }
         catch (OperationCanceledException)
         {
+            state.LastUid = checkpointBefore;
             await CleanupCreatedFilesAsync(createdPaths);
             throw;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (SyncFailurePolicy.Classify(ex) == SyncFailureDisposition.Skip)
         {
             await CleanupCreatedFilesAsync(createdPaths);
-            // Permanent-looking failure for this UID: record a durable skip and move
-            // the checkpoint past it so later UIDs are not blocked. If the skip
-            // itself cannot be persisted (transient DB failure), rethrow and keep
-            // the checkpoint unmoved for a retry next poll.
             logger.LogWarning(ex,
                 "Skipping message {Uid} for account {AccountId}, folder {FolderId}: {Error}.",
                 uid.Id, accountId, folderId, ex.GetType().Name);
-            await SkipAndAdvanceAsync(state, folderId, uid.Id, "failed", ex.GetType().Name,
-                accountId, folderId, cancellationToken);
+            try
+            {
+                await SkipAndAdvanceAsync(state, folderId, uid.Id, "failed", ex.GetType().Name,
+                    accountId, folderId, cancellationToken);
+            }
+            catch
+            {
+                state.LastUid = checkpointBefore;
+                throw;
+            }
+        }
+        catch (Exception ex)
+        {
+            state.LastUid = checkpointBefore;
+            await CleanupCreatedFilesAsync(createdPaths);
+            logger.LogWarning(ex,
+                "Transient sync failure for message {Uid} for account {AccountId}, folder {FolderId}: {Error}. Retrying next poll.",
+                uid.Id, accountId, folderId, ex.GetType().Name);
+            throw;
         }
     }
 

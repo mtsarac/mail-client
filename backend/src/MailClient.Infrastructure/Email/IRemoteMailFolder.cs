@@ -14,7 +14,12 @@ internal interface IRemoteMailFolder
 
     Task<IList<UniqueId>> SearchNewAsync(uint afterUid, CancellationToken cancellationToken);
 
-    Task<uint?> GetSizeAsync(UniqueId uid, CancellationToken cancellationToken);
+    // Batch SIZE lookup for the current bounded run. Returns only summaries the
+    // server actually returned; a UID missing from the dictionary (or mapped to
+    // null) means the message is gone and must be skipped without downloading.
+    Task<IReadOnlyDictionary<uint, uint?>> GetSizesAsync(
+        IReadOnlyCollection<UniqueId> uids,
+        CancellationToken cancellationToken);
 
     Task<MimeMessage> GetMessageAsync(UniqueId uid, CancellationToken cancellationToken);
 }
@@ -35,10 +40,14 @@ internal sealed class MailKitRemoteMailFolder(IMailFolder folder) : IRemoteMailF
             cancellationToken);
     }
 
-    public async Task<uint?> GetSizeAsync(UniqueId uid, CancellationToken cancellationToken)
+    public async Task<IReadOnlyDictionary<uint, uint?>> GetSizesAsync(
+        IReadOnlyCollection<UniqueId> uids,
+        CancellationToken cancellationToken)
     {
-        var summaries = await folder.FetchAsync([uid], MessageSummaryItems.Size, cancellationToken);
-        return summaries.Count == 0 ? null : summaries[0].Size;
+        if (uids.Count == 0)
+            return new Dictionary<uint, uint?>();
+        var summaries = await folder.FetchAsync([.. uids], MessageSummaryItems.Size, cancellationToken);
+        return summaries.ToDictionary(summary => summary.UniqueId.Id, summary => summary.Size);
     }
 
     public Task<MimeMessage> GetMessageAsync(UniqueId uid, CancellationToken cancellationToken) =>
