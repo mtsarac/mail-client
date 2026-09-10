@@ -212,7 +212,7 @@ public class MailAccountServiceTests
     }
 
     [Fact]
-    public async Task DeleteAsync_RemovesOwnedAttachmentFiles()
+    public async Task DeleteAsync_CleansAccountStorageDirectory()
     {
         await using var db = CreateDb();
         var storage = new TrackingFileStorage();
@@ -249,7 +249,8 @@ public class MailAccountServiceTests
 
         Assert.True(await service.DeleteAsync(userId, account.Id, CancellationToken.None));
 
-        Assert.Contains("owned/file-a", storage.Deleted);
+        Assert.Contains(account.Id, storage.DeletedAccounts);
+        Assert.Empty(storage.Deleted);
         Assert.Empty(await db.MailAccounts.ToListAsync());
     }
 
@@ -295,7 +296,8 @@ public class MailAccountServiceTests
 
         Assert.True(await service.DeleteAsync(userId, owned.Id, CancellationToken.None));
 
-        Assert.DoesNotContain("other/file-b", storage.Deleted);
+        Assert.Contains(owned.Id, storage.DeletedAccounts);
+        Assert.DoesNotContain(other.Id, storage.DeletedAccounts);
         Assert.Single(await db.MailAccounts.ToListAsync());
     }
 
@@ -354,11 +356,17 @@ public class MailAccountServiceTests
     private sealed class TrackingFileStorage : IFileStorage
     {
         public List<string> Deleted { get; } = [];
+        public List<Guid> DeletedAccounts { get; } = [];
         public Task<StoredFile> SaveAsync(Guid accountId, Guid mailId, Guid attachmentId, Func<Stream, CancellationToken, Task> write, long maxBytes, CancellationToken cancellationToken) =>
             Task.FromResult(new StoredFile("noop", 0));
         public Task DeleteAsync(string relativePath, CancellationToken cancellationToken)
         {
             Deleted.Add(relativePath);
+            return Task.CompletedTask;
+        }
+        public Task DeleteAccountAsync(Guid accountId, CancellationToken cancellationToken)
+        {
+            DeletedAccounts.Add(accountId);
             return Task.CompletedTask;
         }
     }
@@ -369,6 +377,8 @@ public class MailAccountServiceTests
             Task.FromResult(new StoredFile("noop", 0));
         public Task DeleteAsync(string relativePath, CancellationToken cancellationToken) =>
             Task.FromException(new FileNotFoundException("gone"));
+        public Task DeleteAccountAsync(Guid accountId, CancellationToken cancellationToken) =>
+            Task.FromException(new IOException("disk failed"));
     }
 
     private sealed class NoOpFileStorage : IFileStorage
@@ -377,6 +387,8 @@ public class MailAccountServiceTests
             Task.FromResult(new StoredFile("noop", 0));
 
         public Task DeleteAsync(string relativePath, CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public Task DeleteAccountAsync(Guid accountId, CancellationToken cancellationToken) => Task.CompletedTask;
     }
 
     private sealed class FakeConnectivityTester : IMailConnectivityTester

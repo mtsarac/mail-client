@@ -94,33 +94,47 @@ public sealed class MailAccountService(
         var account = await FindOwnedAsync(userId, accountId, cancellationToken);
         if (account is null) return false;
 
-        // Best-effort file cleanup after DB commit; storage failure must not block deletion.
-        var ownedPaths = await db.Attachments
-            .Where(attachment => db.Mails.Any(mail =>
-                mail.Id == attachment.MailId && mail.MailAccountId == accountId))
-            .Select(attachment => attachment.StoragePath)
-            .ToListAsync(cancellationToken);
-
-        db.MailAccounts.Remove(account);
+        // Deactivate first so the background poll stops picking up this account.
+        account.IsActive = false;
         await db.SaveChangesAsync(cancellationToken);
+
+        // Serialize against in-flight folder syncs: they hold the same advisory
+        // locks while committing, so no new attachment can land during deletion.
+        var folderIds = await db.MailFolders
+            .Where(folder => folder.MailAccountId == accountId && folder.IsSyncEnabled)
+            .Select(folder => folder.Id)
+            .ToListAsync(cancellationToken);
+        var heldLocks = new List<FolderAdvisoryLock>(folderIds.Count);
+        try
+        {
+            foreach (var folderId in folderIds)
+                heldLocks.Add(await FolderAdvisoryLock.AcquireAsync(db, folderId, cancellationToken));
+
+            db.MailAccounts.Remove(account);
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        finally
+        {
+            for (var index = heldLocks.Count - 1; index >= 0; index--)
+                await heldLocks[index].DisposeAsync();
+        }
         logger.LogInformation("User {UserId} deleted mail account {AccountId}.", userId, accountId);
 
-        foreach (var path in ownedPaths)
+        // Storage cleanup after the DB commit; scoped to the account directory
+        // and idempotent. Failure must not block deletion.
+        try
         {
-            try
-            {
-                await storage.DeleteAsync(path, CancellationToken.None);
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                logger.LogWarning(ex,
-                    "Attachment cleanup failed after deleting account {AccountId}. Path retained for later sweep.",
-                    accountId);
-            }
+            await storage.DeleteAccountAsync(accountId, CancellationToken.None);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex,
+                "Attachment cleanup failed after deleting account {AccountId}. Path retained for later sweep.",
+                accountId);
         }
 
         return true;
