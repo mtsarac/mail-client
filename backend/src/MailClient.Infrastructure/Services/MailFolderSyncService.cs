@@ -4,6 +4,7 @@ using MailClient.Application.Sync;
 using MailClient.Domain.Entities;
 using MailClient.Infrastructure.Email;
 using MailClient.Infrastructure.Persistence;
+using MailClient.Infrastructure.Storage;
 using MailKit;
 using MailKit.Net.Imap;
 using MailKit.Search;
@@ -89,6 +90,7 @@ public sealed class MailFolderSyncService(
         Guid folderId,
         CancellationToken cancellationToken)
     {
+        await using var folderLock = await FolderAdvisoryLock.AcquireAsync(db, folderId, cancellationToken);
         var localFolder = await db.MailFolders
             .Include(folder => folder.SyncState)
             .SingleAsync(folder => folder.Id == folderId, cancellationToken);
@@ -108,13 +110,31 @@ public sealed class MailFolderSyncService(
         }
         else if (SyncStateDecision.RequiresReset(state.UidValidity, remoteFolder.UidValidity))
         {
+            var obsoletePaths = await db.Attachments
+                .Where(attachment => db.Mails.Any(mail => mail.Id == attachment.MailId && mail.MailFolderId == folderId))
+                .Select(attachment => attachment.StoragePath)
+                .ToListAsync(cancellationToken);
             db.Mails.RemoveRange(db.Mails.Where(mail => mail.MailFolderId == folderId));
             state.UidValidity = remoteFolder.UidValidity;
             state.LastUid = 0;
+            await db.SaveChangesAsync(cancellationToken);
+            foreach (var path in obsoletePaths)
+            {
+                try
+                {
+                    await storage.DeleteAsync(path, cancellationToken);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(ex, "Failed to remove obsolete attachment for folder {FolderId}.", folderId);
+                }
+            }
         }
 
-        var uids = await remoteFolder.SearchAsync(SearchQuery.All, cancellationToken);
-        foreach (var uid in uids.Where(item => item.Id > state.LastUid).OrderBy(item => item.Id))
+        var uids = await remoteFolder.SearchAsync(
+            SearchQuery.Uids(new UniqueIdRange(new UniqueId(state.LastUid + 1), new UniqueId(uint.MaxValue))),
+            cancellationToken);
+        foreach (var uid in uids.OrderBy(item => item.Id).Take(options.MaxMessagesPerRun))
         {
             var message = await remoteFolder.GetMessageAsync(uid, cancellationToken);
             var incoming = IncomingMailMapper.Map(
@@ -143,36 +163,62 @@ public sealed class MailFolderSyncService(
                 HasAttachments = incoming.Attachments.Count > 0
             };
             var messageAttachmentBytes = 0L;
+            var createdPaths = new List<string>();
 
             foreach (var attachment in incoming.Attachments)
             {
-                await using var content = new MemoryStream();
-                await attachment.Content.DecodeToAsync(content, cancellationToken);
-                if (content.Length > options.MaxAttachmentBytes || content.Length + messageAttachmentBytes > options.MaxMessageAttachmentBytes)
+                var remaining = options.MaxMessageAttachmentBytes - messageAttachmentBytes;
+                if (remaining <= 0)
                 {
                     logger.LogWarning("Skipped oversized attachment for account {AccountId}, folder {FolderId}.", accountId, folderId);
                     continue;
                 }
 
-                content.Position = 0;
                 var attachmentId = Guid.NewGuid();
-                var path = await storage.SaveAsync(accountId, mail.Id, attachmentId, content, cancellationToken);
+                StoredFile stored;
+                try
+                {
+                    stored = await storage.SaveAsync(
+                        accountId,
+                        mail.Id,
+                        attachmentId,
+                        (destination, ct) => attachment.Content.DecodeToAsync(destination, ct),
+                        Math.Min(options.MaxAttachmentBytes, remaining),
+                        cancellationToken);
+                }
+                catch (AttachmentLimitExceededException)
+                {
+                    logger.LogWarning("Skipped oversized attachment for account {AccountId}, folder {FolderId}.", accountId, folderId);
+                    continue;
+                }
+                createdPaths.Add(stored.RelativePath);
                 mail.Attachments.Add(new Attachment
                 {
                     Id = attachmentId,
                     MailId = mail.Id,
                     FileName = attachment.FileName,
                     ContentType = attachment.ContentType,
-                    SizeBytes = content.Length,
-                    StoragePath = path,
+                    SizeBytes = stored.SizeBytes,
+                    StoragePath = stored.RelativePath,
                     IsInline = attachment.IsInline,
                     ContentId = attachment.ContentId
                 });
-                messageAttachmentBytes += content.Length;
+                messageAttachmentBytes += stored.SizeBytes;
             }
 
             db.Mails.Add(mail);
             state.LastUid = uid.Id;
+            try
+            {
+                await db.SaveChangesAsync(cancellationToken);
+            }
+            catch
+            {
+                foreach (var path in createdPaths)
+                    await storage.DeleteAsync(path, CancellationToken.None);
+                throw;
+            }
+            db.ChangeTracker.Clear();
         }
 
         state.UidValidity = remoteFolder.UidValidity;

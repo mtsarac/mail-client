@@ -1,9 +1,21 @@
 using MailClient.Infrastructure.Services;
+using MailClient.Application.Sync;
 
 namespace MailClient.Infrastructure.Tests.Services;
 
 public sealed class SyncStateDecisionTests
 {
+    [Fact]
+    public void Validate_RejectsMessageLimitBelowAttachmentLimit()
+    {
+        var options = new MailSyncOptions
+        {
+            MaxAttachmentBytes = 10,
+            MaxMessageAttachmentBytes = 9
+        };
+
+        Assert.Throws<InvalidOperationException>(options.Validate);
+    }
     [Theory]
     [InlineData(0u, 10u, false)]
     [InlineData(10u, 10u, false)]
