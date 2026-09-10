@@ -2,17 +2,19 @@
 
 Mail Client is a Flutter + ASP.NET Core mail bridge for hosting-provider email accounts.
 
-The Flutter app does not connect to IMAP or SMTP directly. It calls this backend over HTTP. The backend stores mail metadata in PostgreSQL and will handle mail sync, sending, attachments, authentication, and push notifications.
+The Flutter app does not connect to IMAP or SMTP directly. It calls this backend over HTTP. The backend stores mail metadata in PostgreSQL and runs a background IMAP sync worker. Mail sending and push notifications are planned but not implemented yet.
 
 ## Architecture
 
 ```text
 Flutter app
   -> ASP.NET Core Web API
-      -> PostgreSQL
-      -> IMAP/SMTP hosting mailbox
-      -> Firebase Cloud Messaging
+      -> PostgreSQL (mail metadata, identity, sync state)
+      -> IMAP/SMTP hosting mailbox (MailKit)
+      -> local file storage (attachments)
 ```
+
+Planned: Firebase Cloud Messaging for push notifications.
 
 Current backend structure:
 
@@ -24,6 +26,9 @@ backend/
     MailClient.Application/     # application services and contracts
     MailClient.Domain/          # mail domain entities
     MailClient.Infrastructure/  # EF Core, PostgreSQL, MailKit mail adapters, local file storage
+  tests/
+    MailClient.Api.Tests/            # full-stack integration tests (Testcontainers PostgreSQL)
+    MailClient.Infrastructure.Tests/ # unit tests + PostgreSQL sync semantics (Testcontainers)
 ```
 
 The frontend team can place the Flutter project in `flutter_client/`. That path is already expected by the repository docs and `.gitignore`.
@@ -31,26 +36,38 @@ The frontend team can place the Flutter project in `flutter_client/`. That path 
 ## Current Status
 
 - Target framework: `net10.0`
-- Database: PostgreSQL via EF Core
+- Database: PostgreSQL via EF Core (migrations applied on startup in tests, `dotnet ef database update` locally)
 - Domain entities: `User`, `MailAccount`, `MailFolder`, `Mail`, `Attachment`, `DeviceToken`, `SyncState`, `SyncSkippedUid`
-- Auth: JWT (register/login, admin user lifecycle), Swagger UI with Bearer support in Development
+- Auth: JWT (register/login, admin user lifecycle, token-version invalidation), Swagger UI with Bearer support in Development
 - Mail accounts: per-user IMAP/SMTP configuration with encrypted credentials and connection testing
 - Folder discovery: IMAP special-use mapping, Inbox/Sent sync-enabled by default
-- API testing: Swagger UI in Development
-- Background IMAP sync: active accounts and enabled folders poll every 30 seconds; attachment files are stored locally under `data/attachments`.
+- Background IMAP sync: active accounts and enabled folders poll every 30 seconds; per-folder UIDVALIDITY checkpoints, durable poison-skip records, advisory-lock serialization across instances; attachment files are stored locally under `data/attachments`
+- Rate limiting: fixed-window limiter on auth endpoints per client IP and on mail operations per user
+- Tests: xUnit; integration tests run against throwaway PostgreSQL via Testcontainers
 
 ## Backend Setup
 
 Prerequisites:
 
 - .NET 10 SDK
-- PostgreSQL running locally on port `5432`
+- Docker (for integration tests); PostgreSQL running locally on port `5432` for the API itself
 
 Build:
 
 ```bash
 dotnet build backend/MailClient.slnx
 ```
+
+Run the full quality gate (also what CI runs):
+
+```bash
+dotnet restore backend/MailClient.slnx
+dotnet build backend/MailClient.slnx --configuration Release --no-restore
+dotnet test backend/MailClient.slnx --configuration Release --no-build
+dotnet format backend/MailClient.slnx --verify-no-changes
+```
+
+`backend/Directory.Build.props` sets `TreatWarningsAsErrors` — the build fails on any warning.
 
 Configure local database credentials:
 
@@ -69,7 +86,7 @@ dotnet run --project backend/src/MailClient.Api/MailClient.Api.csproj
 Open Swagger:
 
 ```text
-http://localhost:<shown-port>/swagger
+http://localhost:5223/swagger
 ```
 
 ## Database
@@ -80,10 +97,9 @@ The committed placeholder connection string points at:
 Host=localhost;Port=5432;Database=PostaKoprusu
 ```
 
-After credentials are set, create and apply the first EF migration from the API project:
+Apply EF migrations:
 
 ```bash
-dotnet ef migrations add InitialSchema --project backend/src/MailClient.Infrastructure --startup-project backend/src/MailClient.Api
 dotnet ef database update --project backend/src/MailClient.Infrastructure --startup-project backend/src/MailClient.Api
 ```
 
@@ -94,6 +110,15 @@ dotnet tool install --global dotnet-ef
 ```
 
 ## Local Secrets
+
+Do not commit real credentials. Use either `appsettings.Local.json` or environment variables:
+
+```bash
+export ConnectionStrings__Default="Host=localhost;Port=5432;Database=PostaKoprusu;Username=postgres;Password=change-me"
+export Jwt__Key="a-local-development-key-with-at-least-32-characters"
+```
+
+See `.env.example` and `backend/src/MailClient.Api/appsettings.Local.example.json` for examples.
 
 ## Mail Sync
 
@@ -135,14 +160,6 @@ Reverse proxy:
 Email HTML:
 
 - The backend stores raw email HTML. The Flutter client must treat it as hostile: no scripts, no unrestricted WebView JavaScript, remote resources blocked by default, links opened safely, no privileged JavaScript bridge exposed to email content.
-
-Do not commit real credentials. Use either `appsettings.Local.json` or environment variables:
-
-```bash
-export ConnectionStrings__Default="Host=localhost;Port=5432;Database=PostaKoprusu;Username=postgres;Password=change-me"
-```
-
-See `.env.example` and `backend/src/MailClient.Api/appsettings.Local.example.json` for examples.
 
 ## License
 
