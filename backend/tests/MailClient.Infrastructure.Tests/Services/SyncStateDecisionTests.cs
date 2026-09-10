@@ -16,6 +16,34 @@ public sealed class SyncStateDecisionTests
 
         Assert.Throws<InvalidOperationException>(options.Validate);
     }
+
+    [Fact]
+    public void Validate_AcceptsDefaultOptions()
+    {
+        new MailSyncOptions().Validate();
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void Validate_RejectsNonPositiveMaxMessageBytes(long maxMessageBytes)
+    {
+        var options = new MailSyncOptions { MaxMessageBytes = maxMessageBytes };
+
+        Assert.Throws<InvalidOperationException>(options.Validate);
+    }
+
+    [Fact]
+    public void Validate_RejectsMaxMessageBytesBelowAttachmentBudget()
+    {
+        var options = new MailSyncOptions
+        {
+            MaxMessageAttachmentBytes = 100,
+            MaxMessageBytes = 99
+        };
+
+        Assert.Throws<InvalidOperationException>(options.Validate);
+    }
     [Theory]
     [InlineData(0u, 10u, false)]
     [InlineData(10u, 10u, false)]

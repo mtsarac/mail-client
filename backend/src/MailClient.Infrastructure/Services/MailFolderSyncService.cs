@@ -7,7 +7,6 @@ using MailClient.Infrastructure.Persistence;
 using MailClient.Infrastructure.Storage;
 using MailKit;
 using MailKit.Net.Imap;
-using MailKit.Search;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
@@ -55,8 +54,12 @@ public sealed class MailFolderSyncService(
 
         foreach (var folderId in account.Folders.Where(folder => folder.IsSyncEnabled).Select(folder => folder.Id))
         {
+            // Acquire the folder lock BEFORE opening the IMAP connection so a second
+            // instance waits without holding an unnecessary authenticated connection.
+            await using var folderLock = await FolderAdvisoryLock.AcquireAsync(db, folderId, cancellationToken);
             try
             {
+                var fullName = account.Folders.Single(folder => folder.Id == folderId).FullName;
                 await connections.WithImapAsync(
                     endpoint,
                     account.Username,
@@ -64,7 +67,10 @@ public sealed class MailFolderSyncService(
                     "SyncFolder",
                     async (client, ct) =>
                     {
-                        await SyncFolderAsync(client, account.Id, folderId, ct);
+                        var remote = new MailKitRemoteMailFolder(
+                            await client.GetFolderAsync(fullName, ct));
+                        await remote.OpenAsync(ct);
+                        await SyncFolderCoreAsync(account.Id, folderId, remote, ct);
                         return true;
                     },
                     cancellationToken);
@@ -84,18 +90,17 @@ public sealed class MailFolderSyncService(
         }
     }
 
-    private async Task SyncFolderAsync(
-        ImapClient client,
+    // Testable core: no IMAP connection management, no advisory lock.
+    // The caller owns the lock and the open remote folder.
+    internal async Task SyncFolderCoreAsync(
         Guid accountId,
         Guid folderId,
+        IRemoteMailFolder remote,
         CancellationToken cancellationToken)
     {
-        await using var folderLock = await FolderAdvisoryLock.AcquireAsync(db, folderId, cancellationToken);
         var localFolder = await db.MailFolders
             .Include(folder => folder.SyncState)
             .SingleAsync(folder => folder.Id == folderId, cancellationToken);
-        var remoteFolder = await client.GetFolderAsync(localFolder.FullName, cancellationToken);
-        await remoteFolder.OpenAsync(FolderAccess.ReadOnly, cancellationToken);
 
         var state = localFolder.SyncState;
         if (state is null)
@@ -104,18 +109,20 @@ public sealed class MailFolderSyncService(
             {
                 Id = Guid.NewGuid(),
                 MailFolderId = folderId,
-                UidValidity = remoteFolder.UidValidity
+                UidValidity = remote.UidValidity
             };
             db.SyncStates.Add(state);
+            await db.SaveChangesAsync(cancellationToken);
         }
-        else if (SyncStateDecision.RequiresReset(state.UidValidity, remoteFolder.UidValidity))
+        else if (SyncStateDecision.RequiresReset(state.UidValidity, remote.UidValidity))
         {
             var obsoletePaths = await db.Attachments
                 .Where(attachment => db.Mails.Any(mail => mail.Id == attachment.MailId && mail.MailFolderId == folderId))
                 .Select(attachment => attachment.StoragePath)
                 .ToListAsync(cancellationToken);
             db.Mails.RemoveRange(db.Mails.Where(mail => mail.MailFolderId == folderId));
-            state.UidValidity = remoteFolder.UidValidity;
+            db.SyncSkippedUids.RemoveRange(db.SyncSkippedUids.Where(skip => skip.MailFolderId == folderId));
+            state.UidValidity = remote.UidValidity;
             state.LastUid = 0;
             await db.SaveChangesAsync(cancellationToken);
             foreach (var path in obsoletePaths)
@@ -124,6 +131,10 @@ public sealed class MailFolderSyncService(
                 {
                     await storage.DeleteAsync(path, cancellationToken);
                 }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
                 catch (Exception ex)
                 {
                     logger.LogWarning(ex, "Failed to remove obsolete attachment for folder {FolderId}.", folderId);
@@ -131,16 +142,69 @@ public sealed class MailFolderSyncService(
             }
         }
 
-        var uids = await remoteFolder.SearchAsync(
-            SearchQuery.Uids(new UniqueIdRange(new UniqueId(state.LastUid + 1), new UniqueId(uint.MaxValue))),
-            cancellationToken);
+        var uids = await remote.SearchNewAsync(state.LastUid, cancellationToken);
         foreach (var uid in uids.OrderBy(item => item.Id).Take(options.MaxMessagesPerRun))
         {
-            var message = await remoteFolder.GetMessageAsync(uid, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            await SyncOneAsync(accountId, folderId, state, remote, uid, cancellationToken);
+        }
+
+        state.UidValidity = remote.UidValidity;
+        state.LastNewMailSyncAt = DateTime.UtcNow;
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    private async Task SyncOneAsync(
+        Guid accountId,
+        Guid folderId,
+        SyncState state,
+        IRemoteMailFolder remote,
+        UniqueId uid,
+        CancellationToken cancellationToken)
+    {
+        // Idempotent retry: already committed or already skipped -> just ensure checkpoint.
+        if (await db.Mails.AnyAsync(
+                mail => mail.MailFolderId == folderId && mail.UidValidity == remote.UidValidity && mail.Uid == uid.Id,
+                cancellationToken))
+        {
+            await AdvanceCheckpointAsync(state, uid.Id, cancellationToken);
+            return;
+        }
+
+        if (await db.SyncSkippedUids.AnyAsync(
+                skip => skip.MailFolderId == folderId && skip.Uid == uid.Id,
+                cancellationToken))
+        {
+            await AdvanceCheckpointAsync(state, uid.Id, cancellationToken);
+            return;
+        }
+
+        var createdPaths = new List<string>();
+        try
+        {
+            var size = await remote.GetSizeAsync(uid, cancellationToken);
+            if (size is null)
+            {
+                await SkipAndAdvanceAsync(state, folderId, uid.Id, "gone", "Message no longer exists on server.",
+                    accountId, folderId, cancellationToken);
+                return;
+            }
+
+            if (size.Value > (ulong)options.MaxMessageBytes)
+            {
+                logger.LogWarning(
+                    "Skipped oversized message {Uid} ({Size} bytes) for account {AccountId}, folder {FolderId}.",
+                    uid.Id, size.Value, accountId, folderId);
+                await SkipAndAdvanceAsync(state, folderId, uid.Id, "oversized", "Message exceeds MaxMessageBytes.",
+                    accountId, folderId, cancellationToken);
+                return;
+            }
+
+            var message = await remote.GetMessageAsync(uid, cancellationToken);
             var incoming = IncomingMailMapper.Map(
                 message,
                 uid.Id,
-                remoteFolder.UidValidity,
+                remote.UidValidity,
                 accountId,
                 folderId,
                 false);
@@ -163,10 +227,10 @@ public sealed class MailFolderSyncService(
                 HasAttachments = incoming.Attachments.Count > 0
             };
             var messageAttachmentBytes = 0L;
-            var createdPaths = new List<string>();
 
             foreach (var attachment in incoming.Attachments)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 var remaining = options.MaxMessageAttachmentBytes - messageAttachmentBytes;
                 if (remaining <= 0)
                 {
@@ -186,11 +250,16 @@ public sealed class MailFolderSyncService(
                         Math.Min(options.MaxAttachmentBytes, remaining),
                         cancellationToken);
                 }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
                 catch (AttachmentLimitExceededException)
                 {
                     logger.LogWarning("Skipped oversized attachment for account {AccountId}, folder {FolderId}.", accountId, folderId);
                     continue;
                 }
+
                 createdPaths.Add(stored.RelativePath);
                 mail.Attachments.Add(new Attachment
                 {
@@ -214,15 +283,94 @@ public sealed class MailFolderSyncService(
             }
             catch
             {
-                foreach (var path in createdPaths)
-                    await storage.DeleteAsync(path, CancellationToken.None);
+                Detach(mail);
+                await CleanupCreatedFilesAsync(createdPaths);
                 throw;
             }
-            db.ChangeTracker.Clear();
+
+            Detach(mail);
+        }
+        catch (OperationCanceledException)
+        {
+            await CleanupCreatedFilesAsync(createdPaths);
+            throw;
+        }
+        catch (Exception ex)
+        {
+            await CleanupCreatedFilesAsync(createdPaths);
+            // Permanent-looking failure for this UID: record a durable skip and move
+            // the checkpoint past it so later UIDs are not blocked. If the skip
+            // itself cannot be persisted (transient DB failure), rethrow and keep
+            // the checkpoint unmoved for a retry next poll.
+            logger.LogWarning(ex,
+                "Skipping message {Uid} for account {AccountId}, folder {FolderId}: {Error}.",
+                uid.Id, accountId, folderId, ex.GetType().Name);
+            await SkipAndAdvanceAsync(state, folderId, uid.Id, "failed", ex.GetType().Name,
+                accountId, folderId, cancellationToken);
+        }
+    }
+
+    private async Task AdvanceCheckpointAsync(SyncState state, uint uid, CancellationToken cancellationToken)
+    {
+        if (uid > state.LastUid)
+        {
+            state.LastUid = uid;
+            await db.SaveChangesAsync(cancellationToken);
+        }
+    }
+
+    private async Task SkipAndAdvanceAsync(
+        SyncState state,
+        Guid folderId,
+        uint uid,
+        string kind,
+        string detail,
+        Guid accountId,
+        Guid logFolderId,
+        CancellationToken cancellationToken)
+    {
+        var exists = await db.SyncSkippedUids.AnyAsync(
+            skip => skip.MailFolderId == folderId && skip.Uid == uid,
+            cancellationToken);
+        if (!exists)
+        {
+            db.SyncSkippedUids.Add(new SyncSkippedUid
+            {
+                Id = Guid.NewGuid(),
+                MailFolderId = folderId,
+                Uid = uid,
+                Reason = MailFieldNormalizer.Truncate($"{kind}: {detail}", 500),
+                SkippedAt = DateTime.UtcNow
+            });
         }
 
-        state.UidValidity = remoteFolder.UidValidity;
-        state.LastNewMailSyncAt = DateTime.UtcNow;
+        if (uid > state.LastUid)
+            state.LastUid = uid;
         await db.SaveChangesAsync(cancellationToken);
+        logger.LogWarning(
+            "Marked UID {Uid} as skipped ({Kind}) for account {AccountId}, folder {FolderId}.",
+            uid, kind, accountId, logFolderId);
+    }
+
+    private async Task CleanupCreatedFilesAsync(List<string> paths)
+    {
+        foreach (var path in paths)
+        {
+            try
+            {
+                await storage.DeleteAsync(path, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Failed to clean up attachment file after sync failure.");
+            }
+        }
+    }
+
+    private void Detach(Mail mail)
+    {
+        foreach (var attachment in mail.Attachments)
+            db.Entry(attachment).State = EntityState.Detached;
+        db.Entry(mail).State = EntityState.Detached;
     }
 }
