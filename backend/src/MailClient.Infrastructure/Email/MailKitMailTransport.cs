@@ -25,7 +25,23 @@ public sealed class MailKitMailTransport(
             account.Username,
             password,
             "SendMail",
-            (client, ct) => client.SendAsync(message, ct),
+            async (client, ct) =>
+            {
+                try
+                {
+                    await client.SendAsync(message, ct);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    throw new SmtpDeliveryException("SMTP delivery outcome is unknown.", ex);
+                }
+
+                return true;
+            },
             cancellationToken);
     }
 

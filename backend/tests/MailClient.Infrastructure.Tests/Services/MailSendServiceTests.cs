@@ -150,8 +150,9 @@ public sealed class MailSendServiceTests
         var result = await CreateService(db, transport)
             .SendAsync(userId, Command(accountId), CancellationToken.None);
 
-        Assert.False(result.Value!.Sent);
-        Assert.DoesNotContain("s3cret-password", result.Value.Warning);
+        Assert.Equal(ServiceOutcome.Conflict, result.Outcome);
+        Assert.DoesNotContain("s3cret-password",
+            string.Join(";", result.Errors.SelectMany(entry => entry.Value)));
     }
 
     [Fact]
@@ -479,6 +480,8 @@ public sealed class MailSendServiceTests
         public Func<Exception>? SendFailure { get; set; }
         public Func<Exception>? AppendFailure { get; set; }
         public bool ThrowCanceledAfterSend { get; set; }
+        public bool ThrowUnknownAfterSend { get; set; }
+        public Func<CancellationToken, Task>? OnAppending { get; set; }
 
         public Task SendAsync(MailAccount account, MimeMessage message, CancellationToken cancellationToken)
         {
@@ -487,6 +490,8 @@ public sealed class MailSendServiceTests
             Sent.Add(message);
             if (ThrowCanceledAfterSend)
                 throw new OperationCanceledException();
+            if (ThrowUnknownAfterSend)
+                throw new SmtpDeliveryException("SMTP delivery outcome is unknown.");
             return Task.CompletedTask;
         }
 
@@ -494,6 +499,8 @@ public sealed class MailSendServiceTests
         {
             if (AppendFailure is not null)
                 throw AppendFailure();
+            if (OnAppending is not null)
+                return OnAppending(cancellationToken);
             Appended.Add((sentFullName, message));
             return Task.CompletedTask;
         }

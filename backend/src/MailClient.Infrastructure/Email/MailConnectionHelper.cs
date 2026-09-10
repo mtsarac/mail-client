@@ -65,7 +65,7 @@ public sealed class MailConnectionHelper(
             logger.LogInformation(ex, "Mail operation {Operation} cancelled for host {Host}.", operation, endpoint.Host);
             throw;
         }
-        catch (MailConnectionException)
+        catch (Exception ex) when (ex is MailConnectionException or SmtpDeliveryException)
         {
             throw;
         }

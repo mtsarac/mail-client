@@ -12,20 +12,21 @@ namespace MailClient.Infrastructure.Services;
 // Request-level SMTP deduplication for the send-mail operation.
 //
 // State machine (scoped per user + idempotency key):
-//   (none) --claim--> InProgress --smtp accepted--> Sent --append ok--> SentWithCopy
-//   InProgress --pre-send failure--> Failed --retry--> InProgress
-//   InProgress older than InProgressTimeout --retry--> InProgress (expiry takeover)
-// Same key + different request fingerprint always conflicts (409).
-// Failed rows may retry SMTP; Sent/SentWithCopy rows replay the stored result
-// and never touch SMTP again. This is request deduplication, not exactly-once
-// delivery at the protocol level.
+//   (none) --claim--> InProgress --provably before send--> FailedBeforeSend --retry--> InProgress
+//   InProgress --smtp accepted--> Sent --append ok--> SentWithCopy
+//   InProgress --attempted but outcome unknowable--> DeliveryUnknown (terminal)
+// A timeout alone never proves SMTP was unattempted, so stale InProgress
+// never auto-retries: both fresh and stale InProgress deny with 409.
+// Only FailedBeforeSend may claim again. Sent/SentWithCopy replay.
+// This is request deduplication, not protocol-level exactly-once delivery:
+// once SMTP may have accepted a message, automatic retries never resend.
 public sealed class SendOperationStore(AppDbContext db, ILogger<SendOperationStore> logger)
 {
-    internal static readonly TimeSpan InProgressTimeout = TimeSpan.FromMinutes(5);
     internal const int MaxKeyLength = 200;
+    private static readonly TimeSpan StaleAfter = TimeSpan.FromMinutes(5);
 
     public abstract record Claim;
-    public sealed record Proceed(SendOperation Operation, DateTime ClaimedAt) : Claim;
+    public sealed record Proceed(SendOperation Operation) : Claim;
     public sealed record Replay(SendOperation Operation) : Claim;
     public sealed record Denied(string Reason) : Claim;
 
@@ -54,19 +55,24 @@ public sealed class SendOperationStore(AppDbContext db, ILogger<SendOperationSto
 
     public Task<bool> TryCompleteAsync(
         Guid operationId,
-        DateTime claimedAt,
         SendOperationStatus status,
         bool sentCopySaved,
         string? warning,
         CancellationToken cancellationToken) =>
-        TryUpdateAsync(operationId, claimedAt, status, sentCopySaved, warning, cancellationToken);
+        TryUpdateAsync(operationId, status, sentCopySaved, warning, cancellationToken);
 
     public Task<bool> TryFailAsync(
         Guid operationId,
-        DateTime claimedAt,
         string? warning,
         CancellationToken cancellationToken) =>
-        TryUpdateAsync(operationId, claimedAt, SendOperationStatus.Failed, false, warning, cancellationToken);
+        TryUpdateAsync(operationId, SendOperationStatus.FailedBeforeSend, false, warning, cancellationToken);
+
+    public Task<bool> TryMarkUnknownAsync(
+        Guid operationId,
+        CancellationToken cancellationToken) =>
+        TryUpdateAsync(
+            operationId, SendOperationStatus.DeliveryUnknown, false,
+            "Delivery status is uncertain; the message may have been sent.", cancellationToken);
 
     private async Task<Claim> ClaimOnceAsync(
         Guid userId,
@@ -112,7 +118,7 @@ public sealed class SendOperationStore(AppDbContext db, ILogger<SendOperationSto
             };
             db.SendOperations.Add(operation);
             await db.SaveChangesAsync(cancellationToken);
-            return new Proceed(operation, now);
+            return new Proceed(operation);
         }
 
         if (!string.Equals(existing.Fingerprint, fingerprint, StringComparison.Ordinal))
@@ -123,23 +129,22 @@ public sealed class SendOperationStore(AppDbContext db, ILogger<SendOperationSto
             case SendOperationStatus.Sent:
             case SendOperationStatus.SentWithCopy:
                 return new Replay(existing);
-            case SendOperationStatus.Failed:
+            case SendOperationStatus.FailedBeforeSend:
                 existing.Status = SendOperationStatus.InProgress;
                 existing.UpdatedAt = now;
                 await db.SaveChangesAsync(cancellationToken);
-                return new Proceed(existing, now);
+                return new Proceed(existing);
+            case SendOperationStatus.DeliveryUnknown:
+                return new Denied("Send operation delivery status is uncertain; the message may have been sent.");
             default:
-                if (existing.UpdatedAt > now - InProgressTimeout)
-                    return new Denied("Send operation is already in progress.");
-                existing.UpdatedAt = now;
-                await db.SaveChangesAsync(cancellationToken);
-                return new Proceed(existing, now);
+                return existing.UpdatedAt > now - StaleAfter
+                    ? new Denied("Send operation is already in progress.")
+                    : new Denied("Send operation status is uncertain; the message may have been sent.");
         }
     }
 
     private async Task<bool> TryUpdateAsync(
         Guid operationId,
-        DateTime claimedAt,
         SendOperationStatus status,
         bool sentCopySaved,
         string? warning,
@@ -147,7 +152,7 @@ public sealed class SendOperationStore(AppDbContext db, ILogger<SendOperationSto
     {
         var now = TruncateToMicroseconds(DateTime.UtcNow);
         if (!db.Database.IsRelational())
-            return await UpdateCoreAsync(operationId, claimedAt, status, sentCopySaved, warning, now, cancellationToken);
+            return await UpdateCoreAsync(operationId, status, sentCopySaved, warning, now, cancellationToken);
 
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
         var operation = await db.SendOperations.SingleOrDefaultAsync(
@@ -158,14 +163,13 @@ public sealed class SendOperationStore(AppDbContext db, ILogger<SendOperationSto
                 [LockKey(operation.UserId, operation.IdempotencyKey)],
                 cancellationToken);
 
-        var updated = await UpdateCoreAsync(operationId, claimedAt, status, sentCopySaved, warning, now, cancellationToken);
+        var updated = await UpdateCoreAsync(operationId, status, sentCopySaved, warning, now, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return updated;
     }
 
     private async Task<bool> UpdateCoreAsync(
         Guid operationId,
-        DateTime claimedAt,
         SendOperationStatus status,
         bool sentCopySaved,
         string? warning,
@@ -174,11 +178,9 @@ public sealed class SendOperationStore(AppDbContext db, ILogger<SendOperationSto
     {
         var operation = await db.SendOperations.SingleOrDefaultAsync(
             item => item.Id == operationId, cancellationToken);
-        if (operation is null
-            || operation.Status != SendOperationStatus.InProgress
-            || operation.UpdatedAt != claimedAt)
+        if (operation is null)
         {
-            logger.LogWarning("Send operation {OperationId} changed hands; skipping status update.", operationId);
+            logger.LogWarning("Send operation {OperationId} no longer exists; skipping status update.", operationId);
             return false;
         }
 
@@ -196,7 +198,7 @@ public sealed class SendOperationStore(AppDbContext db, ILogger<SendOperationSto
         string subject,
         string? bodyHtml,
         string? bodyText,
-        IReadOnlyList<(string FileName, string ContentType, long SizeBytes)> attachments)
+        IReadOnlyList<(string FileName, string ContentType, long SizeBytes, string ContentHash)> attachments)
     {
         var fields = new List<string>
         {
@@ -204,7 +206,11 @@ public sealed class SendOperationStore(AppDbContext db, ILogger<SendOperationSto
             attachments.Count.ToString()
         };
         fields.AddRange(attachments.SelectMany(attachment =>
-            new[] { attachment.FileName, attachment.ContentType, attachment.SizeBytes.ToString() }));
+            new[]
+            {
+                attachment.FileName, attachment.ContentType,
+                attachment.SizeBytes.ToString(), attachment.ContentHash
+            }));
         var joined = new StringBuilder();
         foreach (var field in fields)
             joined.Append(field.Length).Append(':').Append(field).Append('\0');

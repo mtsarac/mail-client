@@ -1,3 +1,4 @@
+using System.Text;
 using MailClient.Application;
 using MailClient.Application.Interfaces;
 using MailClient.Application.Network;
@@ -141,6 +142,107 @@ public sealed class SendIdempotencyTests
     }
 
     [Fact]
+    public async Task SameMetadata_DifferentBytes_ReturnsConflict()
+    {
+        await using var db = CreateDb();
+        var (userId, accountId) = await SeedAccountAsync(db);
+        var transport = new MailSendServiceTests.FakeMailTransport();
+        var service = CreateService(db, transport);
+
+        var first = await service.SendAsync(
+            userId, KeyedCommand(accountId, "key-1", "AAA"), CancellationToken.None);
+        var second = await service.SendAsync(
+            userId, KeyedCommand(accountId, "key-1", "BBB"), CancellationToken.None);
+
+        Assert.True(first.Value!.Sent);
+        Assert.Equal(ServiceOutcome.Conflict, second.Outcome);
+        Assert.Single(transport.Sent);
+    }
+
+    [Fact]
+    public async Task SameBytes_Replays_WithoutResend()
+    {
+        await using var db = CreateDb();
+        var (userId, accountId) = await SeedAccountAsync(db);
+        var transport = new MailSendServiceTests.FakeMailTransport();
+        var service = CreateService(db, transport);
+
+        var first = await service.SendAsync(
+            userId, KeyedCommand(accountId, "key-1", "SAME"), CancellationToken.None);
+        var second = await service.SendAsync(
+            userId, KeyedCommand(accountId, "key-1", "SAME"), CancellationToken.None);
+
+        Assert.True(first.Value!.Sent);
+        Assert.True(second.Value!.Sent);
+        Assert.Single(transport.Sent);
+    }
+
+    [Fact]
+    public async Task SentPersisted_BeforeAppend_Runs()
+    {
+        var options = CreateOptions();
+        await using var db = new AppDbContext(options);
+        var (userId, accountId) = await SeedAccountAsync(db);
+        var statusAtAppend = new TaskCompletionSource<SendOperationStatus>();
+        var transport = new MailSendServiceTests.FakeMailTransport
+        {
+            OnAppending = _ =>
+            {
+                using var check = new AppDbContext(options);
+                statusAtAppend.SetResult(check.SendOperations.Single().Status);
+                return Task.CompletedTask;
+            }
+        };
+        var service = CreateService(db, transport);
+
+        var result = await service.SendAsync(userId, KeyedCommand(accountId, "key-1"), CancellationToken.None);
+
+        Assert.True(result.Value!.Sent);
+        Assert.Equal(SendOperationStatus.Sent, await statusAtAppend.Task.WaitAsync(TimeSpan.FromSeconds(5)));
+    }
+
+    [Fact]
+    public async Task DeliveryUnknown_Retry_DoesNotResend()
+    {
+        await using var db = CreateDb();
+        var (userId, accountId) = await SeedAccountAsync(db);
+        var transport = new MailSendServiceTests.FakeMailTransport { ThrowUnknownAfterSend = true };
+        var service = CreateService(db, transport);
+        var command = KeyedCommand(accountId, "key-1");
+
+        var first = await service.SendAsync(userId, command, CancellationToken.None);
+        var retry = await service.SendAsync(userId, command, CancellationToken.None);
+
+        Assert.Equal(ServiceOutcome.Conflict, first.Outcome);
+        Assert.Equal(ServiceOutcome.Conflict, retry.Outcome);
+        Assert.Single(transport.Sent);
+        Assert.Equal(SendOperationStatus.DeliveryUnknown,
+            (await db.SendOperations.SingleAsync()).Status);
+    }
+
+    [Fact]
+    public async Task StaleInProgress_DoesNotResend()
+    {
+        await using var db = CreateDb();
+        var (userId, accountId) = await SeedAccountAsync(db);
+        var transport = new MailSendServiceTests.FakeMailTransport { ThrowCanceledAfterSend = true };
+        var service = CreateService(db, transport);
+        var command = KeyedCommand(accountId, "key-1");
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            service.SendAsync(userId, command, CancellationToken.None));
+        var operation = await db.SendOperations.SingleAsync();
+        operation.UpdatedAt = operation.UpdatedAt.AddHours(-1);
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+
+        var retry = await service.SendAsync(userId, command, CancellationToken.None);
+
+        Assert.Equal(ServiceOutcome.Conflict, retry.Outcome);
+        Assert.Single(transport.Sent);
+    }
+
+    [Fact]
     public async Task NoKey_SendsEveryTime()
     {
         await using var db = CreateDb();
@@ -159,13 +261,16 @@ public sealed class SendIdempotencyTests
     public void Fingerprint_IsDeterministic_AndSensitiveToFields()
     {
         var accountId = Guid.NewGuid();
-        var attachments = new List<(string, string, long)> { ("a.txt", "text/plain", 3) };
+        List<(string, string, long, string)> attachments = [("a.txt", "text/plain", 3, "HASH1")];
         var first = SendOperationStore.Fingerprint(accountId, "a@example.test", "Hi", null, "x", attachments);
         var same = SendOperationStore.Fingerprint(accountId, "a@example.test", "Hi", null, "x", attachments);
-        var different = SendOperationStore.Fingerprint(accountId, "a@example.test", "Changed", null, "x", attachments);
+        var differentSubject = SendOperationStore.Fingerprint(accountId, "a@example.test", "Changed", null, "x", attachments);
+        List<(string, string, long, string)> differentBytes = [("a.txt", "text/plain", 3, "HASH2")];
+        var differentContent = SendOperationStore.Fingerprint(accountId, "a@example.test", "Hi", null, "x", differentBytes);
 
         Assert.Equal(first, same);
-        Assert.NotEqual(first, different);
+        Assert.NotEqual(first, differentSubject);
+        Assert.NotEqual(first, differentContent);
         Assert.Equal(64, first.Length);
     }
 
@@ -175,12 +280,21 @@ public sealed class SendIdempotencyTests
             IdempotencyKey = key
         };
 
+    private static SendMailCommand KeyedCommand(Guid accountId, string key, string attachmentText) =>
+        new SendMailCommand(accountId, "friend@example.test", "Hello", "<p>hi</p>", "hi",
+            [new SendMailAttachment("doc.txt", "text/plain", new MemoryStream(Encoding.UTF8.GetBytes(attachmentText)))]) with
+        {
+            IdempotencyKey = key
+        };
+
     private static MailSendService CreateService(AppDbContext db, MailSendServiceTests.FakeMailTransport transport) =>
         new(db, transport, new SendOperationStore(db, NullLogger<SendOperationStore>.Instance),
             Options(), NullLogger<MailSendService>.Instance);
 
-    private static AppDbContext CreateDb() => new(new DbContextOptionsBuilder<AppDbContext>()
-        .UseInMemoryDatabase(Guid.NewGuid().ToString("N")).Options);
+    private static AppDbContext CreateDb() => new(CreateOptions());
+
+    private static DbContextOptions<AppDbContext> CreateOptions() => new DbContextOptionsBuilder<AppDbContext>()
+        .UseInMemoryDatabase(Guid.NewGuid().ToString("N")).Options;
 
     private static async Task<(Guid UserId, Guid AccountId)> SeedAccountAsync(AppDbContext db)
     {
