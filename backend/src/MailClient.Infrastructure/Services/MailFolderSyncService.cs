@@ -162,6 +162,7 @@ public sealed class MailFolderSyncService(
         {
             state.UidValidity = remote.UidValidity;
             state.LastNewMailSyncAt = DateTime.UtcNow;
+            await ReconcileFlagsIfDueAsync(folderId, state, remote, cancellationToken);
             await db.SaveChangesAsync(cancellationToken);
             return;
         }
@@ -177,18 +178,113 @@ public sealed class MailFolderSyncService(
             .Where(skip => skip.MailFolderId == folderId && batchIds.Contains(skip.Uid))
             .Select(skip => skip.Uid)
             .ToListAsync(cancellationToken)).ToHashSet();
-        var sizes = await remote.GetSizesAsync(batch, cancellationToken);
+        var summaries = await remote.GetSummariesAsync(batch, cancellationToken);
 
         foreach (var uid in batch)
         {
             cancellationToken.ThrowIfCancellationRequested();
             await SyncOneAsync(accountId, folderId, state, remote, uid,
-                sizes.GetValueOrDefault(uid.Id), committedUids, skippedUids, cancellationToken);
+                summaries.GetValueOrDefault(uid.Id), committedUids, skippedUids, cancellationToken);
         }
 
         state.UidValidity = remote.UidValidity;
         state.LastNewMailSyncAt = DateTime.UtcNow;
+        await ReconcileFlagsIfDueAsync(folderId, state, remote, cancellationToken);
         await db.SaveChangesAsync(cancellationToken);
+    }
+
+    // IMAP is the source of truth for \Seen. Reconciliation runs at most every
+    // FlagSyncIntervalSeconds per folder and only stamps LastFlagSyncAt after a
+    // fully successful pass. Failures never touch LastUid or checkpoints.
+    private async Task ReconcileFlagsIfDueAsync(
+        Guid folderId,
+        SyncState state,
+        IRemoteMailFolder remote,
+        CancellationToken cancellationToken)
+    {
+        var due = state.LastFlagSyncAt is null
+            || DateTime.UtcNow - state.LastFlagSyncAt.Value >= TimeSpan.FromSeconds(options.FlagSyncIntervalSeconds);
+        if (!due)
+            return;
+
+        try
+        {
+            await ReconcileFlagsAsync(folderId, remote.UidValidity, remote, cancellationToken);
+            state.LastFlagSyncAt = DateTime.UtcNow;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Flag reconciliation failed for folder {FolderId}.", folderId);
+        }
+    }
+
+    private async Task ReconcileFlagsAsync(
+        Guid folderId,
+        uint uidValidity,
+        IRemoteMailFolder remote,
+        CancellationToken cancellationToken)
+    {
+        const int chunkSize = 500;
+        var processed = 0;
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var chunk = await db.Mails
+                .AsNoTracking()
+                .Where(mail => mail.MailFolderId == folderId && mail.UidValidity == uidValidity)
+                .OrderBy(mail => mail.Uid)
+                .Skip(processed)
+                .Take(chunkSize)
+                .Select(mail => new { mail.Id, mail.Uid, mail.IsRead })
+                .ToListAsync(cancellationToken);
+            if (chunk.Count == 0)
+                return;
+
+            var flags = await remote.GetFlagsAsync(
+                chunk.Select(item => new UniqueId(item.Uid)).ToList(), cancellationToken);
+            var toRead = new List<Guid>();
+            var toUnread = new List<Guid>();
+            foreach (var item in chunk)
+            {
+                if (!flags.TryGetValue(item.Uid, out var seen))
+                    continue;
+                if (seen && !item.IsRead)
+                    toRead.Add(item.Id);
+                else if (!seen && item.IsRead)
+                    toUnread.Add(item.Id);
+            }
+
+            if (toRead.Count > 0)
+            {
+                var mails = await db.Mails
+                    .Where(mail => mail.MailFolderId == folderId
+                        && mail.UidValidity == uidValidity
+                        && toRead.Contains(mail.Id))
+                    .ToListAsync(cancellationToken);
+                foreach (var mail in mails)
+                    mail.IsRead = true;
+            }
+
+            if (toUnread.Count > 0)
+            {
+                var mails = await db.Mails
+                    .Where(mail => mail.MailFolderId == folderId
+                        && mail.UidValidity == uidValidity
+                        && toUnread.Contains(mail.Id))
+                    .ToListAsync(cancellationToken);
+                foreach (var mail in mails)
+                    mail.IsRead = false;
+            }
+
+            if (toRead.Count > 0 || toUnread.Count > 0)
+                await db.SaveChangesAsync(cancellationToken);
+
+            processed += chunk.Count;
+        }
     }
 
     private async Task SyncOneAsync(
@@ -197,7 +293,7 @@ public sealed class MailFolderSyncService(
         SyncState state,
         IRemoteMailFolder remote,
         UniqueId uid,
-        uint? size,
+        RemoteSummary? summary,
         HashSet<uint> committedUids,
         HashSet<uint> skippedUids,
         CancellationToken cancellationToken)
@@ -212,18 +308,18 @@ public sealed class MailFolderSyncService(
         var createdPaths = new List<string>();
         try
         {
-            if (size is null)
+            if (summary is null)
             {
                 await SkipAndAdvanceAsync(state, folderId, uid.Id, "gone", "Message no longer exists on server.",
                     accountId, folderId, cancellationToken);
                 return;
             }
 
-            if (size.Value > (ulong)options.MaxMessageBytes)
+            if (summary.Size > (ulong)options.MaxMessageBytes)
             {
                 logger.LogWarning(
                     "Skipped oversized message {Uid} ({Size} bytes) for account {AccountId}, folder {FolderId}.",
-                    uid.Id, size.Value, accountId, folderId);
+                    uid.Id, summary.Size, accountId, folderId);
                 await SkipAndAdvanceAsync(state, folderId, uid.Id, "oversized", "Message exceeds MaxMessageBytes.",
                     accountId, folderId, cancellationToken);
                 return;
@@ -236,7 +332,7 @@ public sealed class MailFolderSyncService(
                 remote.UidValidity,
                 accountId,
                 folderId,
-                false);
+                summary.IsSeen);
             var mail = new Mail
             {
                 Id = Guid.NewGuid(),

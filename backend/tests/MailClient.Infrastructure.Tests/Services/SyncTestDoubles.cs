@@ -14,19 +14,28 @@ internal sealed class FakeRemoteMailFolder(
     uint uidValidity,
     Dictionary<uint, Func<MimeMessage>> messages,
     Dictionary<uint, uint>? sizes = null,
-    HashSet<uint>? missingSizes = null) : IRemoteMailFolder
+    HashSet<uint>? missingSizes = null,
+    HashSet<uint>? seenUids = null) : IRemoteMailFolder
 {
     public Dictionary<uint, Func<MimeMessage>> Messages { get; } = messages;
     public Dictionary<uint, Func<Exception>> Failures { get; } = [];
     public Dictionary<uint, int> GetMessageCalls { get; } = [];
-    public int GetSizesCalls { get; private set; }
-    public uint UidValidity { get; } = uidValidity;
+    public int GetSummariesCalls { get; private set; }
+    public int GetFlagsCalls { get; private set; }
+    public List<(uint Uid, bool Seen)> SetSeenCalls { get; } = [];
+    public List<MimeMessage> Appended { get; } = [];
+    public Func<UniqueId, bool, Exception>? SetSeenFailure { get; set; }
+    public Func<Exception>? GetFlagsFailure { get; set; }
+    public uint UidValidity { get; set; } = uidValidity;
     private readonly Dictionary<uint, uint> _sizes = sizes ?? [];
     private readonly HashSet<uint> _missingSizes = missingSizes ?? [];
+    private readonly HashSet<uint> _seenUids = seenUids ?? [];
 
     public int MessageCallsFor(uint uid) => GetMessageCalls.GetValueOrDefault(uid, 0);
 
     public Task OpenAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    public Task OpenForUpdateAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
     public Task<IList<UniqueId>> SearchNewAsync(uint afterUid, CancellationToken cancellationToken) =>
         Task.FromResult<IList<UniqueId>>(Messages.Keys
@@ -35,13 +44,28 @@ internal sealed class FakeRemoteMailFolder(
             .Select(uid => new UniqueId(uid))
             .ToList());
 
-    public Task<IReadOnlyDictionary<uint, uint?>> GetSizesAsync(
+    public Task<IReadOnlyDictionary<uint, RemoteSummary?>> GetSummariesAsync(
         IReadOnlyCollection<UniqueId> uids, CancellationToken cancellationToken)
     {
-        GetSizesCalls++;
-        return Task.FromResult<IReadOnlyDictionary<uint, uint?>>(uids
+        GetSummariesCalls++;
+        return Task.FromResult<IReadOnlyDictionary<uint, RemoteSummary?>>(uids
             .Where(uid => !_missingSizes.Contains(uid.Id))
-            .ToDictionary(uid => uid.Id, uid => (uint?)_sizes.GetValueOrDefault(uid.Id, 100u)));
+            .ToDictionary(
+                uid => uid.Id,
+                uid => (RemoteSummary?)new RemoteSummary(
+                    _sizes.GetValueOrDefault(uid.Id, 100u),
+                    _seenUids.Contains(uid.Id))));
+    }
+
+    public Task<IReadOnlyDictionary<uint, bool>> GetFlagsAsync(
+        IReadOnlyCollection<UniqueId> uids, CancellationToken cancellationToken)
+    {
+        GetFlagsCalls++;
+        if (GetFlagsFailure is not null)
+            throw GetFlagsFailure();
+        return Task.FromResult<IReadOnlyDictionary<uint, bool>>(uids
+            .Where(uid => Messages.ContainsKey(uid.Id))
+            .ToDictionary(uid => uid.Id, uid => _seenUids.Contains(uid.Id)));
     }
 
     public Task<MimeMessage> GetMessageAsync(UniqueId uid, CancellationToken cancellationToken)
@@ -55,6 +79,35 @@ internal sealed class FakeRemoteMailFolder(
                 (FakeFileStorage.TestAttachmentName.Queue.Value ??= new Queue<string>()).Enqueue(part.FileName);
         return Task.FromResult(message);
     }
+
+    public Task SetSeenAsync(UniqueId uid, bool seen, CancellationToken cancellationToken)
+    {
+        if (SetSeenFailure is not null)
+            throw SetSeenFailure(uid, seen);
+        SetSeenCalls.Add((uid.Id, seen));
+        if (seen)
+            _seenUids.Add(uid.Id);
+        else
+            _seenUids.Remove(uid.Id);
+        return Task.CompletedTask;
+    }
+
+    public Task AppendAsync(MimeMessage message, CancellationToken cancellationToken)
+    {
+        Appended.Add(message);
+        return Task.CompletedTask;
+    }
+}
+
+internal sealed class FakeMailFolderClient(FakeRemoteMailFolder remote) : IMailFolderClient
+{
+    public Task<T> UseFolderAsync<T>(
+        MailAccount account,
+        string fullName,
+        bool forUpdate,
+        Func<IRemoteMailFolder, CancellationToken, Task<T>> action,
+        CancellationToken cancellationToken) =>
+        action(remote, cancellationToken);
 }
 
 internal sealed class FakeFileStorage(

@@ -7,7 +7,8 @@ public enum ServiceOutcome
     Conflict,
     Invalid,
     Unauthorized,
-    Forbidden
+    Forbidden,
+    ProviderError
 }
 
 public sealed record ServiceResult<T>(ServiceOutcome Outcome, T? Value, IReadOnlyDictionary<string, string[]> Errors)

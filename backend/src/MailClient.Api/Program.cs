@@ -7,6 +7,7 @@ using System.Threading.RateLimiting;
 using MailClient.Api.Health;
 using MailClient.Api.Auth;
 using MailClient.Api.Accounts;
+using MailClient.Api.Mails;
 using MailClient.Application.Interfaces;
 using MailClient.Application.Sync;
 using MailClient.Infrastructure.Email;
@@ -115,8 +116,10 @@ builder.Services.AddScoped<IMailFolderExplorer, MailKitFolderExplorer>();
 builder.Services.AddScoped<ICredentialProtector, DataProtectionCredentialProtector>();
 builder.Services.AddScoped<IMailAccountService, MailAccountService>();
 builder.Services.AddScoped<IMailFolderService, MailFolderService>();
+builder.Services.AddScoped<IMailReadService, MailReadService>();
 builder.Services.AddScoped<IFileStorage>(_ => new LocalFileStorage(attachmentRoot));
 builder.Services.AddScoped<MailFolderSyncService>();
+builder.Services.AddScoped<IMailFolderClient, MailFolderClient>();
 if (mailSyncOptions.Enabled)
     builder.Services.AddHostedService<MailSyncService>();
 builder.Services.AddScoped<IAuthenticationService, AuthenticationService>();
@@ -203,6 +206,7 @@ app.MapHealthEndpoints();
 app.MapAuthEndpoints();
 app.MapAdminUserEndpoints();
 app.MapMailAccountEndpoints();
+app.MapMailEndpoints();
 
 app.Run();
 

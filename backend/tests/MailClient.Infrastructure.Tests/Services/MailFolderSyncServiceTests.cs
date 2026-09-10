@@ -312,7 +312,7 @@ public sealed class MailFolderSyncServiceTests
         await CreateService(db, storage: new FakeFileStorage())
             .SyncFolderCoreAsync(accountId, folderId, remote, CancellationToken.None);
 
-        Assert.Equal(1, remote.GetSizesCalls);
+        Assert.Equal(1, remote.GetSummariesCalls);
         Assert.Equal(3, await db.Mails.CountAsync());
     }
 

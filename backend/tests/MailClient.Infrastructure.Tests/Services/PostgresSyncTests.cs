@@ -239,6 +239,70 @@ public sealed class PostgresSyncTests(PostgresSyncFixture fixture)
         Assert.Empty(await check.MailAccounts.Where(a => a.Id == created.Id).ToListAsync());
     }
 
+    [Fact]
+    public async Task SeenFlag_PersistsAsRead_OnPostgres()
+    {
+        Guid accountId;
+        Guid folderId;
+        await using (var seed = fixture.CreateDb())
+            (accountId, folderId) = await SyncTestSeed.SeedFolderAsync(seed);
+
+        var remote = new FakeRemoteMailFolder(7, new Dictionary<uint, Func<MimeMessage>>
+        {
+            [100] = () => SyncTestSeed.SimpleMessage("seen")
+        },
+        seenUids: new HashSet<uint> { 100 });
+        await using (var db = fixture.CreateDb())
+            await CreateService(db).SyncFolderCoreAsync(accountId, folderId, remote, CancellationToken.None);
+
+        await using var check = fixture.CreateDb();
+        Assert.True(await check.Mails.Where(m => m.MailFolderId == folderId).Select(m => m.IsRead).SingleAsync());
+    }
+
+    [Fact]
+    public async Task FlagReconciliation_FlipsReadState_OnPostgres()
+    {
+        Guid accountId;
+        Guid folderId;
+        await using (var seed = fixture.CreateDb())
+            (accountId, folderId) = await SyncTestSeed.SeedFolderAsync(seed);
+
+        var remote = new FakeRemoteMailFolder(7, new Dictionary<uint, Func<MimeMessage>>
+        {
+            [100] = () => SyncTestSeed.SimpleMessage("a")
+        });
+        await using (var db = fixture.CreateDb())
+            await CreateService(db).SyncFolderCoreAsync(accountId, folderId, remote, CancellationToken.None);
+
+        await using (var db = fixture.CreateDb())
+        {
+            var state = await db.SyncStates.SingleAsync(s => s.MailFolderId == folderId);
+            state.LastFlagSyncAt = DateTime.UtcNow.AddHours(-1);
+            await db.SaveChangesAsync();
+        }
+
+        var changed = new FakeRemoteMailFolder(7, new Dictionary<uint, Func<MimeMessage>>
+        {
+            [100] = () => SyncTestSeed.SimpleMessage("a"),
+            [101] = () => SyncTestSeed.SimpleMessage("b")
+        },
+        seenUids: new HashSet<uint> { 100 });
+        await using (var db = fixture.CreateDb())
+            await CreateService(db).SyncFolderCoreAsync(accountId, folderId, changed, CancellationToken.None);
+
+        await using var check = fixture.CreateDb();
+        var mails = await check.Mails
+            .Where(m => m.MailFolderId == folderId)
+            .OrderBy(m => m.Uid)
+            .Select(m => m.IsRead)
+            .ToListAsync();
+        Assert.Equal([true, false], mails);
+        Assert.NotNull(await check.SyncStates
+            .Where(s => s.MailFolderId == folderId)
+            .Select(s => s.LastFlagSyncAt)
+            .SingleAsync());
+    }
+
     private static MailFolderSyncService CreateService(AppDbContext db) => new(
         db,
         new PassthroughProtector(),
