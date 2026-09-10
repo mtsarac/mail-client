@@ -1,4 +1,5 @@
 using System.IdentityModel.Tokens.Jwt;
+using System.Net;
 using System.Security.Claims;
 using System.Text;
 using System.Text.Json.Serialization;
@@ -20,6 +21,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.OpenApi;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -76,9 +78,35 @@ mailSyncOptions.Validate();
 builder.Services.AddSingleton(mailSyncOptions);
 var attachmentRoot = builder.Configuration["MailSync:AttachmentRoot"]
     ?? Path.Combine(builder.Environment.ContentRootPath, "data");
-var keyPath = builder.Configuration["DataProtection:KeyPath"]
-    ?? Path.Combine(builder.Environment.ContentRootPath, "data", "protection-keys");
+var configuredKeyPath = builder.Configuration["DataProtection:KeyPath"];
+var keyPath = configuredKeyPath is null
+    ? Path.Combine(builder.Environment.ContentRootPath, "data", "protection-keys")
+    : Path.IsPathFullyQualified(configuredKeyPath)
+        ? configuredKeyPath
+        : Path.Combine(builder.Environment.ContentRootPath, configuredKeyPath);
 builder.Services.AddDataProtection().PersistKeysToFileSystem(new DirectoryInfo(keyPath));
+var trustedProxy = (builder.Configuration.GetSection("Proxy:KnownProxies").Get<string[]>() ?? []).Length > 0
+    || (builder.Configuration.GetSection("Proxy:KnownNetworks").Get<string[]>() ?? []).Length > 0;
+if (trustedProxy)
+{
+    builder.Services.Configure<ForwardedHeadersOptions>(options =>
+    {
+        options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+        options.KnownProxies.Clear();
+        options.KnownIPNetworks.Clear();
+        foreach (var proxy in builder.Configuration.GetSection("Proxy:KnownProxies").Get<string[]>() ?? [])
+            if (IPAddress.TryParse(proxy, out var address))
+                options.KnownProxies.Add(address);
+        foreach (var network in builder.Configuration.GetSection("Proxy:KnownNetworks").Get<string[]>() ?? [])
+        {
+            var parts = network.Split('/');
+            if (parts.Length == 2
+                && IPAddress.TryParse(parts[0], out var prefix)
+                && int.TryParse(parts[1], out var prefixLength))
+                options.KnownIPNetworks.Add(new System.Net.IPNetwork(prefix, prefixLength));
+        }
+    });
+}
 builder.Services.AddSingleton<IDnsResolver, SystemDnsResolver>();
 builder.Services.AddSingleton<IOutboundHostValidator, OutboundHostValidator>();
 builder.Services.AddScoped<MailConnectionHelper>();
@@ -148,6 +176,16 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 builder.Services.AddAuthorization();
 
 var app = builder.Build();
+
+if (!app.Environment.IsDevelopment() && !app.Environment.IsEnvironment("Test"))
+{
+    app.Logger.LogWarning(
+        "DataProtection keys persist at {KeyPath}. Production requires a persistent shared volume, restrictive file permissions, and key protection at rest; all instances must share the same ring.",
+        keyPath);
+}
+
+if (trustedProxy)
+    app.UseForwardedHeaders();
 
 if (app.Environment.IsDevelopment())
 {
