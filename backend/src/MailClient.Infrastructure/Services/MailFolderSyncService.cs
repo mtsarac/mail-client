@@ -151,6 +151,7 @@ public sealed class MailFolderSyncService(
             db.SyncSkippedUids.RemoveRange(db.SyncSkippedUids.Where(skip => skip.MailFolderId == folderId));
             state.UidValidity = remote.UidValidity;
             state.LastUid = 0;
+            state.NextUidScanStart = 1;
             await db.SaveChangesAsync(cancellationToken);
             foreach (var path in obsoletePaths)
             {
@@ -169,12 +170,19 @@ public sealed class MailFolderSyncService(
             }
         }
 
-        var uids = await remote.SearchNewAsync(state.LastUid, options.MaxMessagesPerRun, cancellationToken);
-        var batch = uids.OrderBy(item => item.Id).Take(options.MaxMessagesPerRun).ToList();
+        // Scan cursor invariants (persisted in NextUidScanStart):
+        // - LastUid = highest UID safely processed; never advanced over unsearched ranges.
+        // - The cursor only moves forward over UID ranges SEARCH actually covered,
+        //   or past fully processed UIDs, so every UID above LastUid stays reachable.
+        // - New arrivals always land at or beyond UidNext, hence ahead of the cursor.
+        var result = await remote.SearchNewAsync(
+            state.NextUidScanStart - 1, options.MaxMessagesPerRun, cancellationToken);
+        var batch = result.Uids.OrderBy(item => item.Id).Take(options.MaxMessagesPerRun).ToList();
         if (batch.Count == 0)
         {
             state.UidValidity = remote.UidValidity;
             state.LastNewMailSyncAt = DateTime.UtcNow;
+            state.NextUidScanStart = CapAdd(result.ScannedUpTo);
             await ReconcileFlagsIfDueAsync(folderId, state, remote, cancellationToken);
             await db.SaveChangesAsync(cancellationToken);
             return;
@@ -202,9 +210,12 @@ public sealed class MailFolderSyncService(
 
         state.UidValidity = remote.UidValidity;
         state.LastNewMailSyncAt = DateTime.UtcNow;
+        state.NextUidScanStart = CapAdd(batch.Max(item => item.Id));
         await ReconcileFlagsIfDueAsync(folderId, state, remote, cancellationToken);
         await db.SaveChangesAsync(cancellationToken);
     }
+
+    private static uint CapAdd(uint value) => value == uint.MaxValue ? uint.MaxValue : value + 1;
 
     // IMAP is the source of truth for \Seen. Reconciliation runs at most every
     // FlagSyncIntervalSeconds per folder and only stamps LastFlagSyncAt after a

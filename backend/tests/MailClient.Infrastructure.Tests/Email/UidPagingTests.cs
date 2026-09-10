@@ -13,8 +13,8 @@ public sealed class UidPagingTests
         var found = await MailKitRemoteMailFolder.SearchPagedAsync(
             0, 100, script.UidNext, script.SearchPage, CancellationToken.None);
 
-        Assert.Equal(100, found.Count);
-        Assert.Equal(Enumerable.Range(1, 100).Select(uid => (uint)uid), found.Select(uid => uid.Id));
+        Assert.Equal(100, found.Uids.Count);
+        Assert.Equal(Enumerable.Range(1, 100).Select(uid => (uint)uid), found.Uids.Select(uid => uid.Id));
         Assert.Equal(1, script.Calls);
     }
 
@@ -26,7 +26,7 @@ public sealed class UidPagingTests
         var found = await MailKitRemoteMailFolder.SearchPagedAsync(
             100, 100, script.UidNext, script.SearchPage, CancellationToken.None);
 
-        Assert.Equal([150u, 900000u], found.Select(uid => uid.Id));
+        Assert.Equal([150u, 900000u], found.Uids.Select(uid => uid.Id));
         Assert.True(script.Calls <= 8);
     }
 
@@ -38,7 +38,7 @@ public sealed class UidPagingTests
         var found = await MailKitRemoteMailFolder.SearchPagedAsync(
             0, 100, script.UidNext, script.SearchPage, CancellationToken.None);
 
-        Assert.Empty(found);
+        Assert.Empty(found.Uids);
         Assert.True(script.Calls <= 8);
     }
 
@@ -50,7 +50,7 @@ public sealed class UidPagingTests
         var found = await MailKitRemoteMailFolder.SearchPagedAsync(
             150, 100, script.UidNext, script.SearchPage, CancellationToken.None);
 
-        Assert.Equal([900000u], found.Select(uid => uid.Id));
+        Assert.Equal([900000u], found.Uids.Select(uid => uid.Id));
     }
 
     [Fact]
@@ -59,11 +59,11 @@ public sealed class UidPagingTests
         var atMax = Script([uint.MaxValue - 1], uidNext: uint.MaxValue);
         var found = await MailKitRemoteMailFolder.SearchPagedAsync(
             uint.MaxValue - 2, 100, atMax.UidNext, atMax.SearchPage, CancellationToken.None);
-        Assert.Equal([uint.MaxValue - 1], found.Select(uid => uid.Id));
+        Assert.Equal([uint.MaxValue - 1], found.Uids.Select(uid => uid.Id));
 
         var pastMax = Script([uint.MaxValue], uidNext: uint.MaxValue);
-        Assert.Empty(await MailKitRemoteMailFolder.SearchPagedAsync(
-            uint.MaxValue, 100, pastMax.UidNext, pastMax.SearchPage, CancellationToken.None));
+        Assert.Empty((await MailKitRemoteMailFolder.SearchPagedAsync(
+            uint.MaxValue, 100, pastMax.UidNext, pastMax.SearchPage, CancellationToken.None)).Uids);
         Assert.Equal(0, pastMax.Calls);
     }
 
@@ -101,8 +101,8 @@ public sealed class UidPagingTests
         var found = await MailKitRemoteMailFolder.SearchPagedAsync(
             0, 50, script.UidNext, script.SearchPage, CancellationToken.None);
 
-        Assert.Equal(50, found.Count);
-        Assert.Equal(50, found.Select(uid => uid.Id).Distinct().Count());
+        Assert.Equal(50, found.Uids.Count);
+        Assert.Equal(50, found.Uids.Select(uid => uid.Id).Distinct().Count());
     }
 
     private static ScriptedMailbox Script(IEnumerable<uint> existing, uint uidNext) =>

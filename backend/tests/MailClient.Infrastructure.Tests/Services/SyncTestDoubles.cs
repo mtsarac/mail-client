@@ -33,20 +33,28 @@ internal sealed class FakeRemoteMailFolder(
 
     public int MessageCallsFor(uint uid) => GetMessageCalls.GetValueOrDefault(uid, 0);
     public int LastSearchMaxCount { get; private set; }
+    public Func<uint, int, CancellationToken, Task<(IList<UniqueId> Uids, uint ScannedUpTo)>>? SearchHook { get; set; }
 
     public Task OpenAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
     public Task OpenForUpdateAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
-    public Task<IList<UniqueId>> SearchNewAsync(uint afterUid, int maxCount, CancellationToken cancellationToken)
+    public async Task<UidSearchResult> SearchNewAsync(uint afterUid, int maxCount, CancellationToken cancellationToken)
     {
         LastSearchMaxCount = maxCount;
-        return Task.FromResult<IList<UniqueId>>(Messages.Keys
+        if (SearchHook is not null)
+        {
+            var (uids, scannedUpTo) = await SearchHook(afterUid, maxCount, cancellationToken);
+            return new UidSearchResult(uids, scannedUpTo);
+        }
+
+        var found = Messages.Keys
             .Where(uid => uid > afterUid)
             .OrderBy(uid => uid)
             .Take(maxCount)
             .Select(uid => new UniqueId(uid))
-            .ToList());
+            .ToList();
+        return new UidSearchResult(found, found.Count == 0 ? afterUid : found.Max(uid => uid.Id));
     }
 
     public Task<IReadOnlyDictionary<uint, RemoteSummary?>> GetSummariesAsync(

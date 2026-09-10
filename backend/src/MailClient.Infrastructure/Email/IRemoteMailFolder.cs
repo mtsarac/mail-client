@@ -8,6 +8,8 @@ namespace MailClient.Infrastructure.Email;
 // Production path wraps IMailFolder; tests supply an in-memory fake.
 public sealed record RemoteSummary(uint Size, bool IsSeen);
 
+public sealed record UidSearchResult(IList<UniqueId> Uids, uint ScannedUpTo);
+
 public interface IRemoteMailFolder
 {
     uint UidValidity { get; }
@@ -17,10 +19,10 @@ public interface IRemoteMailFolder
     // Read-write open for flag mutation (PATCH read/unread). Sync uses OpenAsync (read-only).
     Task OpenForUpdateAsync(CancellationToken cancellationToken);
 
-    // New UIDs after afterUid, ascending, at most maxCount. Implementations
-    // must bound the materialized UID list (UID-range paging, not a full
-    // backlog fetch) because mailboxes may hold a very large initial backlog.
-    Task<IList<UniqueId>> SearchNewAsync(uint afterUid, int maxCount, CancellationToken cancellationToken);
+    // New UIDs from the scan cursor, ascending, at most maxCount. Both the
+    // materialized UID count and the SEARCH roundtrips per call are bounded
+    // (adaptive UID windows, capped page count); UidNext bounds the scan.
+    Task<UidSearchResult> SearchNewAsync(uint afterUid, int maxCount, CancellationToken cancellationToken);
 
     // Batch UID + SIZE + FLAGS lookup for the current bounded run. Returns only
     // summaries the server actually returned; a UID missing from the dictionary
@@ -52,7 +54,7 @@ public sealed class MailKitRemoteMailFolder(IMailFolder folder) : IRemoteMailFol
     public Task OpenForUpdateAsync(CancellationToken cancellationToken) =>
         folder.OpenAsync(FolderAccess.ReadWrite, cancellationToken);
 
-    public Task<IList<UniqueId>> SearchNewAsync(
+    public Task<UidSearchResult> SearchNewAsync(
         uint afterUid, int maxCount, CancellationToken cancellationToken) =>
         SearchPagedAsync(
             afterUid,
@@ -62,7 +64,7 @@ public sealed class MailKitRemoteMailFolder(IMailFolder folder) : IRemoteMailFol
                 SearchQuery.Uids(new UniqueIdRange(new UniqueId((uint)low), new UniqueId((uint)high))), ct),
             cancellationToken);
 
-    internal static async Task<IList<UniqueId>> SearchPagedAsync(
+    internal static async Task<UidSearchResult> SearchPagedAsync(
         uint afterUid,
         int maxCount,
         Func<uint> getUidNext,
@@ -72,11 +74,12 @@ public sealed class MailKitRemoteMailFolder(IMailFolder folder) : IRemoteMailFol
         const int MaxPages = 8;
         const ulong GrowthFactor = 4;
         if (afterUid == uint.MaxValue || maxCount <= 0)
-            return [];
+            return new UidSearchResult([], afterUid);
         var found = new List<UniqueId>();
         var low = (ulong)afterUid + 1;
         var window = (ulong)Math.Max(4L * maxCount, 1);
         var pages = 0;
+        var scannedUpTo = (ulong)afterUid;
         while (found.Count < maxCount && pages < MaxPages)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -84,8 +87,9 @@ public sealed class MailKitRemoteMailFolder(IMailFolder folder) : IRemoteMailFol
             if (uidNext == 0 || low >= uidNext)
                 break;
             var high = Math.Min(low + window - 1, (ulong)uidNext - 1);
-            var page = await searchPage(low, high, cancellationToken);
+            var page = (await searchPage(low, high, cancellationToken)).OrderBy(uid => uid.Id).ToList();
             pages++;
+            scannedUpTo = high;
             foreach (var uid in page)
             {
                 if (found.Count >= maxCount)
@@ -96,13 +100,11 @@ public sealed class MailKitRemoteMailFolder(IMailFolder folder) : IRemoteMailFol
             if (high >= (ulong)uidNext - 1)
                 break;
             low = high + 1;
-            window = Math.Min(
-                page.Count == 0 ? window * GrowthFactor : window * 2,
-                (ulong)uint.MaxValue);
+            window = Math.Min(page.Count == 0 ? window * GrowthFactor : window * 2, (ulong)uint.MaxValue);
         }
 
         found.Sort((left, right) => left.Id.CompareTo(right.Id));
-        return found;
+        return new UidSearchResult(found, (uint)scannedUpTo);
     }
 
     public async Task<IReadOnlyDictionary<uint, RemoteSummary?>> GetSummariesAsync(

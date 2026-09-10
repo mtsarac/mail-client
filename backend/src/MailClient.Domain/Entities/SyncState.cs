@@ -6,6 +6,7 @@ public class SyncState
     public Guid MailFolderId { get; set; }
     public uint UidValidity { get; set; }
     public uint LastUid { get; set; }
+    public uint NextUidScanStart { get; set; } = 1;
     public DateTime? LastNewMailSyncAt { get; set; }
     public DateTime? LastFlagSyncAt { get; set; }
     public MailFolder? MailFolder { get; set; }
