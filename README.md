@@ -2,7 +2,7 @@
 
 Mail Client is a Flutter + ASP.NET Core mail bridge for hosting-provider email accounts.
 
-The Flutter app does not connect to IMAP or SMTP directly. It calls this backend over HTTP. The backend stores mail metadata in PostgreSQL and runs a background IMAP sync worker. Mail sending and push notifications are planned but not implemented yet.
+The Flutter app does not connect to IMAP or SMTP directly. It calls this backend over HTTP. The backend stores mail metadata in PostgreSQL, runs a background IMAP sync worker, and sends mail through the user's own SMTP server. Push notifications are planned but not implemented yet.
 
 ## Architecture
 
@@ -42,6 +42,9 @@ The frontend team can place the Flutter project in `flutter_client/`. That path 
 - Mail accounts: per-user IMAP/SMTP configuration with encrypted credentials and connection testing
 - Folder discovery: IMAP special-use mapping, Inbox/Sent sync-enabled by default
 - Background IMAP sync: active accounts and enabled folders poll every 30 seconds; per-folder UIDVALIDITY checkpoints, durable poison-skip records, advisory-lock serialization across instances; attachment files are stored locally under `data/attachments`
+- Read/unread is two-way with IMAP as the source of truth: new mail maps `\Seen` to `IsRead`, `PATCH /api/mails/{id}/read` applies flag changes to IMAP before touching local state, and background flag reconciliation (default every 120 seconds, `FlagSyncIntervalSeconds`) syncs external flag changes without downloading bodies
+- Mail APIs: `GET /api/mails` (unified Inbox/Sent with account/folder/type filters, stable pagination), `GET /api/mails/{id}` (full body plus attachment metadata, never storage paths), `GET /api/mails/{mailId}/attachments/{attachmentId}` (streamed download, fully ownership-scoped)
+- SMTP sending: `POST /api/mail-accounts/{accountId}/send` (multipart form, recipient validation, outgoing size limits); SMTP success is never retried — if `SaveSentCopy` is on, the same message is IMAP-APPENDed to the discovered Sent folder and the response reports `sent` vs `sentCopySaved` separately
 - Rate limiting: fixed-window limiter on auth endpoints per client IP and on mail operations per user
 - Tests: xUnit; integration tests run against throwaway PostgreSQL via Testcontainers
 
@@ -126,6 +129,7 @@ See `.env.example` and `backend/src/MailClient.Api/appsettings.Local.example.jso
 "MailSync": {
   "Enabled": true,
   "PollIntervalSeconds": 30,
+  "FlagSyncIntervalSeconds": 120,
   "MaxMessagesPerRun": 100,
   "MaxAttachmentBytes": 26214400,
   "MaxMessageAttachmentBytes": 52428800,
@@ -142,6 +146,46 @@ Behavior:
 - Transient failures (database, network, IMAP, storage) abort the run and retry the same UID on the next poll. Only permanently malformed, vanished, or oversized messages are recorded in `SyncSkippedUids` and skipped past.
 - `MaxMessageBytes` is checked via an IMAP SIZE fetch before download; bodies are never fetched to determine size. Allowed messages are still fully parsed, so peak memory per message exceeds the raw size (parsed MIME plus `HtmlBody`/`TextBody` strings). Lower all three limits together if memory is constrained; the configuration validation requires `MaxMessageBytes >= MaxMessageAttachmentBytes >= MaxAttachmentBytes`.
 - `HasAttachments` reflects attachments actually stored, not merely present in the MIME part list.
+- IMAP is the source of truth for read/unread state. New mail maps `\Seen` to `IsRead` from the same bounded summary fetch (no extra roundtrip). `PATCH /api/mails/{id}/read` adds/removes `\Seen` on the server first and only then updates the local row; a UIDVALIDITY change returns `409 Conflict` and leaves both sides untouched. Flag reconciliation runs at most every `FlagSyncIntervalSeconds` per folder: FLAGS-only batched fetch, bounded chunks, only changed rows updated, `LastFlagSyncAt` stamped only after a fully successful pass. Failures never touch `LastUid` or checkpoints.
+
+## Mail APIs
+
+All mail endpoints require JWT and are strictly scoped to the caller's own accounts. Admin role does not bypass ownership.
+
+```text
+GET   /api/mails?folderType=Inbox&page=1&pageSize=30
+GET   /api/mails?accountId={accountId}&folderType=Sent&page=1&pageSize=30
+GET   /api/mails?folderId={folderId}&page=1&pageSize=30
+GET   /api/mails/{id}
+GET   /api/mails/{mailId}/attachments/{attachmentId}
+PATCH /api/mails/{id}/read            { "isRead": true }
+```
+
+- Pagination: `page >= 1`, `1 <= pageSize <= 100`, ordered by `ReceivedAt DESC, Id DESC`. The list never returns full bodies.
+- List summaries expose metadata only; detail adds `BodyHtml`/`BodyText` plus attachment metadata (`Id`, `FileName`, `ContentType`, `SizeBytes`, `IsInline`, `ContentId`). `StoragePath` and credentials are never exposed.
+- Attachment download streams the file from local storage (no Base64, no full buffering). The `mailId`/`attachmentId` chain is verified end to end; a missing file returns a controlled 404.
+
+## Sending mail
+
+```text
+POST /api/mail-accounts/{accountId}/send    multipart/form-data
+```
+
+Fields: `toAddress`, `subject`, `bodyHtml` and/or `bodyText` (at least one required), up to 20 `attachments` files. Recipients are validated with MimeKit parsing (local and domain parts required). Outgoing attachments reuse the configured `MaxAttachmentBytes` / `MaxMessageAttachmentBytes` limits, and uploaded streams are disposed after the operation without extra in-memory copies.
+
+Critical semantics: **SMTP success = sent.** The message is sent exactly once through the account's own SMTP server (same SSRF/DNS/TLS protections as all other mail traffic). Afterwards:
+
+- `SaveSentCopy == false` → done.
+- `SaveSentCopy == true` → the same `MimeMessage` is IMAP-APPENDed to the persisted Sent folder (no second SMTP send, no fake local row; normal Sent sync imports it later).
+- APPEND failure or missing Sent folder → `sent: true, sentCopySaved: false` with a warning, so the client never resends:
+
+```json
+{
+  "sent": true,
+  "sentCopySaved": false,
+  "warning": "Message was sent, but the Sent copy could not be stored."
+}
+```
 
 Attachments:
 
