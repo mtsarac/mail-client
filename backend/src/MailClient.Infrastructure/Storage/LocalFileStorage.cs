@@ -38,7 +38,25 @@ public sealed class LocalFileStorage(string rootPath) : IFileStorage
     public Task DeleteAsync(string relativePath, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        File.Delete(Path.Combine(rootPath, relativePath));
+        File.Delete(ScopedPath(relativePath));
         return Task.CompletedTask;
+    }
+
+    public Task DeleteAccountAsync(Guid accountId, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var accountDir = ScopedPath(Path.Combine("attachments", accountId.ToString("N")));
+        if (Directory.Exists(accountDir))
+            Directory.Delete(accountDir, recursive: true);
+        return Task.CompletedTask;
+    }
+
+    private string ScopedPath(string relativePath)
+    {
+        var full = Path.GetFullPath(Path.Combine(rootPath, relativePath));
+        var root = Path.GetFullPath(rootPath).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        if (!full.StartsWith(root, StringComparison.Ordinal))
+            throw new InvalidOperationException("Attachment path escapes the storage root.");
+        return full;
     }
 }

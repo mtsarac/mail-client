@@ -11,6 +11,9 @@ public interface IFileStorage
         CancellationToken cancellationToken);
 
     Task DeleteAsync(string relativePath, CancellationToken cancellationToken);
+
+    // Path is derived from accountId only. Idempotent.
+    Task DeleteAccountAsync(Guid accountId, CancellationToken cancellationToken);
 }
 
 public sealed record StoredFile(string RelativePath, long SizeBytes);
