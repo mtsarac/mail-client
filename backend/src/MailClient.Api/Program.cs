@@ -7,12 +7,14 @@ using MailClient.Api.Health;
 using MailClient.Api.Auth;
 using MailClient.Api.Accounts;
 using MailClient.Application.Interfaces;
+using MailClient.Application.Sync;
 using MailClient.Infrastructure.Email;
 using MailClient.Infrastructure.Identity;
 using MailClient.Infrastructure.Network;
 using MailClient.Infrastructure.Persistence;
 using MailClient.Infrastructure.Security;
 using MailClient.Infrastructure.Services;
+using MailClient.Infrastructure.Storage;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -69,6 +71,10 @@ builder.Services.AddSwaggerGen(options =>
 });
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("Default")));
+var mailSyncOptions = builder.Configuration.GetSection("MailSync").Get<MailSyncOptions>() ?? new MailSyncOptions();
+builder.Services.AddSingleton(mailSyncOptions);
+var attachmentRoot = builder.Configuration["MailSync:AttachmentRoot"]
+    ?? Path.Combine(builder.Environment.ContentRootPath, "data");
 var keyPath = builder.Configuration["DataProtection:KeyPath"]
     ?? Path.Combine(builder.Environment.ContentRootPath, "data", "protection-keys");
 builder.Services.AddDataProtection().PersistKeysToFileSystem(new DirectoryInfo(keyPath));
@@ -80,6 +86,9 @@ builder.Services.AddScoped<IMailFolderExplorer, MailKitFolderExplorer>();
 builder.Services.AddScoped<ICredentialProtector, DataProtectionCredentialProtector>();
 builder.Services.AddScoped<IMailAccountService, MailAccountService>();
 builder.Services.AddScoped<IMailFolderService, MailFolderService>();
+builder.Services.AddScoped<IFileStorage>(_ => new LocalFileStorage(attachmentRoot));
+builder.Services.AddScoped<MailFolderSyncService>();
+builder.Services.AddHostedService<MailSyncService>();
 builder.Services.AddScoped<IAuthenticationService, AuthenticationService>();
 builder.Services.AddScoped<IUserAdministrationService, UserAdministrationService>();
 builder.Services.AddScoped<IUserSessionValidator, UserSessionValidator>();
