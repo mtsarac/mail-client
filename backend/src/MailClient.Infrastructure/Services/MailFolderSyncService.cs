@@ -169,7 +169,7 @@ public sealed class MailFolderSyncService(
             }
         }
 
-        var uids = await remote.SearchNewAsync(state.LastUid, cancellationToken);
+        var uids = await remote.SearchNewAsync(state.LastUid, options.MaxMessagesPerRun, cancellationToken);
         var batch = uids.OrderBy(item => item.Id).Take(options.MaxMessagesPerRun).ToList();
         if (batch.Count == 0)
         {
@@ -242,15 +242,14 @@ public sealed class MailFolderSyncService(
         CancellationToken cancellationToken)
     {
         const int chunkSize = 500;
-        var processed = 0;
+        var lastUid = 0u;
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var chunk = await db.Mails
                 .AsNoTracking()
-                .Where(mail => mail.MailFolderId == folderId && mail.UidValidity == uidValidity)
+                .Where(mail => mail.MailFolderId == folderId && mail.UidValidity == uidValidity && mail.Uid > lastUid)
                 .OrderBy(mail => mail.Uid)
-                .Skip(processed)
                 .Take(chunkSize)
                 .Select(mail => new { mail.Id, mail.Uid, mail.IsRead })
                 .ToListAsync(cancellationToken);
@@ -299,7 +298,7 @@ public sealed class MailFolderSyncService(
                     db.Entry(mail).State = EntityState.Detached;
             }
 
-            processed += chunk.Count;
+            lastUid = chunk[^1].Uid;
         }
     }
 

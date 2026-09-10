@@ -17,7 +17,10 @@ public interface IRemoteMailFolder
     // Read-write open for flag mutation (PATCH read/unread). Sync uses OpenAsync (read-only).
     Task OpenForUpdateAsync(CancellationToken cancellationToken);
 
-    Task<IList<UniqueId>> SearchNewAsync(uint afterUid, CancellationToken cancellationToken);
+    // New UIDs after afterUid, ascending, at most maxCount. Implementations
+    // must bound the materialized UID list (UID-range paging, not a full
+    // backlog fetch) because mailboxes may hold a very large initial backlog.
+    Task<IList<UniqueId>> SearchNewAsync(uint afterUid, int maxCount, CancellationToken cancellationToken);
 
     // Batch UID + SIZE + FLAGS lookup for the current bounded run. Returns only
     // summaries the server actually returned; a UID missing from the dictionary
@@ -49,13 +52,41 @@ public sealed class MailKitRemoteMailFolder(IMailFolder folder) : IRemoteMailFol
     public Task OpenForUpdateAsync(CancellationToken cancellationToken) =>
         folder.OpenAsync(FolderAccess.ReadWrite, cancellationToken);
 
-    public async Task<IList<UniqueId>> SearchNewAsync(uint afterUid, CancellationToken cancellationToken)
+    public async Task<IList<UniqueId>> SearchNewAsync(
+        uint afterUid, int maxCount, CancellationToken cancellationToken)
     {
-        if (afterUid == uint.MaxValue)
+        if (afterUid == uint.MaxValue || maxCount <= 0)
             return [];
-        return await folder.SearchAsync(
-            SearchQuery.Uids(new UniqueIdRange(new UniqueId(afterUid + 1), new UniqueId(uint.MaxValue))),
-            cancellationToken);
+        var found = new List<UniqueId>();
+        // Windowed UID-range SEARCH: each server roundtrip materializes at most
+        // one window, so a huge backlog never becomes one huge UID list.
+        // UidNext bounds the scan; sparse ranges simply yield short pages.
+        var low = (ulong)afterUid + 1;
+        var window = (ulong)Math.Max(maxCount, 1);
+        while (found.Count < maxCount)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var uidNext = folder.UidNext?.Id ?? 0;
+            if (uidNext == 0 || low >= uidNext)
+                break;
+            var high = Math.Min(low + window - 1, (ulong)uidNext - 1);
+            var page = await folder.SearchAsync(
+                SearchQuery.Uids(new UniqueIdRange(new UniqueId((uint)low), new UniqueId((uint)high))),
+                cancellationToken);
+            foreach (var uid in page)
+            {
+                if (found.Count >= maxCount)
+                    break;
+                found.Add(uid);
+            }
+
+            if (high >= (ulong)uidNext - 1)
+                break;
+            low = high + 1;
+        }
+
+        found.Sort((left, right) => left.Id.CompareTo(right.Id));
+        return found;
     }
 
     public async Task<IReadOnlyDictionary<uint, RemoteSummary?>> GetSummariesAsync(

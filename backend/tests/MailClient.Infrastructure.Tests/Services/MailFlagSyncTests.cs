@@ -238,6 +238,31 @@ public sealed class MailFlagSyncTests
     }
 
     [Fact]
+    public async Task Reconcile_LargeFolder_PagesByKeyset()
+    {
+        await using var db = CreateDb();
+        var (accountId, folderId) = await SeedFolderAsync(db);
+        var messages = new Dictionary<uint, Func<MimeMessage>>();
+        var seen = new HashSet<uint>();
+        for (uint uid = 100; uid < 700; uid++)
+        {
+            var current = uid;
+            await SeedMailAsync(db, current, uidValidity: 7, isRead: false, folderId: folderId);
+            messages[current] = () => SimpleMessage($"m{current}");
+            if (current % 2 == 0)
+                seen.Add(current);
+        }
+
+        var remote = new FakeRemoteMailFolder(7, messages, seenUids: seen);
+        await CreateSyncService(db).SyncFolderCoreAsync(accountId, folderId, remote, CancellationToken.None);
+
+        Assert.Equal(2, remote.GetFlagsCalls);
+        var mails = await db.Mails.ToListAsync();
+        Assert.Equal(600, mails.Count);
+        Assert.All(mails, mail => Assert.Equal(mail.Uid % 2 == 0, mail.IsRead));
+    }
+
+    [Fact]
     public async Task Reconcile_SkippedWhenIntervalHasNotElapsed()
     {
         await using var db = CreateDb();

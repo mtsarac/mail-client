@@ -32,17 +32,22 @@ internal sealed class FakeRemoteMailFolder(
     private readonly HashSet<uint> _seenUids = seenUids ?? [];
 
     public int MessageCallsFor(uint uid) => GetMessageCalls.GetValueOrDefault(uid, 0);
+    public int LastSearchMaxCount { get; private set; }
 
     public Task OpenAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
     public Task OpenForUpdateAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
-    public Task<IList<UniqueId>> SearchNewAsync(uint afterUid, CancellationToken cancellationToken) =>
-        Task.FromResult<IList<UniqueId>>(Messages.Keys
+    public Task<IList<UniqueId>> SearchNewAsync(uint afterUid, int maxCount, CancellationToken cancellationToken)
+    {
+        LastSearchMaxCount = maxCount;
+        return Task.FromResult<IList<UniqueId>>(Messages.Keys
             .Where(uid => uid > afterUid)
             .OrderBy(uid => uid)
+            .Take(maxCount)
             .Select(uid => new UniqueId(uid))
             .ToList());
+    }
 
     public Task<IReadOnlyDictionary<uint, RemoteSummary?>> GetSummariesAsync(
         IReadOnlyCollection<UniqueId> uids, CancellationToken cancellationToken)
