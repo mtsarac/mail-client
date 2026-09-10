@@ -103,7 +103,8 @@ dotnet tool install --global dotnet-ef
   "PollIntervalSeconds": 30,
   "MaxMessagesPerRun": 100,
   "MaxAttachmentBytes": 26214400,
-  "MaxMessageAttachmentBytes": 52428800
+  "MaxMessageAttachmentBytes": 52428800,
+  "MaxMessageBytes": 104857600
 }
 ```
 
