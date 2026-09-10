@@ -22,6 +22,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.OpenApi;
 
@@ -77,6 +78,9 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 var mailSyncOptions = builder.Configuration.GetSection("MailSync").Get<MailSyncOptions>() ?? new MailSyncOptions();
 mailSyncOptions.Validate();
 builder.Services.AddSingleton(mailSyncOptions);
+var maxSendRequestBytes = SendRequestLimits.ComputeMaxRequestBytes(mailSyncOptions);
+builder.WebHost.ConfigureKestrel(server => server.Limits.MaxRequestBodySize = maxSendRequestBytes);
+builder.Services.Configure<FormOptions>(options => options.MultipartBodyLengthLimit = maxSendRequestBytes);
 var attachmentRoot = builder.Configuration["MailSync:AttachmentRoot"]
     ?? Path.Combine(builder.Environment.ContentRootPath, "data");
 var configuredKeyPath = builder.Configuration["DataProtection:KeyPath"];

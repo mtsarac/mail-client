@@ -2,6 +2,10 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
+using MailClient.Application.Sync;
+using Microsoft.AspNetCore.Http.Features;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 
 namespace MailClient.Api.Tests;
 
@@ -127,6 +131,17 @@ public sealed class MailSendEndpointsTests(IntegrationFixture fixture) : Integra
         request.Content = SendForm("friend@example.test", subject, "hello");
         request.Headers.Add("Idempotency-Key", key);
         return request;
+    }
+
+    [Fact]
+    public void MultipartLimit_MatchesComputedSendCeiling()
+    {
+        using var scope = Fixture.Factory.Services.CreateScope();
+        var provider = scope.ServiceProvider;
+        var ceiling = SendRequestLimits.ComputeMaxRequestBytes(
+            provider.GetRequiredService<MailSyncOptions>());
+
+        Assert.Equal(ceiling, provider.GetRequiredService<IOptions<FormOptions>>().Value.MultipartBodyLengthLimit);
     }
 
     private static MultipartFormDataContent SendForm(string to, string subject, string body)

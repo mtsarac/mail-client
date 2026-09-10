@@ -364,6 +364,54 @@ public sealed class MailSendServiceTests
         Assert.True(stream.Disposed);
     }
 
+    [Fact]
+    public async Task Send_LongSubject_TruncatedToFieldLimit()
+    {
+        await using var db = CreateDb();
+        var (userId, accountId) = await SeedAccountAsync(db, withSentFolder: false);
+        var transport = new FakeMailTransport();
+
+        var result = await CreateService(db, transport).SendAsync(
+            userId, Command(accountId, subject: new string('s', 600)), CancellationToken.None);
+
+        Assert.True(result.Value!.Sent);
+        Assert.Equal(500, transport.Sent[0].Subject!.Length);
+    }
+
+    [Fact]
+    public async Task Send_OversizedBody_Rejected()
+    {
+        await using var db = CreateDb();
+        var (userId, accountId) = await SeedAccountAsync(db);
+        var transport = new FakeMailTransport();
+
+        var result = await CreateService(db, transport).SendAsync(
+            userId, Command(accountId, html: null, text: new string('x', 1_000_001)),
+            CancellationToken.None);
+
+        Assert.Equal(ServiceOutcome.Invalid, result.Outcome);
+        Assert.Empty(transport.Sent);
+    }
+
+    [Fact]
+    public async Task Send_TooManyAttachments_Rejected_AndStreamsDisposed()
+    {
+        await using var db = CreateDb();
+        var (userId, accountId) = await SeedAccountAsync(db);
+        var transport = new FakeMailTransport();
+        var attachments = Enumerable.Range(0, 21)
+            .Select(index => new SendMailAttachment(
+                $"f{index}.txt", "text/plain", new TrackingStream("x"u8.ToArray())))
+            .ToList();
+
+        var result = await CreateService(db, transport).SendAsync(
+            userId, Command(accountId, attachments: attachments), CancellationToken.None);
+
+        Assert.Equal(ServiceOutcome.Invalid, result.Outcome);
+        Assert.Empty(transport.Sent);
+        Assert.All(attachments, attachment => Assert.True(((TrackingStream)attachment.Content).Disposed));
+    }
+
     private static MailSendService CreateService(AppDbContext db, IMailTransport transport) =>
         new(db, transport, new SendOperationStore(db, NullLogger<SendOperationStore>.Instance),
             Options(), NullLogger<MailSendService>.Instance);

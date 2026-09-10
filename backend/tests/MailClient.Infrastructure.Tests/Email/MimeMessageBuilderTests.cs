@@ -59,6 +59,20 @@ public sealed class MimeMessageBuilderTests
     }
 
     [Fact]
+    public void OverlongFileName_TruncatedToFieldLimit()
+    {
+        using var content = new MemoryStream([1]);
+        var message = MimeMessageBuilder.Build(
+            "me@example.test", "Me",
+            new MailboxAddress("You", "you@example.test"),
+            "Subject", null, "hello",
+            [new SendMailAttachment(new string('n', 300), "text/plain", content)]);
+
+        var mixed = Assert.IsType<Multipart>(message.Body);
+        Assert.Equal(255, Assert.IsType<MimePart>(mixed[1]).FileName!.Length);
+    }
+
+    [Fact]
     public void InvalidAttachmentContentType_FallsBackToOctetStream()
     {
         using var content = new MemoryStream([1, 2, 3]);
