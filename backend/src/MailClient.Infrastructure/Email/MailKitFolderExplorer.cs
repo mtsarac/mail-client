@@ -61,6 +61,10 @@ public sealed class MailKitFolderExplorer(MailConnectionHelper connections) : IM
                     uidValidity = folder.UidValidity;
                     await folder.CloseAsync(false, cancellationToken);
                 }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
                 catch (Exception)
                 {
                     uidValidity = folder.UidValidity;
@@ -76,6 +80,10 @@ public sealed class MailKitFolderExplorer(MailConnectionHelper connections) : IM
         try
         {
             children = await folder.GetSubfoldersAsync(false, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception)
         {

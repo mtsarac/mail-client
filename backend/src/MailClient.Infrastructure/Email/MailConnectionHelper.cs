@@ -5,6 +5,7 @@ using MailKit;
 using MailKit.Net.Imap;
 using MailKit.Net.Smtp;
 using Microsoft.Extensions.Logging;
+using System.Net.Sockets;
 
 namespace MailClient.Infrastructure.Email;
 
@@ -22,7 +23,6 @@ public sealed class MailConnectionHelper(
         Func<ImapClient, CancellationToken, Task<T>> action,
         CancellationToken cancellationToken)
     {
-        await EnsureHostAllowedAsync(endpoint, operation, cancellationToken);
         using var client = new ImapClient { Timeout = OperationTimeoutMs };
         return await RunAsync(client, endpoint, username, password, operation,
             (service, ct) => action((ImapClient)service, ct), cancellationToken);
@@ -36,26 +36,9 @@ public sealed class MailConnectionHelper(
         Func<SmtpClient, CancellationToken, Task<T>> action,
         CancellationToken cancellationToken)
     {
-        await EnsureHostAllowedAsync(endpoint, operation, cancellationToken);
         using var client = new SmtpClient { Timeout = OperationTimeoutMs };
         return await RunAsync(client, endpoint, username, password, operation,
             (service, ct) => action((SmtpClient)service, ct), cancellationToken);
-    }
-
-    private async Task EnsureHostAllowedAsync(
-        MailServerEndpoint endpoint,
-        string operation,
-        CancellationToken cancellationToken)
-    {
-        var check = await hosts.CheckAsync(endpoint.Host, cancellationToken);
-        if (check.Allowed)
-            return;
-
-        logger.LogWarning(
-            "Mail operation {Operation} blocked for host {Host}: {Reason}.",
-            operation, endpoint.Host, check.Reason);
-        throw new MailConnectionException(
-            MailConnectionFailure.Network, "Mail host is not allowed.");
     }
 
     private async Task<T> RunAsync<T>(
@@ -69,7 +52,10 @@ public sealed class MailConnectionHelper(
     {
         try
         {
-            await client.ConnectAsync(endpoint.Host, endpoint.Port,
+            var destination = await hosts.ResolveAllowedAsync(endpoint.Host, cancellationToken);
+            using var socket = new Socket(destination.Address.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
+            await socket.ConnectAsync(destination.Address, endpoint.Port, cancellationToken);
+            await client.ConnectAsync(socket, endpoint.Host, endpoint.Port,
                 MailSecurityMapper.ToSocketOptions(endpoint.Security), cancellationToken);
             await client.AuthenticateAsync(username, password, cancellationToken);
             return await action(client, cancellationToken);
