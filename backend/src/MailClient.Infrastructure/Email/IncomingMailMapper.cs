@@ -48,11 +48,11 @@ internal static class IncomingMailMapper
             folderId,
             uid,
             uidValidity,
-            message.MessageId ?? string.Empty,
-            string.IsNullOrWhiteSpace(message.Subject) ? "(no subject)" : message.Subject,
-            from?.Address ?? string.Empty,
-            from?.Name ?? string.Empty,
-            to?.Address ?? string.Empty,
+            MailFieldNormalizer.MessageId(message.MessageId),
+            MailFieldNormalizer.Subject(message.Subject),
+            MailFieldNormalizer.Address(from?.Address),
+            MailFieldNormalizer.DisplayName(from?.Name),
+            MailFieldNormalizer.ToAddress(to?.Address),
             message.HtmlBody ?? string.Empty,
             message.TextBody ?? string.Empty,
             message.Date == DateTimeOffset.MinValue ? DateTime.UtcNow : message.Date.UtcDateTime,
@@ -72,9 +72,9 @@ internal static class IncomingMailMapper
 
         return new IncomingAttachment(
             content,
-            part.FileName ?? "attachment",
-            part.ContentType.MimeType,
+            MailFieldNormalizer.FileName(part.FileName),
+            MailFieldNormalizer.ContentType(part.ContentType.MimeType),
             IsInline(part),
-            part.ContentId ?? string.Empty);
+            MailFieldNormalizer.ContentId(part.ContentId));
     }
 }
