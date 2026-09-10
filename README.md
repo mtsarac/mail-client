@@ -133,7 +133,8 @@ See `.env.example` and `backend/src/MailClient.Api/appsettings.Local.example.jso
   "MaxMessagesPerRun": 100,
   "MaxAttachmentBytes": 26214400,
   "MaxMessageAttachmentBytes": 52428800,
-  "MaxMessageBytes": 104857600
+  "MaxMessageBytes": 104857600,
+  "MaxSendBodyChars": 1000000
 }
 ```
 
@@ -141,8 +142,9 @@ Set `MailSync:Enabled=false` for development or tests that should not start the 
 
 Behavior:
 
-- The worker polls active accounts and sync-enabled folders sequentially and serializes each folder across instances with a PostgreSQL advisory lock.
+- The worker polls active accounts and sync-enabled folders sequentially and serializes each folder across instances with a PostgreSQL advisory lock. Folders that disappeared from the last successful discovery are marked unavailable: their mail is kept, but they are never synchronized until they reappear (reappearing restores availability without changing the user's sync preference).
 - `LastUid` checkpoints per folder; each mail insert commits atomically with its checkpoint.
+- New-UID discovery is bounded per run (`MaxMessagesPerRun`) using windowed UID-range SEARCH against `UidNext`, so a huge initial backlog never materializes as one huge UID list. MailKit exposes no server-side SEARCH LIMIT; sparse UID ranges may take several small roundtrips instead.
 - Transient failures (database, network, IMAP, storage) abort the run and retry the same UID on the next poll. Only permanently malformed, vanished, or oversized messages are recorded in `SyncSkippedUids` and skipped past.
 - `MaxMessageBytes` is checked via an IMAP SIZE fetch before download; bodies are never fetched to determine size. Allowed messages are still fully parsed, so peak memory per message exceeds the raw size (parsed MIME plus `HtmlBody`/`TextBody` strings). Lower all three limits together if memory is constrained; the configuration validation requires `MaxMessageBytes >= MaxMessageAttachmentBytes >= MaxAttachmentBytes`.
 - `HasAttachments` reflects attachments actually stored, not merely present in the MIME part list.
@@ -171,7 +173,11 @@ PATCH /api/mails/{id}/read            { "isRead": true }
 POST /api/mail-accounts/{accountId}/send    multipart/form-data
 ```
 
-Fields: `toAddress`, `subject`, `bodyHtml` and/or `bodyText` (at least one required), up to 20 `attachments` files. Recipients are validated with MimeKit parsing (local and domain parts required). Outgoing attachments reuse the configured `MaxAttachmentBytes` / `MaxMessageAttachmentBytes` limits, and uploaded streams are disposed after the operation without extra in-memory copies.
+Fields: `toAddress`, `subject`, `bodyHtml` and/or `bodyText` (at least one required), up to 20 `attachments` files. Recipients are validated with MimeKit parsing (local and domain parts required). Subjects are truncated to 500 characters; each body is rejected past `MaxSendBodyChars`. Outgoing attachment filenames/content types are normalized (255/150 chars, safe fallback); filenames never touch the filesystem. Outgoing attachments reuse the configured `MaxAttachmentBytes` / `MaxMessageAttachmentBytes` limits, and uploaded streams are disposed after the operation without extra in-memory copies.
+
+Upload limits end to end: Kestrel's max request body and the multipart limit are configured at startup from `MaxMessageAttachmentBytes` plus both bodies at worst-case UTF-8 plus 1 MiB framing headroom, so the server never accepts a request the application would later reject for size. Reverse proxies in front of the API need a matching body limit (e.g. `client_max_body_size` ≈ 65M with defaults).
+
+Idempotent sending: pass `Idempotency-Key: <unique-value>` to deduplicate HTTP retries per user. State machine (`SendOperations`, unique per user+key): `InProgress → Failed` (SMTP never accepted; same key may retry) or `→ Sent → SentWithCopy`. A retry after `Sent`/`SentWithCopy` replays the stored result and never touches SMTP again; a busy key returns `409`; the same key with a different account/recipients/subject/body/attachments returns `409`. Fingerprints hash metadata only, never attachment contents or passwords.
 
 Critical semantics: **SMTP success = sent.** The message is sent exactly once through the account's own SMTP server (same SSRF/DNS/TLS protections as all other mail traffic). Afterwards:
 

@@ -98,7 +98,7 @@ public static class MailAccountEndpoints
                 idempotencyKey = request.Headers["Idempotency-Key"].ToString().Trim();
                 if (idempotencyKey.Length == 0 || idempotencyKey.Length > 200)
                     return Results.ValidationProblem(new Dictionary<string, string[]>
-                        { ["idempotencyKey"] = ["Idempotency key must be 1-200 characters."] });
+                    { ["idempotencyKey"] = ["Idempotency key must be 1-200 characters."] });
             }
             var files = request.Form.Files
                 .Select(file => new SendMailAttachment(
