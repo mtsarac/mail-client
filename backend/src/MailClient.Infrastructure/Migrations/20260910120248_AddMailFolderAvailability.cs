@@ -15,7 +15,7 @@ namespace MailClient.Infrastructure.Migrations
                 table: "MailFolders",
                 type: "boolean",
                 nullable: false,
-                defaultValue: false);
+                defaultValue: true);
         }
 
         /// <inheritdoc />
