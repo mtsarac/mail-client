@@ -16,6 +16,7 @@ public sealed class MailAccountService(
     IHostEnvironment environment,
     IMailConnectivityTester tester,
     IOutboundHostValidator hosts,
+    IFileStorage storage,
     ILogger<MailAccountService> logger) : IMailAccountService
 {
     public async Task<IReadOnlyList<MailAccountResponse>> ListAsync(Guid userId, CancellationToken cancellationToken)
@@ -92,9 +93,36 @@ public sealed class MailAccountService(
     {
         var account = await FindOwnedAsync(userId, accountId, cancellationToken);
         if (account is null) return false;
+
+        // Best-effort file cleanup after DB commit; storage failure must not block deletion.
+        var ownedPaths = await db.Attachments
+            .Where(attachment => db.Mails.Any(mail =>
+                mail.Id == attachment.MailId && mail.MailAccountId == accountId))
+            .Select(attachment => attachment.StoragePath)
+            .ToListAsync(cancellationToken);
+
         db.MailAccounts.Remove(account);
         await db.SaveChangesAsync(cancellationToken);
         logger.LogInformation("User {UserId} deleted mail account {AccountId}.", userId, accountId);
+
+        foreach (var path in ownedPaths)
+        {
+            try
+            {
+                await storage.DeleteAsync(path, CancellationToken.None);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex,
+                    "Attachment cleanup failed after deleting account {AccountId}. Path retained for later sweep.",
+                    accountId);
+            }
+        }
+
         return true;
     }
 

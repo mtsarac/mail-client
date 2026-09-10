@@ -1,6 +1,7 @@
 using MailClient.Application.Interfaces;
 using MailClient.Application.Network;
 using MailClient.Application.Validation;
+using MailClient.Domain.Entities;
 using MailClient.Infrastructure.Network;
 using MailClient.Domain.Enums;
 using MailClient.Infrastructure.Persistence;
@@ -134,7 +135,7 @@ public class MailAccountServiceTests
     {
         await using var db = CreateDb();
         var service = new MailAccountService(db, CreateProtector(), new TestEnvironment("Production"),
-            new FakeConnectivityTester(), new AllowHostValidator(), NullLogger<MailAccountService>.Instance);
+            new FakeConnectivityTester(), new AllowHostValidator(), new NoOpFileStorage(), NullLogger<MailAccountService>.Instance);
         var request = Request("password") with
         {
             ImapHost = "imap.example.com",
@@ -169,9 +170,11 @@ public class MailAccountServiceTests
         AppDbContext db,
         ICredentialProtector protector,
         FakeConnectivityTester? tester = null,
-        IOutboundHostValidator? hosts = null) =>
+        IOutboundHostValidator? hosts = null,
+        IFileStorage? storage = null) =>
         new(db, protector, new TestEnvironment("Development"),
-            tester ?? new FakeConnectivityTester(), hosts ?? new AllowHostValidator(), NullLogger<MailAccountService>.Instance);
+            tester ?? new FakeConnectivityTester(), hosts ?? new AllowHostValidator(),
+            storage ?? new NoOpFileStorage(), NullLogger<MailAccountService>.Instance);
 
     private static AppDbContext CreateDb() => new(new DbContextOptionsBuilder<AppDbContext>()
         .UseInMemoryDatabase(Guid.NewGuid().ToString())
@@ -206,6 +209,174 @@ public class MailAccountServiceTests
     {
         public Task<System.Net.IPAddress[]> ResolveAsync(string host, CancellationToken cancellationToken) =>
             Task.FromException<System.Net.IPAddress[]>(new InvalidOperationException("DNS must not be called."));
+    }
+
+    [Fact]
+    public async Task DeleteAsync_RemovesOwnedAttachmentFiles()
+    {
+        await using var db = CreateDb();
+        var storage = new TrackingFileStorage();
+        var service = CreateService(db, CreateProtector(), storage: storage);
+        var userId = Guid.NewGuid();
+        var account = await service.CreateAsync(userId, Request("password"), CancellationToken.None);
+        var folderId = Guid.NewGuid();
+        var mailId = Guid.NewGuid();
+        db.MailFolders.Add(new MailFolder
+        {
+            Id = folderId,
+            MailAccountId = account.Id,
+            Name = "INBOX",
+            FullName = "INBOX",
+            IsSyncEnabled = true
+        });
+        db.Mails.Add(new Mail
+        {
+            Id = mailId,
+            MailAccountId = account.Id,
+            MailFolderId = folderId,
+            Subject = "s",
+            ReceivedAt = DateTime.UtcNow
+        });
+        db.Attachments.Add(new Attachment
+        {
+            Id = Guid.NewGuid(),
+            MailId = mailId,
+            FileName = "a.txt",
+            ContentType = "text/plain",
+            StoragePath = "owned/file-a"
+        });
+        await db.SaveChangesAsync();
+
+        Assert.True(await service.DeleteAsync(userId, account.Id, CancellationToken.None));
+
+        Assert.Contains("owned/file-a", storage.Deleted);
+        Assert.Empty(await db.MailAccounts.ToListAsync());
+    }
+
+    [Fact]
+    public async Task DeleteAsync_PreservesUnrelatedAccountFiles()
+    {
+        await using var db = CreateDb();
+        var storage = new TrackingFileStorage();
+        var service = CreateService(db, CreateProtector(), storage: storage);
+        var userId = Guid.NewGuid();
+        var owned = await service.CreateAsync(userId, Request("password"), CancellationToken.None);
+        var other = await service.CreateAsync(userId, new MailAccountRequest(
+            "other@example.com", "Other", "other@example.com", "password",
+            "imap.example.com", 993, MailSecurity.SslOnConnect,
+            "smtp.example.com", 587, MailSecurity.StartTls, true), CancellationToken.None);
+        var mailId = Guid.NewGuid();
+        var folderId = Guid.NewGuid();
+        db.MailFolders.Add(new MailFolder
+        {
+            Id = folderId,
+            MailAccountId = other.Id,
+            Name = "INBOX",
+            FullName = "INBOX",
+            IsSyncEnabled = true
+        });
+        db.Mails.Add(new Mail
+        {
+            Id = mailId,
+            MailAccountId = other.Id,
+            MailFolderId = folderId,
+            Subject = "s",
+            ReceivedAt = DateTime.UtcNow
+        });
+        db.Attachments.Add(new Attachment
+        {
+            Id = Guid.NewGuid(),
+            MailId = mailId,
+            FileName = "b.txt",
+            ContentType = "text/plain",
+            StoragePath = "other/file-b"
+        });
+        await db.SaveChangesAsync();
+
+        Assert.True(await service.DeleteAsync(userId, owned.Id, CancellationToken.None));
+
+        Assert.DoesNotContain("other/file-b", storage.Deleted);
+        Assert.Single(await db.MailAccounts.ToListAsync());
+    }
+
+    [Fact]
+    public async Task DeleteAsync_WithoutAttachments_Works()
+    {
+        await using var db = CreateDb();
+        var service = CreateService(db, CreateProtector(), storage: new TrackingFileStorage());
+        var userId = Guid.NewGuid();
+        var account = await service.CreateAsync(userId, Request("password"), CancellationToken.None);
+
+        Assert.True(await service.DeleteAsync(userId, account.Id, CancellationToken.None));
+        Assert.Empty(await db.MailAccounts.ToListAsync());
+    }
+
+    [Fact]
+    public async Task DeleteAsync_MissingPhysicalFiles_DoesNotFail()
+    {
+        await using var db = CreateDb();
+        var storage = new ThrowingFileStorage();
+        var service = CreateService(db, CreateProtector(), storage: storage);
+        var userId = Guid.NewGuid();
+        var account = await service.CreateAsync(userId, Request("password"), CancellationToken.None);
+        var folderId = Guid.NewGuid();
+        var mailId = Guid.NewGuid();
+        db.MailFolders.Add(new MailFolder
+        {
+            Id = folderId,
+            MailAccountId = account.Id,
+            Name = "INBOX",
+            FullName = "INBOX",
+            IsSyncEnabled = true
+        });
+        db.Mails.Add(new Mail
+        {
+            Id = mailId,
+            MailAccountId = account.Id,
+            MailFolderId = folderId,
+            Subject = "s",
+            ReceivedAt = DateTime.UtcNow
+        });
+        db.Attachments.Add(new Attachment
+        {
+            Id = Guid.NewGuid(),
+            MailId = mailId,
+            FileName = "a.txt",
+            ContentType = "text/plain",
+            StoragePath = "owned/missing"
+        });
+        await db.SaveChangesAsync();
+
+        Assert.True(await service.DeleteAsync(userId, account.Id, CancellationToken.None));
+        Assert.Empty(await db.MailAccounts.ToListAsync());
+    }
+
+    private sealed class TrackingFileStorage : IFileStorage
+    {
+        public List<string> Deleted { get; } = [];
+        public Task<StoredFile> SaveAsync(Guid accountId, Guid mailId, Guid attachmentId, Func<Stream, CancellationToken, Task> write, long maxBytes, CancellationToken cancellationToken) =>
+            Task.FromResult(new StoredFile("noop", 0));
+        public Task DeleteAsync(string relativePath, CancellationToken cancellationToken)
+        {
+            Deleted.Add(relativePath);
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class ThrowingFileStorage : IFileStorage
+    {
+        public Task<StoredFile> SaveAsync(Guid accountId, Guid mailId, Guid attachmentId, Func<Stream, CancellationToken, Task> write, long maxBytes, CancellationToken cancellationToken) =>
+            Task.FromResult(new StoredFile("noop", 0));
+        public Task DeleteAsync(string relativePath, CancellationToken cancellationToken) =>
+            Task.FromException(new FileNotFoundException("gone"));
+    }
+
+    private sealed class NoOpFileStorage : IFileStorage
+    {
+        public Task<StoredFile> SaveAsync(Guid accountId, Guid mailId, Guid attachmentId, Func<Stream, CancellationToken, Task> write, long maxBytes, CancellationToken cancellationToken) =>
+            Task.FromResult(new StoredFile("noop", 0));
+
+        public Task DeleteAsync(string relativePath, CancellationToken cancellationToken) => Task.CompletedTask;
     }
 
     private sealed class FakeConnectivityTester : IMailConnectivityTester
