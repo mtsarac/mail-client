@@ -365,7 +365,8 @@ public sealed class MailSendServiceTests
     }
 
     private static MailSendService CreateService(AppDbContext db, IMailTransport transport) =>
-        new(db, transport, Options(), NullLogger<MailSendService>.Instance);
+        new(db, transport, new SendOperationStore(db, NullLogger<SendOperationStore>.Instance),
+            Options(), NullLogger<MailSendService>.Instance);
 
     private static AppDbContext CreateDb() => new(new DbContextOptionsBuilder<AppDbContext>()
         .UseInMemoryDatabase(Guid.NewGuid().ToString("N")).Options);
@@ -423,18 +424,21 @@ public sealed class MailSendServiceTests
         }
     }
 
-    private sealed class FakeMailTransport : IMailTransport
+    internal sealed class FakeMailTransport : IMailTransport
     {
         public List<MimeMessage> Sent { get; } = [];
         public List<(string FullName, MimeMessage Message)> Appended { get; } = [];
         public Func<Exception>? SendFailure { get; set; }
         public Func<Exception>? AppendFailure { get; set; }
+        public bool ThrowCanceledAfterSend { get; set; }
 
         public Task SendAsync(MailAccount account, MimeMessage message, CancellationToken cancellationToken)
         {
             if (SendFailure is not null)
                 throw SendFailure();
             Sent.Add(message);
+            if (ThrowCanceledAfterSend)
+                throw new OperationCanceledException();
             return Task.CompletedTask;
         }
 

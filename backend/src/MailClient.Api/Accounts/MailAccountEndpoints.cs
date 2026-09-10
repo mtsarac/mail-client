@@ -92,6 +92,14 @@ public static class MailAccountEndpoints
             CancellationToken ct) =>
         {
             var form = await request.ReadFormAsync(ct);
+            string? idempotencyKey = null;
+            if (request.Headers.ContainsKey("Idempotency-Key"))
+            {
+                idempotencyKey = request.Headers["Idempotency-Key"].ToString().Trim();
+                if (idempotencyKey.Length == 0 || idempotencyKey.Length > 200)
+                    return Results.ValidationProblem(new Dictionary<string, string[]>
+                        { ["idempotencyKey"] = ["Idempotency key must be 1-200 characters."] });
+            }
             var files = request.Form.Files
                 .Select(file => new SendMailAttachment(
                     file.FileName, file.ContentType, file.OpenReadStream())).ToList();
@@ -103,7 +111,8 @@ public static class MailAccountEndpoints
                     form["subject"].ToString(),
                     ToNullIfEmpty(form["bodyHtml"].ToString()),
                     ToNullIfEmpty(form["bodyText"].ToString()),
-                    files),
+                    files,
+                    idempotencyKey),
                 ct);
             return result.Outcome switch
             {
@@ -113,6 +122,8 @@ public static class MailAccountEndpoints
                     detail: result.Value?.Warning,
                     statusCode: StatusCodes.Status502BadGateway),
                 ServiceOutcome.NotFound => Results.NotFound(),
+                ServiceOutcome.Conflict => Results.Conflict(
+                    result.Errors.ToDictionary(entry => entry.Key, entry => entry.Value)),
                 _ => Results.ValidationProblem(result.Errors.ToDictionary(entry => entry.Key, entry => entry.Value))
             };
         }).RequireRateLimiting("mail-operations");

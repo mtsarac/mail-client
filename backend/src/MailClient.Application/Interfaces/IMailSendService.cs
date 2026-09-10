@@ -16,7 +16,8 @@ public sealed record SendMailCommand(
     string Subject,
     string? BodyHtml,
     string? BodyText,
-    IReadOnlyList<SendMailAttachment> Attachments);
+    IReadOnlyList<SendMailAttachment> Attachments,
+    string? IdempotencyKey = null);
 
 public sealed record SendMailAttachment(
     string FileName,

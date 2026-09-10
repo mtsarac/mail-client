@@ -76,6 +76,59 @@ public sealed class MailSendEndpointsTests(IntegrationFixture fixture) : Integra
         Assert.Equal(HttpStatusCode.BadGateway, response.StatusCode);
     }
 
+    [Fact]
+    public async Task Send_EmptyIdempotencyKey_ReturnsBadRequest()
+    {
+        var (_, token) = await SeedUserAsync(UniqueEmail("senderkey"), "sender-password-1");
+        var client = CreateClient();
+        Authenticate(client, token);
+        var accountId = await CreateAccountAsync(client);
+
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/api/mail-accounts/{accountId}/send");
+        request.Content = SendForm("friend@example.test", "Hi", "hello");
+        request.Headers.Add("Idempotency-Key", "   ");
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.SendAsync(request)).StatusCode);
+
+        var longKey = new HttpRequestMessage(HttpMethod.Post, $"/api/mail-accounts/{accountId}/send");
+        longKey.Content = SendForm("friend@example.test", "Hi", "hello");
+        longKey.Headers.Add("Idempotency-Key", new string('k', 201));
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.SendAsync(longKey)).StatusCode);
+    }
+
+    [Fact]
+    public async Task Send_SameKeyTwice_FailedOperation_AllowsRetry()
+    {
+        var (_, token) = await SeedUserAsync(UniqueEmail("senderretry"), "sender-password-1");
+        var client = CreateClient();
+        Authenticate(client, token);
+        var accountId = await CreateUnreachableAccountAsync(client);
+
+        async Task<HttpStatusCode> Send() =>
+            (await client.SendAsync(KeyedRequest(accountId, "retry-key-1", "Hi"))).StatusCode;
+        Assert.Equal(HttpStatusCode.BadGateway, await Send());
+        Assert.Equal(HttpStatusCode.BadGateway, await Send());
+    }
+
+    [Fact]
+    public async Task Send_SameKeyDifferentBody_ReturnsConflict()
+    {
+        var (_, token) = await SeedUserAsync(UniqueEmail("sendermix"), "sender-password-1");
+        var client = CreateClient();
+        Authenticate(client, token);
+        var accountId = await CreateUnreachableAccountAsync(client);
+
+        Assert.Equal(HttpStatusCode.BadGateway, (await client.SendAsync(KeyedRequest(accountId, "mix-key-1", "Hi"))).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await client.SendAsync(KeyedRequest(accountId, "mix-key-1", "Changed"))).StatusCode);
+    }
+
+    private static HttpRequestMessage KeyedRequest(Guid accountId, string key, string subject)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/api/mail-accounts/{accountId}/send");
+        request.Content = SendForm("friend@example.test", subject, "hello");
+        request.Headers.Add("Idempotency-Key", key);
+        return request;
+    }
+
     private static MultipartFormDataContent SendForm(string to, string subject, string body)
     {
         var form = new MultipartFormDataContent

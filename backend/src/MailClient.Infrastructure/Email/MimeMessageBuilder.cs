@@ -50,7 +50,7 @@ internal static class MimeMessageBuilder
         ContentType contentType;
         try
         {
-            contentType = ContentType.Parse(attachment.ContentType);
+            contentType = ContentType.Parse(MailFieldNormalizer.ContentType(attachment.ContentType));
         }
         catch (ParseException)
         {
@@ -62,7 +62,7 @@ internal static class MimeMessageBuilder
             Content = new MimeContent(attachment.Content),
             ContentDisposition = new ContentDisposition(ContentDisposition.Attachment),
             ContentTransferEncoding = ContentEncoding.Base64,
-            FileName = attachment.FileName
+            FileName = MailFieldNormalizer.FileName(attachment.FileName)
         };
     }
 }

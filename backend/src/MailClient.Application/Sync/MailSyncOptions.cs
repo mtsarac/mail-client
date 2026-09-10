@@ -9,6 +9,7 @@ public sealed class MailSyncOptions
     public long MaxAttachmentBytes { get; init; } = 25 * 1024 * 1024;
     public long MaxMessageAttachmentBytes { get; init; } = 50 * 1024 * 1024;
     public long MaxMessageBytes { get; init; } = 100 * 1024 * 1024;
+    public int MaxSendBodyChars { get; init; } = 1_000_000;
 
     public void Validate()
     {
@@ -18,7 +19,8 @@ public sealed class MailSyncOptions
             || MaxAttachmentBytes <= 0
             || MaxMessageAttachmentBytes < MaxAttachmentBytes
             || MaxMessageBytes <= 0
-            || MaxMessageBytes < MaxMessageAttachmentBytes)
+            || MaxMessageBytes < MaxMessageAttachmentBytes
+            || MaxSendBodyChars <= 0)
             throw new InvalidOperationException("MailSync configuration is invalid.");
     }
 }
