@@ -56,6 +56,29 @@ public sealed class OutboundHostValidator(IDnsResolver dns) : IOutboundHostValid
         return HostCheckResult.Allow();
     }
 
+    public async Task<ValidatedHost> ResolveAllowedAsync(string host, CancellationToken cancellationToken)
+    {
+        var literal = CheckLiteralHost(host);
+        if (!literal.Allowed)
+            throw new InvalidOperationException(literal.Reason);
+
+        var trimmed = host.Trim();
+        if (IPAddress.TryParse(trimmed, out var parsed))
+            return new ValidatedHost(trimmed, parsed);
+
+        var addresses = await dns.ResolveAsync(trimmed, cancellationToken);
+        foreach (var address in addresses)
+        {
+            var check = CheckAddress(address);
+            if (!check.Allowed)
+                throw new InvalidOperationException(check.Reason);
+        }
+
+        var destination = addresses.FirstOrDefault()
+            ?? throw new InvalidOperationException("Host resolved to no addresses.");
+        return new ValidatedHost(trimmed, destination);
+    }
+
     internal static HostCheckResult CheckAddress(IPAddress address)
     {
         var candidate = address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address;
