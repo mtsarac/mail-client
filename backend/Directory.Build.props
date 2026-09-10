@@ -1,5 +1,6 @@
 <Project>
   <PropertyGroup>
     <RestoreEnablePackagePruning>false</RestoreEnablePackagePruning>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
 </Project>
