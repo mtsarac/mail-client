@@ -1,7 +1,9 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
+using MailClient.Application;
 using MailClient.Application.Interfaces;
 using MailClient.Application.Validation;
+using Microsoft.AspNetCore.Http;
 
 namespace MailClient.Api.Accounts;
 
@@ -82,6 +84,39 @@ public static class MailAccountEndpoints
             return folder is null ? Results.NotFound() : Results.Ok(folder);
         });
 
+        group.MapPost("/{id:guid}/send", async (
+            Guid id,
+            HttpRequest request,
+            ClaimsPrincipal user,
+            IMailSendService service,
+            CancellationToken ct) =>
+        {
+            var form = await request.ReadFormAsync(ct);
+            var files = request.Form.Files
+                .Select(file => new SendMailAttachment(
+                    file.FileName, file.ContentType, file.OpenReadStream())).ToList();
+            var result = await service.SendAsync(
+                GetUserId(user),
+                new SendMailCommand(
+                    id,
+                    form["toAddress"].ToString(),
+                    form["subject"].ToString(),
+                    ToNullIfEmpty(form["bodyHtml"].ToString()),
+                    ToNullIfEmpty(form["bodyText"].ToString()),
+                    files),
+                ct);
+            return result.Outcome switch
+            {
+                ServiceOutcome.Ok when result.Value!.Sent => Results.Ok(result.Value),
+                ServiceOutcome.Ok => Results.Problem(
+                    title: "Mail send failed.",
+                    detail: result.Value?.Warning,
+                    statusCode: StatusCodes.Status502BadGateway),
+                ServiceOutcome.NotFound => Results.NotFound(),
+                _ => Results.ValidationProblem(result.Errors.ToDictionary(entry => entry.Key, entry => entry.Value))
+            };
+        }).RequireRateLimiting("mail-operations");
+
         return app;
     }
 
@@ -90,6 +125,9 @@ public static class MailAccountEndpoints
         var value = user.FindFirstValue(ClaimTypes.NameIdentifier) ?? user.FindFirstValue(JwtRegisteredClaimNames.Sub);
         return Guid.TryParse(value, out var userId) ? userId : throw new UnauthorizedAccessException();
     }
+
+    private static string? ToNullIfEmpty(string value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value;
 
     public sealed record MailFolderSyncRequest(bool IsSyncEnabled);
 }
