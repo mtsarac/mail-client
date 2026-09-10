@@ -33,6 +33,7 @@ internal sealed class FakeRemoteMailFolder(
 
     public int MessageCallsFor(uint uid) => GetMessageCalls.GetValueOrDefault(uid, 0);
     public int LastSearchMaxCount { get; private set; }
+    public uint LastSearchAfterUid { get; private set; }
     public Func<uint, int, CancellationToken, Task<(IList<UniqueId> Uids, uint ScannedUpTo)>>? SearchHook { get; set; }
 
     public Task OpenAsync(CancellationToken cancellationToken) => Task.CompletedTask;
@@ -42,6 +43,7 @@ internal sealed class FakeRemoteMailFolder(
     public async Task<UidSearchResult> SearchNewAsync(uint afterUid, int maxCount, CancellationToken cancellationToken)
     {
         LastSearchMaxCount = maxCount;
+        LastSearchAfterUid = afterUid;
         if (SearchHook is not null)
         {
             var (uids, scannedUpTo) = await SearchHook(afterUid, maxCount, cancellationToken);

@@ -102,8 +102,8 @@ public sealed class SyncBacklogTests
             return (result.Uids, result.ScannedUpTo);
         };
 
-        uint cursorAfterFirst = 0;
-        uint cursorAfterSecond = 0;
+        long cursorAfterFirst = 0;
+        long cursorAfterSecond = 0;
         var found = false;
         for (polls = 1; polls <= 20 && !found; polls++)
         {
@@ -146,8 +146,61 @@ public sealed class SyncBacklogTests
         var updated = await db.SyncStates.SingleAsync(item => item.MailFolderId == folderId);
         Assert.Equal(7u, updated.UidValidity);
         Assert.Equal(600u, updated.LastUid);
-        Assert.Equal(601u, updated.NextUidScanStart);
+        Assert.Equal(601L, updated.NextUidScanStart);
         Assert.Single(await db.Mails.ToListAsync());
+    }
+
+    [Fact]
+    public async Task UpgradedState_LastUid500_Cursor501_ContinuesWithoutRescanOrWrap()
+    {
+        await using var db = CreateDb();
+        var (accountId, folderId) = await SeedFolderAsync(db);
+        var state = await db.SyncStates.SingleAsync(item => item.MailFolderId == folderId);
+        state.UidValidity = 7;
+        state.LastUid = 500;
+        state.NextUidScanStart = 501;
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+        var remote = new FakeRemoteMailFolder(7, new Dictionary<uint, Func<MimeMessage>>
+        {
+            [320] = () => SimpleMessage("old-below-checkpoint"),
+            [501] = () => SimpleMessage("first-after-upgrade"),
+            [512] = () => SimpleMessage("later")
+        });
+
+        await CreateService(db, Options(100)).SyncFolderCoreAsync(accountId, folderId, remote, CancellationToken.None);
+
+        Assert.Equal(500u, remote.LastSearchAfterUid);
+        Assert.Equal(2, await db.Mails.CountAsync());
+        Assert.DoesNotContain(await db.Mails.Select(item => item.Uid).ToListAsync(), uid => uid <= 500);
+        var updated = await db.SyncStates.SingleAsync(item => item.MailFolderId == folderId);
+        Assert.Equal(512u, updated.LastUid);
+        Assert.Equal(513L, updated.NextUidScanStart);
+    }
+
+    [Fact]
+    public async Task FullyScannedCursor_Sentinel_DoesNotRescanOrWrap()
+    {
+        await using var db = CreateDb();
+        var (accountId, folderId) = await SeedFolderAsync(db);
+        var state = await db.SyncStates.SingleAsync(item => item.MailFolderId == folderId);
+        state.UidValidity = 7;
+        state.LastUid = uint.MaxValue;
+        state.NextUidScanStart = (long)uint.MaxValue + 1;
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+        var remote = new FakeRemoteMailFolder(7, new Dictionary<uint, Func<MimeMessage>>
+        {
+            [uint.MaxValue] = () => SimpleMessage("max")
+        });
+
+        await CreateService(db, Options(100)).SyncFolderCoreAsync(accountId, folderId, remote, CancellationToken.None);
+
+        Assert.Equal(uint.MaxValue, remote.LastSearchAfterUid);
+        Assert.Empty(await db.Mails.ToListAsync());
+        var updated = await db.SyncStates.SingleAsync(item => item.MailFolderId == folderId);
+        Assert.Equal(uint.MaxValue, updated.LastUid);
+        Assert.Equal((long)uint.MaxValue + 1, updated.NextUidScanStart);
     }
 
     [Fact]
@@ -167,7 +220,7 @@ public sealed class SyncBacklogTests
         Assert.Single(await db.Mails.ToListAsync());
         var state = await db.SyncStates.SingleAsync();
         Assert.Equal(uint.MaxValue, state.LastUid);
-        Assert.Equal(uint.MaxValue, state.NextUidScanStart);
+        Assert.Equal((long)uint.MaxValue + 1, state.NextUidScanStart);
     }
 
     private static MailFolderSyncService CreateService(AppDbContext db, MailSyncOptions options) =>

@@ -243,6 +243,73 @@ public sealed class SendIdempotencyTests
     }
 
     [Fact]
+    public async Task RealRequestCancellation_PersistsDeliveryUnknown_AndRetryDoesNotResend()
+    {
+        await using var db = CreateDb();
+        var (userId, accountId) = await SeedAccountAsync(db);
+        var transport = new MailSendServiceTests.FakeMailTransport();
+        var observedCancelToken = CancellationTokenSource.CreateLinkedTokenSource(CancellationToken.None);
+        try
+        {
+            transport.OnSendingAsync = async cts =>
+            {
+                cts.Cancel();
+                await Task.CompletedTask;
+                throw new OperationCanceledException(cts.Token);
+            };
+            var service = CreateService(db, transport);
+            var command = KeyedCommand(accountId, "key-1");
+
+            // The request token is already cancelled when SMTP aborts, like a real
+            // HTTP disconnect: the safety write must still persist DeliveryUnknown.
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+                service.SendAsync(userId, command, observedCancelToken.Token));
+
+            var operation = await db.SendOperations.SingleAsync();
+            Assert.Equal(SendOperationStatus.DeliveryUnknown, operation.Status);
+
+            var retry = await service.SendAsync(userId, command, CancellationToken.None);
+
+            Assert.Equal(ServiceOutcome.Conflict, retry.Outcome);
+            Assert.Single(transport.Sent);
+        }
+        finally
+        {
+            observedCancelToken.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task SafetyWriteFailure_StillPropagatesCancellation_AndRetryDoesNotResend()
+    {
+        var dbName = Guid.NewGuid().ToString("N");
+        var transport = new MailSendServiceTests.FakeMailTransport();
+        var db = CreateDb(dbName);
+        var (userId, accountId) = await SeedAccountAsync(db);
+        transport.OnSendingAsync = async cts =>
+        {
+            cts.Cancel();
+            await db.DisposeAsync();
+            throw new OperationCanceledException(cts.Token);
+        };
+        var service = CreateService(db, transport);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            service.SendAsync(userId, KeyedCommand(accountId, "key-1"), CancellationToken.None));
+
+        await using (var check = CreateDb(dbName))
+        {
+            var operation = await check.SendOperations.SingleAsync();
+            Assert.Equal(SendOperationStatus.InProgress, operation.Status);
+            var retry = await CreateService(check, transport)
+                .SendAsync(userId, KeyedCommand(accountId, "key-1"), CancellationToken.None);
+
+            Assert.Equal(ServiceOutcome.Conflict, retry.Outcome);
+            Assert.Single(transport.Sent);
+        }
+    }
+
+    [Fact]
     public async Task NoKey_SendsEveryTime()
     {
         await using var db = CreateDb();
@@ -290,6 +357,9 @@ public sealed class SendIdempotencyTests
     private static MailSendService CreateService(AppDbContext db, MailSendServiceTests.FakeMailTransport transport) =>
         new(db, transport, new SendOperationStore(db, NullLogger<SendOperationStore>.Instance),
             Options(), NullLogger<MailSendService>.Instance);
+
+    private static AppDbContext CreateDb(string name) => new(new DbContextOptionsBuilder<AppDbContext>()
+        .UseInMemoryDatabase(name).Options);
 
     private static AppDbContext CreateDb() => new(CreateOptions());
 

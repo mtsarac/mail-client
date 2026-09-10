@@ -482,17 +482,29 @@ public sealed class MailSendServiceTests
         public bool ThrowCanceledAfterSend { get; set; }
         public bool ThrowUnknownAfterSend { get; set; }
         public Func<CancellationToken, Task>? OnAppending { get; set; }
+        public Func<CancellationTokenSource, Task>? OnSendingAsync { get; set; }
 
-        public Task SendAsync(MailAccount account, MimeMessage message, CancellationToken cancellationToken)
+        public async Task SendAsync(MailAccount account, MimeMessage message, CancellationToken cancellationToken)
         {
             if (SendFailure is not null)
                 throw SendFailure();
             Sent.Add(message);
+            if (OnSendingAsync is not null)
+            {
+                var cts = new CancellationTokenSource();
+                try
+                {
+                    await OnSendingAsync(cts);
+                }
+                finally
+                {
+                    cts.Dispose();
+                }
+            }
             if (ThrowCanceledAfterSend)
                 throw new OperationCanceledException();
             if (ThrowUnknownAfterSend)
                 throw new SmtpDeliveryException("SMTP delivery outcome is unknown.");
-            return Task.CompletedTask;
         }
 
         public Task AppendToSentAsync(MailAccount account, string sentFullName, MimeMessage message, CancellationToken cancellationToken)

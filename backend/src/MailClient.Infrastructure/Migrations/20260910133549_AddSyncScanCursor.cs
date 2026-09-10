@@ -15,7 +15,20 @@ namespace MailClient.Infrastructure.Migrations
                 table: "SyncStates",
                 type: "bigint",
                 nullable: false,
-                defaultValue: 0L);
+                defaultValue: 1L);
+
+            // Backfill from already checkpointed progress: migrated rows must
+            // continue scanning right after their LastUid instead of restarting
+            // at UID 1. A fully scanned 32-bit UID space keeps the one-past-end
+            // sentinel (uint.MaxValue + 1), which bigint can represent.
+            migrationBuilder.Sql("""
+                UPDATE "SyncStates"
+                SET "NextUidScanStart" =
+                    CASE
+                        WHEN "LastUid" >= 4294967295 THEN 4294967296
+                        ELSE "LastUid" + 1
+                    END;
+                """);
         }
 
         /// <inheritdoc />

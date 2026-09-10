@@ -131,7 +131,7 @@ public sealed class MailSendService(
         }
         catch (OperationCanceledException)
         {
-            await MarkUnknownBestEffortAsync(operation, cancellationToken);
+            await MarkUnknownBestEffortAsync(operation);
             throw;
         }
         catch (SmtpDeliveryException ex)
@@ -215,12 +215,27 @@ public sealed class MailSendService(
         }
     }
 
-    private async Task MarkUnknownBestEffortAsync(
-        SendOperation? operation, CancellationToken cancellationToken)
+    // The request token is already dead on this path by definition, so the
+    // safety write runs under a short server-owned timeout instead. Only the
+    // status UPDATE runs here: no SMTP, no APPEND, no other work. Failure is
+    // swallowed (the row stays InProgress, which still denies resend) and the
+    // original cancellation keeps propagating via the caller's rethrow.
+    private async Task MarkUnknownBestEffortAsync(SendOperation? operation)
     {
-        if (operation is null || cancellationToken.IsCancellationRequested)
+        if (operation is null)
             return;
-        await operations.TryMarkUnknownAsync(operation.Id, cancellationToken);
+        try
+        {
+            using var safety = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            await operations.TryMarkUnknownAsync(operation.Id, safety.Token);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(
+                ex,
+                "Could not persist uncertain SMTP delivery state for send operation {OperationId}.",
+                operation.Id);
+        }
     }
 
     private static async Task<IReadOnlyList<(string FileName, string ContentType, long SizeBytes, string ContentHash)>> HashAttachmentsAsync(

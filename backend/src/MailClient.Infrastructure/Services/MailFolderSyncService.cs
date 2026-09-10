@@ -170,19 +170,25 @@ public sealed class MailFolderSyncService(
             }
         }
 
-        // Scan cursor invariants (persisted in NextUidScanStart):
+        // Scan cursor invariants (persisted in NextUidScanStart, a long):
         // - LastUid = highest UID safely processed; never advanced over unsearched ranges.
         // - The cursor only moves forward over UID ranges SEARCH actually covered,
         //   or past fully processed UIDs, so every UID above LastUid stays reachable.
+        // - A fully scanned 32-bit UID space is the one-past-end sentinel
+        //   (uint.MaxValue + 1); the derived IMAP search point (cursor - 1)
+        //   always stays inside uint range, so there is no wraparound.
         // - New arrivals always land at or beyond UidNext, hence ahead of the cursor.
+        var afterUid = state.NextUidScanStart <= 1
+            ? 0u
+            : (uint)Math.Min(state.NextUidScanStart - 1, (long)uint.MaxValue);
         var result = await remote.SearchNewAsync(
-            state.NextUidScanStart - 1, options.MaxMessagesPerRun, cancellationToken);
+            afterUid, options.MaxMessagesPerRun, cancellationToken);
         var batch = result.Uids.OrderBy(item => item.Id).Take(options.MaxMessagesPerRun).ToList();
         if (batch.Count == 0)
         {
             state.UidValidity = remote.UidValidity;
             state.LastNewMailSyncAt = DateTime.UtcNow;
-            state.NextUidScanStart = CapAdd(result.ScannedUpTo);
+            state.NextUidScanStart = CursorAfter(result.ScannedUpTo);
             await ReconcileFlagsIfDueAsync(folderId, state, remote, cancellationToken);
             await db.SaveChangesAsync(cancellationToken);
             return;
@@ -210,12 +216,17 @@ public sealed class MailFolderSyncService(
 
         state.UidValidity = remote.UidValidity;
         state.LastNewMailSyncAt = DateTime.UtcNow;
-        state.NextUidScanStart = CapAdd(batch.Max(item => item.Id));
+        state.NextUidScanStart = CursorAfter(batch.Max(item => item.Id));
         await ReconcileFlagsIfDueAsync(folderId, state, remote, cancellationToken);
         await db.SaveChangesAsync(cancellationToken);
     }
 
-    private static uint CapAdd(uint value) => value == uint.MaxValue ? uint.MaxValue : value + 1;
+    // Cursor advance without wraparound. The one-past-end sentinel
+    // (uint.MaxValue + 1) is representable because the cursor is a long;
+    // it must not be clamped back to uint.MaxValue, or a fully synced
+    // mailbox would rescan its last UID forever.
+    private static long CursorAfter(uint scannedMaxUid) =>
+        scannedMaxUid == uint.MaxValue ? (long)uint.MaxValue + 1 : (long)scannedMaxUid + 1;
 
     // IMAP is the source of truth for \Seen. Reconciliation runs at most every
     // FlagSyncIntervalSeconds per folder and only stamps LastFlagSyncAt after a
