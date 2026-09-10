@@ -16,6 +16,7 @@ public class AppDbContext : DbContext
     public DbSet<Attachment> Attachments => Set<Attachment>();
     public DbSet<DeviceToken> DeviceTokens => Set<DeviceToken>();
     public DbSet<SyncState> SyncStates => Set<SyncState>();
+    public DbSet<SyncSkippedUid> SyncSkippedUids => Set<SyncSkippedUid>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
