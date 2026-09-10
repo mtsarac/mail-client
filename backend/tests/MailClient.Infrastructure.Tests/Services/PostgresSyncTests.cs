@@ -6,6 +6,7 @@ using MailClient.Domain.Enums;
 using MailClient.Infrastructure.Persistence;
 using MailClient.Infrastructure.Services;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -95,6 +96,34 @@ public sealed class PostgresSyncTests(PostgresSyncFixture fixture)
         Assert.Empty(await check.Mails.Where(m => m.MailFolderId == folderId).ToListAsync());
         Assert.Empty(await check.SyncSkippedUids.Where(s => s.MailFolderId == folderId).ToListAsync());
         Assert.Equal(0u, (await check.SyncStates.SingleAsync(s => s.MailFolderId == folderId)).LastUid);
+    }
+
+    [Fact]
+    public async Task UpsertAsync_BoundedSelects()
+    {
+        Guid accountId;
+        await using (var seed = fixture.CreateDb())
+            (accountId, _) = await SyncTestSeed.SeedFolderAsync(seed);
+
+        var counter = new SelectCounter();
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseNpgsql(fixture.ConnectionString)
+            .AddInterceptors(counter)
+            .Options;
+        await using var db = new AppDbContext(options);
+        var folders = await new MailFolderService(
+                db, new PassthroughProtector(), new FixedExplorer(), NullLogger<MailFolderService>.Instance)
+            .UpsertAsync(accountId,
+            [
+                new DiscoveredMailFolder("INBOX", "INBOX", MailFolderType.Inbox, 7, true),
+                new DiscoveredMailFolder("Sent", "Sent", MailFolderType.Sent, 7, true),
+                new DiscoveredMailFolder("A", "A", MailFolderType.Custom, 1, false),
+                new DiscoveredMailFolder("B", "B", MailFolderType.Custom, 1, false),
+                new DiscoveredMailFolder("C", "C", MailFolderType.Custom, 1, false)
+            ], CancellationToken.None);
+
+        Assert.Equal(5, folders.Count);
+        Assert.True(counter.Selects <= 3);
     }
 
     [Fact]
@@ -354,5 +383,27 @@ public sealed class PostgresSyncTests(PostgresSyncFixture fixture)
             Task.FromResult(HostCheckResult.Allow());
         public Task<ValidatedHost> ResolveAllowedAsync(string host, CancellationToken cancellationToken) =>
             Task.FromResult(new ValidatedHost(host, System.Net.IPAddress.Parse("93.184.216.34")));
+    }
+
+    private sealed class FixedExplorer : IMailFolderExplorer
+    {
+        public Task<IReadOnlyList<DiscoveredMailFolder>> ExploreAsync(
+            MailServerEndpoint endpoint, string username, string password, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<DiscoveredMailFolder>>([]);
+    }
+
+    private sealed class SelectCounter : DbCommandInterceptor
+    {
+        public int Selects;
+        public override ValueTask<System.Data.Common.DbDataReader> ReaderExecutedAsync(
+            System.Data.Common.DbCommand command,
+            Microsoft.EntityFrameworkCore.Diagnostics.CommandExecutedEventData eventData,
+            System.Data.Common.DbDataReader result,
+            CancellationToken cancellationToken = default)
+        {
+            if (command.CommandText.TrimStart().StartsWith("SELECT", StringComparison.OrdinalIgnoreCase))
+                Selects++;
+            return base.ReaderExecutedAsync(command, eventData, result, cancellationToken);
+        }
     }
 }

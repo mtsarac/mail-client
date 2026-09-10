@@ -15,7 +15,8 @@ public sealed record MailFolderResponse(
     string FullName,
     MailFolderType FolderType,
     uint UidValidity,
-    bool IsSyncEnabled);
+    bool IsSyncEnabled,
+    bool IsAvailable);
 
 public sealed record MailFolderRefreshResponse(
     bool Succeeded,

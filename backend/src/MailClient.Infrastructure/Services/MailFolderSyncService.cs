@@ -24,7 +24,7 @@ public sealed class MailFolderSyncService(
     public async Task SyncAllAsync(CancellationToken cancellationToken)
     {
         var accountIds = await db.MailAccounts
-            .Where(account => account.IsActive && account.Folders.Any(folder => folder.IsSyncEnabled))
+            .Where(account => account.IsActive && account.Folders.Any(folder => folder.IsSyncEnabled && folder.IsAvailable))
             .Select(account => account.Id)
             .ToListAsync(cancellationToken);
 
@@ -54,7 +54,6 @@ public sealed class MailFolderSyncService(
     private async Task SyncAccountAsync(Guid accountId, CancellationToken cancellationToken)
     {
         var account = await db.MailAccounts
-            .Include(item => item.Folders)
             .SingleOrDefaultAsync(item => item.Id == accountId, cancellationToken);
         // Account may have been deactivated or deleted after the poll listed it.
         if (account is null || !account.IsActive)
@@ -62,7 +61,7 @@ public sealed class MailFolderSyncService(
         var endpoint = new MailServerEndpoint(account.ImapHost, account.ImapPort, account.ImapSecurity);
         var password = credentials.Unprotect(account.EncryptedPassword);
 
-        foreach (var folderId in account.Folders.Where(folder => folder.IsSyncEnabled).Select(folder => folder.Id))
+        foreach (var (folderId, fullName) in await GetSyncableFoldersAsync(accountId, cancellationToken))
         {
             // Acquire the folder lock BEFORE opening the IMAP connection so a second
             // instance waits without holding an unnecessary authenticated connection.
@@ -73,7 +72,6 @@ public sealed class MailFolderSyncService(
                 // the account, so a missing account here means deletion won.
                 if (!await db.MailAccounts.AnyAsync(item => item.Id == accountId, cancellationToken))
                     return;
-                var fullName = account.Folders.Single(folder => folder.Id == folderId).FullName;
                 await connections.WithImapAsync(
                     endpoint,
                     account.Username,
@@ -102,6 +100,21 @@ public sealed class MailFolderSyncService(
                     account.ImapHost);
             }
         }
+    }
+
+    // Folders eligible for sync: user-enabled and last seen by discovery.
+    // Unavailable (stale) folders are never synchronized; their mail is kept.
+    internal async Task<IReadOnlyList<(Guid FolderId, string FullName)>> GetSyncableFoldersAsync(
+        Guid accountId,
+        CancellationToken cancellationToken)
+    {
+        return (await db.MailFolders
+            .AsNoTracking()
+            .Where(folder => folder.MailAccountId == accountId && folder.IsSyncEnabled && folder.IsAvailable)
+            .Select(folder => new { folder.Id, folder.FullName })
+            .ToListAsync(cancellationToken))
+            .Select(folder => (folder.Id, folder.FullName))
+            .ToList();
     }
 
     // Testable core: no IMAP connection management, no advisory lock.

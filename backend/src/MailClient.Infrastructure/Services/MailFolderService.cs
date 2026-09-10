@@ -21,7 +21,7 @@ public sealed class MailFolderService(
             .Where(folder => folder.MailAccountId == accountId)
             .OrderBy(folder => folder.Name)
             .Select(folder => new MailFolderResponse(
-                folder.Id, folder.Name, folder.FullName, folder.FolderType, folder.UidValidity, folder.IsSyncEnabled))
+                folder.Id, folder.Name, folder.FullName, folder.FolderType, folder.UidValidity, folder.IsSyncEnabled, folder.IsAvailable))
             .ToListAsync(cancellationToken);
     }
 
@@ -92,29 +92,45 @@ public sealed class MailFolderService(
         IEnumerable<DiscoveredMailFolder> discovered,
         CancellationToken cancellationToken)
     {
-        foreach (var item in discovered)
+        var discoveredByName = discovered
+            .GroupBy(item => item.FullName, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
+        var existing = await db.MailFolders
+            .Where(folder => folder.MailAccountId == accountId)
+            .ToListAsync(cancellationToken);
+
+        foreach (var folder in existing)
         {
-            var existing = await db.MailFolders.SingleOrDefaultAsync(
-                folder => folder.MailAccountId == accountId && folder.FullName == item.FullName, cancellationToken);
-            if (existing is null)
+            if (!discoveredByName.TryGetValue(folder.FullName, out var item))
             {
-                db.MailFolders.Add(new MailClient.Domain.Entities.MailFolder
-                {
-                    Id = Guid.NewGuid(),
-                    MailAccountId = accountId,
-                    Name = item.Name,
-                    FullName = item.FullName,
-                    FolderType = item.FolderType,
-                    UidValidity = item.UidValidity,
-                    IsSyncEnabled = item.IsSyncEnabled
-                });
+                folder.IsAvailable = false;
+                continue;
             }
-            else
+
+            folder.Name = item.Name;
+            folder.FolderType = item.FolderType;
+            folder.UidValidity = item.UidValidity;
+            folder.IsAvailable = true;
+        }
+
+        var existingNames = existing
+            .Select(folder => folder.FullName)
+            .ToHashSet(StringComparer.Ordinal);
+        foreach (var item in discoveredByName.Values)
+        {
+            if (existingNames.Contains(item.FullName))
+                continue;
+            db.MailFolders.Add(new MailClient.Domain.Entities.MailFolder
             {
-                existing.Name = item.Name;
-                existing.FolderType = item.FolderType;
-                existing.UidValidity = item.UidValidity;
-            }
+                Id = Guid.NewGuid(),
+                MailAccountId = accountId,
+                Name = item.Name,
+                FullName = item.FullName,
+                FolderType = item.FolderType,
+                UidValidity = item.UidValidity,
+                IsSyncEnabled = item.IsSyncEnabled,
+                IsAvailable = true
+            });
         }
 
         await db.SaveChangesAsync(cancellationToken);
@@ -122,10 +138,10 @@ public sealed class MailFolderService(
             .Where(folder => folder.MailAccountId == accountId)
             .OrderBy(folder => folder.Name)
             .Select(folder => new MailFolderResponse(
-                folder.Id, folder.Name, folder.FullName, folder.FolderType, folder.UidValidity, folder.IsSyncEnabled))
+                folder.Id, folder.Name, folder.FullName, folder.FolderType, folder.UidValidity, folder.IsSyncEnabled, folder.IsAvailable))
             .ToListAsync(cancellationToken);
     }
 
     private static MailFolderResponse ToResponse(MailClient.Domain.Entities.MailFolder folder) => new(
-        folder.Id, folder.Name, folder.FullName, folder.FolderType, folder.UidValidity, folder.IsSyncEnabled);
+        folder.Id, folder.Name, folder.FullName, folder.FolderType, folder.UidValidity, folder.IsSyncEnabled, folder.IsAvailable);
 }

@@ -11,6 +11,7 @@ public class MailFolder
     public MailFolderType FolderType { get; set; } = MailFolderType.Unknown;
     public uint UidValidity { get; set; }
     public bool IsSyncEnabled { get; set; }
+    public bool IsAvailable { get; set; } = true;
     public MailAccount? MailAccount { get; set; }
     public SyncState? SyncState { get; set; }
     public ICollection<Mail> Mails { get; set; } = new List<Mail>();
