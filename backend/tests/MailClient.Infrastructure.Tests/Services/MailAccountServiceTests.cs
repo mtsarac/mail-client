@@ -198,6 +198,8 @@ public class MailAccountServiceTests
         public HostCheckResult CheckLiteralHost(string? host) => HostCheckResult.Allow();
         public Task<HostCheckResult> CheckAsync(string? host, CancellationToken cancellationToken) =>
             Task.FromResult(HostCheckResult.Allow());
+        public Task<ValidatedHost> ResolveAllowedAsync(string host, CancellationToken cancellationToken) =>
+            Task.FromResult(new ValidatedHost(host, System.Net.IPAddress.Parse("93.184.216.34")));
     }
 
     private sealed class NeverDnsResolver : IDnsResolver

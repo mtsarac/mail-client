@@ -1,9 +1,19 @@
 using MailClient.Application.Validation;
+using MailClient.Domain.Enums;
 
 namespace MailClient.Infrastructure.Tests.Validation;
 
 public class RequestValidatorTests
 {
+    [Fact]
+    public void RequireDefinedEnum_RejectsUndefinedMailSecurity()
+    {
+        var errors = new Dictionary<string, string[]>();
+
+        RequestValidator.RequireDefinedEnum((MailSecurity)999, "imapSecurity", errors);
+
+        Assert.Equal(["Value is invalid."], errors["imapSecurity"]);
+    }
     [Theory]
     [InlineData(null)]
     [InlineData("")]

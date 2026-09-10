@@ -144,6 +144,11 @@ public sealed class MailAccountService(
         RequestValidator.RequirePort(request?.ImapPort ?? 0, "imapPort", errors);
         RequestValidator.RequireHost(request?.SmtpHost, "smtpHost", errors);
         RequestValidator.RequirePort(request?.SmtpPort ?? 0, "smtpPort", errors);
+        if (request is not null)
+        {
+            RequestValidator.RequireDefinedEnum(request.ImapSecurity, "imapSecurity", errors);
+            RequestValidator.RequireDefinedEnum(request.SmtpSecurity, "smtpSecurity", errors);
+        }
         CheckLiteralHost(request?.ImapHost, "imapHost", errors);
         CheckLiteralHost(request?.SmtpHost, "smtpHost", errors);
         if (!environment.IsDevelopment() && !environment.IsEnvironment("Test") && request is not null
@@ -165,6 +170,11 @@ public sealed class MailAccountService(
         RequestValidator.RequirePort(request?.ImapPort ?? 0, "imapPort", errors);
         RequestValidator.RequireHost(request?.SmtpHost, "smtpHost", errors);
         RequestValidator.RequirePort(request?.SmtpPort ?? 0, "smtpPort", errors);
+        if (request is not null)
+        {
+            RequestValidator.RequireDefinedEnum(request.ImapSecurity, "imapSecurity", errors);
+            RequestValidator.RequireDefinedEnum(request.SmtpSecurity, "smtpSecurity", errors);
+        }
         CheckLiteralHost(request?.ImapHost, "imapHost", errors);
         CheckLiteralHost(request?.SmtpHost, "smtpHost", errors);
         if (!environment.IsDevelopment() && !environment.IsEnvironment("Test") && request is not null

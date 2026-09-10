@@ -92,6 +92,13 @@ public static partial class RequestValidator
             errors[field] = ["Port must be between 1 and 65535."];
     }
 
+    public static void RequireDefinedEnum<T>(T value, string field, Dictionary<string, string[]> errors)
+        where T : struct, Enum
+    {
+        if (!Enum.IsDefined(value))
+            errors[field] = ["Value is invalid."];
+    }
+
     public static void ThrowIfInvalid(Dictionary<string, string[]> errors)
     {
         if (errors.Count > 0)
