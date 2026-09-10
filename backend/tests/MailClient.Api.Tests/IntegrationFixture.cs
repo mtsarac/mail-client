@@ -49,6 +49,7 @@ public sealed class IntegrationFixture : IAsyncLifetime
             builder.UseSetting("Registration:Mode", "Open");
             builder.UseSetting("Jwt:Key", "integration-tests-key-with-at-least-64-characters-for-hs256!!");
             builder.UseSetting("DataProtection:KeyPath", Path.Combine(Path.GetTempPath(), $"mailclient-tests-{Guid.NewGuid():N}"));
+            builder.UseSetting("MailSync:Enabled", "false");
             builder.ConfigureTestServices(services =>
             {
                 services.RemoveAll<IMailConnectivityTester>();

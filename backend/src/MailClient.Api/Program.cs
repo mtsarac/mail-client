@@ -72,6 +72,7 @@ builder.Services.AddSwaggerGen(options =>
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("Default")));
 var mailSyncOptions = builder.Configuration.GetSection("MailSync").Get<MailSyncOptions>() ?? new MailSyncOptions();
+mailSyncOptions.Validate();
 builder.Services.AddSingleton(mailSyncOptions);
 var attachmentRoot = builder.Configuration["MailSync:AttachmentRoot"]
     ?? Path.Combine(builder.Environment.ContentRootPath, "data");
@@ -88,7 +89,8 @@ builder.Services.AddScoped<IMailAccountService, MailAccountService>();
 builder.Services.AddScoped<IMailFolderService, MailFolderService>();
 builder.Services.AddScoped<IFileStorage>(_ => new LocalFileStorage(attachmentRoot));
 builder.Services.AddScoped<MailFolderSyncService>();
-builder.Services.AddHostedService<MailSyncService>();
+if (mailSyncOptions.Enabled)
+    builder.Services.AddHostedService<MailSyncService>();
 builder.Services.AddScoped<IAuthenticationService, AuthenticationService>();
 builder.Services.AddScoped<IUserAdministrationService, UserAdministrationService>();
 builder.Services.AddScoped<IUserSessionValidator, UserSessionValidator>();
