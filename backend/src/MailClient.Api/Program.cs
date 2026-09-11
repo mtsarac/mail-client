@@ -127,7 +127,14 @@ if (trustedProxy)
     });
 }
 builder.Services.AddSingleton<IDnsResolver, SystemDnsResolver>();
-builder.Services.AddSingleton<IOutboundHostValidator, OutboundHostValidator>();
+builder.Services.AddSingleton<IOutboundHostValidator>(sp =>
+{
+    var hosts = builder.Configuration.GetSection("Mail:AllowedMailHosts")
+        .Get<string[]?>() ?? [];
+    return new OutboundHostValidator(
+        sp.GetRequiredService<IDnsResolver>(),
+        hosts.Select(IPAddress.Parse).ToArray());
+});
 builder.Services.AddScoped<MailConnectionHelper>();
 builder.Services.AddScoped<IMailConnectivityTester, MailKitConnectivityTester>();
 builder.Services.AddScoped<IMailFolderExplorer, MailKitFolderExplorer>();

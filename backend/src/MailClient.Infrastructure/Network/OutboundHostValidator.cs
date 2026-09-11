@@ -3,11 +3,13 @@ using System.Net.Sockets;
 using MailClient.Application.Interfaces;
 
 // SSRF protection: validates mail hosts and resolved IPs against blocked ranges.
+// Allowed hosts from config bypass the private-range denial (LAN dev with local mail servers).
 namespace MailClient.Infrastructure.Network;
 
-public sealed class OutboundHostValidator(IDnsResolver dns) : IOutboundHostValidator
+public sealed class OutboundHostValidator(IDnsResolver dns, IPAddress[]? allowedMailHosts = null) : IOutboundHostValidator
 {
     private static readonly string[] LocalhostNames = ["localhost"];
+    private readonly IPAddress[]? _allowedMailHosts = allowedMailHosts;
 
     public HostCheckResult CheckLiteralHost(string? host)
     {
@@ -80,7 +82,7 @@ public sealed class OutboundHostValidator(IDnsResolver dns) : IOutboundHostValid
         return new ValidatedHost(trimmed, destination);
     }
 
-    internal static HostCheckResult CheckAddress(IPAddress address)
+    internal HostCheckResult CheckAddress(IPAddress address)
     {
         var candidate = address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address;
 
@@ -90,14 +92,17 @@ public sealed class OutboundHostValidator(IDnsResolver dns) : IOutboundHostValid
         if (candidate.AddressFamily == AddressFamily.InterNetworkV6)
             return CheckIPv6(candidate);
 
-        return CheckIPv4(candidate);
+        return CheckIPv4(candidate, _allowedMailHosts);
     }
 
-    private static HostCheckResult CheckIPv4(IPAddress address)
+    private static HostCheckResult CheckIPv4(IPAddress address, IPAddress[]? allowedMailHosts = null)
     {
         var bytes = address.GetAddressBytes();
         var first = bytes[0];
         var second = bytes[1];
+
+        if (allowedMailHosts is not null && allowedMailHosts.Any(a => a.Equals(address)))
+            return HostCheckResult.Allow();
 
         if (first == 0 || first == 127)
             return HostCheckResult.Deny("Loopback or current-network address.");
