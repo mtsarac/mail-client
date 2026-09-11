@@ -2,7 +2,7 @@
 
 Mail Client is a Flutter + ASP.NET Core mail bridge for hosting-provider email accounts.
 
-The Flutter app does not connect to IMAP or SMTP directly. It calls this backend over HTTP. The backend stores mail metadata in PostgreSQL, runs a background IMAP sync worker, and sends mail through the user's own SMTP server. Push notifications are planned but not implemented yet.
+The Flutter app does not connect to IMAP or SMTP directly. It calls this backend over HTTP. The backend stores mail metadata in PostgreSQL, runs a background IMAP sync worker, sends mail through the user's own SMTP server, and delivers new-mail push notifications through Firebase Cloud Messaging.
 
 ## Architecture
 
@@ -12,9 +12,8 @@ Flutter app
       -> PostgreSQL (mail metadata, identity, sync state)
       -> IMAP/SMTP hosting mailbox (MailKit)
       -> local file storage (attachments)
+      -> Firebase Cloud Messaging (new-mail push)
 ```
-
-Planned: Firebase Cloud Messaging for push notifications.
 
 Current backend structure:
 
@@ -44,9 +43,10 @@ The frontend team can place the Flutter project in `flutter_client/`. That path 
 - Background IMAP sync: active accounts and enabled folders poll every 30 seconds; per-folder UIDVALIDITY checkpoints, durable poison-skip records, advisory-lock serialization across instances; attachment files are stored locally under `data/attachments`
 - Read/unread is two-way with IMAP as the source of truth: new mail maps `\Seen` to `IsRead`, `PATCH /api/mails/{id}/read` applies flag changes to IMAP before touching local state, and background flag reconciliation (default every 120 seconds, `FlagSyncIntervalSeconds`) syncs external flag changes without downloading bodies
 - Mail APIs: `GET /api/mails` (unified Inbox/Sent with account/folder/type filters, stable pagination), `GET /api/mails/{id}` (full body plus attachment metadata, never storage paths), `GET /api/mails/{mailId}/attachments/{attachmentId}` (streamed download, fully ownership-scoped)
-- SMTP sending: `POST /api/mail-accounts/{accountId}/send` (multipart form, recipient validation, outgoing size limits); SMTP success is never retried — if `SaveSentCopy` is on, the same message is IMAP-APPENDed to the discovered Sent folder and the response reports `sent` vs `sentCopySaved` separately
-- Rate limiting: fixed-window limiter on auth endpoints per client IP and on mail operations per user
-- Tests: xUnit; integration tests run against throwaway PostgreSQL via Testcontainers
+- SMTP sending: `POST /api/mail-accounts/{accountId}/send` (multipart form, recipient validation, outgoing size limits, **mandatory `Idempotency-Key` header 1-200 chars**); SMTP success is never retried — if `SaveSentCopy` is on, the same message is IMAP-APPENDed to the discovered Sent folder and the response reports `sent` vs `sentCopySaved` separately
+- Push notifications: `POST /api/devices/register` / `DELETE /api/devices/{id}` (JWT ownership-scoped, `android`/`ios`); new Inbox mail triggers one best-effort FCM data+notification message per device after the mail commit; permanently invalid tokens are pruned, transient failures never are; Firebase-free local development via `Firebase:Enabled=false`
+- Rate limiting: fixed-window limiter on auth endpoints per client IP and on mail operations (including send and device registration) per user
+- Tests: xUnit; integration tests run against throwaway PostgreSQL via Testcontainers (plus GreenMail), unit tests use EF InMemory with fakes for validation, account reconfiguration, idempotent send, device registration, and push (fake FCM gateway — no network)
 
 ## Backend Setup
 
@@ -177,7 +177,7 @@ Fields: `toAddress`, `subject`, `bodyHtml` and/or `bodyText` (at least one requi
 
 Upload limits end to end: Kestrel's max request body and the multipart limit are configured at startup from `MaxMessageAttachmentBytes` plus both bodies at worst-case UTF-8 plus 1 MiB framing headroom, so the server never accepts a request the application would later reject for size. Reverse proxies in front of the API need a matching body limit (e.g. `client_max_body_size` ≈ 65M with defaults).
 
-Idempotent sending: pass `Idempotency-Key: <unique-value>` to deduplicate HTTP retries per user. State machine (`SendOperations`, unique per user+key): `InProgress → FailedBeforeSend` (provably before any delivery attempt; same key may retry) or `→ DeliveryUnknown` (SMTP attempted but acceptance unknowable — e.g. dropped response, interruption; terminal, never auto-resends) or `→ Sent → SentWithCopy`. `Sent` is persisted immediately after SMTP acceptance (with cancellation-independent storage) before any APPEND work, so a later retry replays instead of resending. A busy or uncertain key returns `409`; the same key with different account/recipients/subject/body/attachment bytes (SHA-256 content hashes included) returns `409`. Guarantee: the application never automatically retries once SMTP may have accepted a message, but it cannot provide protocol-level exactly-once delivery.
+Idempotent sending: the `Idempotency-Key: <unique-value>` header is **mandatory** (missing/blank/over-200-chars → `400`). The client owns the key: generate one UUID per logical send action and reuse the SAME key when retrying after an HTTP/network failure; a new user-created send gets a new key. State machine (`SendOperations`, unique per user+key): `InProgress → FailedBeforeSend` (provably before any delivery attempt; same key may retry) or `→ DeliveryUnknown` (SMTP attempted but acceptance unknowable — e.g. dropped response, interruption; terminal, never auto-resends) or `→ Sent → SentWithCopy`. `Sent` is persisted immediately after SMTP acceptance (with cancellation-independent storage) before any APPEND work, so a later retry replays instead of resending. A busy or uncertain key returns `409`; the same key with different account/recipients/subject/body/attachment bytes (SHA-256 content hashes included) returns `409`. Guarantee: the application never automatically retries once SMTP may have accepted a message, but it cannot provide protocol-level exactly-once delivery.
 
 Critical semantics: **SMTP success = sent.** The message is sent exactly once through the account's own SMTP server (same SSRF/DNS/TLS protections as all other mail traffic). Afterwards:
 
@@ -198,10 +198,34 @@ Attachments:
 - Stored locally under `data/attachments/{accountId}/{mailId}/{attachmentId}` (override the root with `MailSync:AttachmentRoot`).
 - Account deletion removes the whole account directory. Multi-instance deployments must share this storage (shared volume or object store); local disk only works for a single instance.
 
+Mail account reconfiguration:
+
+- Changing the IMAP identity (`Username`, `ImapHost`, `ImapPort`, `ImapSecurity`) resets the locally cached mailbox for that account (folders, sync state, skipped UIDs, mail and attachment metadata, attachment files) under the same advisory locks as deletion, then rediscovers folders and rebuilds on the next refresh/sync. The account row itself is preserved.
+- Changing only `DisplayName`, `EmailAddress` (per-user identity/From metadata, never the IMAP login), SMTP settings, `SaveSentCopy`, or the mailbox password alone keeps the cache.
+- Duplicate `(UserId, EmailAddress)` accounts are rejected with `409 Conflict`, race-safe via the database unique constraint.
+
+Registration:
+
+- `POST /api/auth/register` always returns `202 Accepted` with a generic message for syntactically valid requests, whether the address is new or already registered — account existence is never disclosed to unauthenticated callers. Invalid input (bad email, short/long password, missing display name) still returns validation errors. Admin user management keeps explicit duplicate reporting.
+
 Data Protection:
 
 - Mailbox passwords are encrypted with ASP.NET Core Data Protection; keys live at `DataProtection:KeyPath` (default `data/protection-keys`, relative paths resolve under the content root).
-- Keys must survive restarts and be shared by all instances via a persistent shared volume. Use restrictive file permissions and protect keys at rest in production. Non-development startup logs a warning when this applies.
+- Keys must survive restarts and be shared by all instances via a persistent shared volume. Use restrictive file permissions.
+- Production requires key-ring encryption with an X.509 certificate: set `DataProtection:CertificatePath` (PFX/PKCS#12 file) and `DataProtection:CertificatePassword`, preferably via environment variables (`DataProtection__CertificatePath`, `DataProtection__CertificatePassword`) or mounted secrets — never commit the certificate or its password. Non-development startup fails fast when the certificate is missing, unloadable, or lacks a private key. Development/Test may omit it.
+
+Firebase:
+
+- Configuration (`appsettings.json`, environment overrides supported):
+  ```json
+  "Firebase": { "Enabled": false, "ProjectId": "", "CredentialsPath": "" }
+  ```
+- `Enabled=false` (default): push is a safe no-op; no credentials, network, or `FirebaseApp` needed. Local development and tests run this way.
+- `Enabled=true`: the backend resolves a service-account file from `Firebase:CredentialsPath`, then `GOOGLE_APPLICATION_CREDENTIALS`, then the well-known ADC location, and fails fast at startup when the project ID or credentials are missing/invalid.
+- **Firebase service-account credentials must never be committed.** `.gitignore` already blocks `firebase-service-account*.json`, `serviceAccountKey.json`, `*-firebase-adminsdk-*.json`, `google-services.json`, and `GoogleService-Info.plist`. Production should use a secret-mounted path.
+- Device API (JWT required, ownership always from the token): `POST /api/devices/register` (`{"pushToken":"...","platform":"android"}`; platform `android`/`ios`, stored lowercase; repeat registration when Firebase rotates the token — same-user re-registration updates in place, cross-user tokens are silently reassigned to the current user) and `DELETE /api/devices/{id}` (only the owning user; other users get `404`).
+- Push behavior: only genuinely new Inbox mail notifies (never Sent/Drafts/Trash/Junk/Archive/Custom, never re-scans or flag changes). Notification runs strictly after the mail commit and can never roll back sync state. Data payload is `type=new_mail` plus string `mailId`/`accountId`/`folderId`; display title is the sender name (or address), body is the subject; no mail body, HTML, attachments, or credentials are included. Tokens chunk at the documented FCM multicast limit (500); permanently unregistered tokens are removed, transient/quota/auth failures keep the token.
+- Live FCM delivery was not exercised in this environment (no service-account credentials or device token available); behavior is covered by automated fake-gateway tests.
 
 Reverse proxy:
 
