@@ -42,10 +42,15 @@ public sealed class MailAccountService(
     {
         Validate(request, passwordRequired: true);
         var now = DateTime.UtcNow;
+        var email = request.EmailAddress.Trim().ToLowerInvariant();
+        if (await db.MailAccounts.AnyAsync(
+                account => account.UserId == userId && account.EmailAddress == email, cancellationToken))
+            throw new RequestConflictException("emailAddress", "A mail account with this email address already exists.");
+
         var account = new MailAccount
         {
             UserId = userId,
-            EmailAddress = request.EmailAddress.Trim().ToLowerInvariant(),
+            EmailAddress = email,
             DisplayName = request.DisplayName.Trim(),
             Username = request.Username.Trim(),
             EncryptedPassword = credentials.Protect(request.Password),
@@ -60,7 +65,16 @@ public sealed class MailAccountService(
             UpdatedAt = now
         };
         db.MailAccounts.Add(account);
-        await db.SaveChangesAsync(cancellationToken);
+        try
+        {
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException ex) when (DbUniqueViolation.IsUniqueViolationFor(ex, "IX_MailAccounts"))
+        {
+            // Lost the check-then-insert race; the constraint is authoritative.
+            throw new RequestConflictException("emailAddress", "A mail account with this email address already exists.");
+        }
+
         logger.LogInformation("User {UserId} created mail account {AccountId}.", userId, account.Id);
         return ToResponse(account);
     }
@@ -71,12 +85,124 @@ public sealed class MailAccountService(
         var account = await FindOwnedAsync(userId, accountId, cancellationToken);
         if (account is null) return null;
 
-        account.EmailAddress = request.EmailAddress.Trim().ToLowerInvariant();
+        var email = request.EmailAddress.Trim().ToLowerInvariant();
+        if (!string.Equals(account.EmailAddress, email, StringComparison.Ordinal)
+            && await db.MailAccounts.AnyAsync(
+                other => other.UserId == userId && other.Id != accountId && other.EmailAddress == email, cancellationToken))
+            throw new RequestConflictException("emailAddress", "A mail account with this email address already exists.");
+
+        var username = request.Username.Trim();
+        var imapHost = request.ImapHost.Trim();
+        // IMAP identity-defining fields: Username, ImapHost, ImapPort,
+        // ImapSecurity. EmailAddress alone does NOT reset the cache: it is
+        // only per-user uniqueness/display/From metadata, never the IMAP
+        // authentication identity. DisplayName/SMTP fields/SaveSentCopy and
+        // password-only rotation never reset either.
+        var imapIdentityChanged =
+            !string.Equals(account.Username, username, StringComparison.Ordinal)
+            || !string.Equals(account.ImapHost, imapHost, StringComparison.OrdinalIgnoreCase)
+            || account.ImapPort != request.ImapPort
+            || account.ImapSecurity != request.ImapSecurity;
+
+        if (!imapIdentityChanged)
+        {
+            ApplyConfiguration(account, email, request, username, imapHost,
+                request.Password is null ? null : credentials.Protect(request.Password));
+            try
+            {
+                await db.SaveChangesAsync(cancellationToken);
+            }
+            catch (DbUpdateException ex) when (DbUniqueViolation.IsUniqueViolationFor(ex, "IX_MailAccounts"))
+            {
+                throw new RequestConflictException("emailAddress", "A mail account with this email address already exists.");
+            }
+
+            logger.LogInformation("User {UserId} updated mail account {AccountId}.", userId, accountId);
+            return ToResponse(account);
+        }
+
+        // Serialize against in-flight folder syncs the same way deletion
+        // does: sync holds these advisory locks while committing, so no new
+        // cached state can land during the reset.
+        var folderIds = await db.MailFolders
+            .Where(folder => folder.MailAccountId == accountId && folder.IsSyncEnabled)
+            .Select(folder => folder.Id)
+            .ToListAsync(cancellationToken);
+        var heldLocks = new List<FolderAdvisoryLock>(folderIds.Count);
+        List<string> obsoletePaths;
+        try
+        {
+            foreach (var folderId in folderIds)
+                heldLocks.Add(await FolderAdvisoryLock.AcquireAsync(db, folderId, cancellationToken));
+
+            obsoletePaths = await db.Attachments
+                .Where(attachment => db.Mails.Any(mail => mail.Id == attachment.MailId && mail.MailAccountId == accountId))
+                .Select(attachment => attachment.StoragePath)
+                .ToListAsync(cancellationToken);
+
+            // Folder deletion cascades to mails, attachment metadata and sync
+            // states; skipped UIDs are removed explicitly.
+            db.SyncSkippedUids.RemoveRange(db.SyncSkippedUids.Where(skip =>
+                db.MailFolders.Any(folder => folder.Id == skip.MailFolderId && folder.MailAccountId == accountId)));
+            db.Attachments.RemoveRange(db.Attachments.Where(attachment =>
+                db.Mails.Any(mail => mail.Id == attachment.MailId && mail.MailAccountId == accountId)));
+            db.Mails.RemoveRange(db.Mails.Where(mail => mail.MailAccountId == accountId));
+            db.SyncStates.RemoveRange(db.SyncStates.Where(state =>
+                db.MailFolders.Any(folder => folder.Id == state.MailFolderId && folder.MailAccountId == accountId)));
+            db.MailFolders.RemoveRange(db.MailFolders.Where(folder => folder.MailAccountId == accountId));
+
+            ApplyConfiguration(account, email, request, username, imapHost,
+                request.Password is null ? null : credentials.Protect(request.Password));
+            try
+            {
+                await db.SaveChangesAsync(cancellationToken);
+            }
+            catch (DbUpdateException ex) when (DbUniqueViolation.IsUniqueViolationFor(ex, "IX_MailAccounts"))
+            {
+                throw new RequestConflictException("emailAddress", "A mail account with this email address already exists.");
+            }
+        }
+        finally
+        {
+            for (var index = heldLocks.Count - 1; index >= 0; index--)
+                await heldLocks[index].DisposeAsync();
+        }
+
+        logger.LogInformation(
+            "User {UserId} changed IMAP identity for mail account {AccountId}; cached mailbox state reset.", userId, accountId);
+
+        // Storage cleanup runs after the DB commit so metadata rows never
+        // reference deleted files; failures are logged, never restored.
+        foreach (var path in obsoletePaths)
+        {
+            try
+            {
+                await storage.DeleteAsync(path, CancellationToken.None);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex,
+                    "Attachment cleanup failed after IMAP identity change for account {AccountId}.",
+                    accountId);
+            }
+        }
+
+        return ToResponse(account);
+    }
+
+    private static void ApplyConfiguration(
+        MailAccount account, string email, UpdateMailAccountRequest request, string username, string imapHost, string? protectedPassword)
+    {
+        account.EmailAddress = email;
         account.DisplayName = request.DisplayName.Trim();
-        account.Username = request.Username.Trim();
-        if (request.Password is not null)
-            account.EncryptedPassword = credentials.Protect(request.Password);
-        account.ImapHost = request.ImapHost.Trim();
+        account.Username = username;
+        if (protectedPassword is not null)
+            account.EncryptedPassword = protectedPassword;
+        account.ImapHost = imapHost;
         account.ImapPort = request.ImapPort;
         account.ImapSecurity = request.ImapSecurity;
         account.SmtpHost = request.SmtpHost.Trim();
@@ -84,9 +210,6 @@ public sealed class MailAccountService(
         account.SmtpSecurity = request.SmtpSecurity;
         account.SaveSentCopy = request.SaveSentCopy;
         account.UpdatedAt = DateTime.UtcNow;
-        await db.SaveChangesAsync(cancellationToken);
-        logger.LogInformation("User {UserId} updated mail account {AccountId}.", userId, accountId);
-        return ToResponse(account);
     }
 
     public async Task<bool> DeleteAsync(Guid userId, Guid accountId, CancellationToken cancellationToken)
@@ -178,8 +301,7 @@ public sealed class MailAccountService(
         var errors = new Dictionary<string, string[]>();
         RequestValidator.RequireEmail(request?.EmailAddress, "emailAddress", errors);
         RequestValidator.RequireDisplayName(request?.DisplayName, "displayName", 250, errors);
-        if (string.IsNullOrWhiteSpace(request?.Username))
-            errors["username"] = ["Username is required."];
+        RequestValidator.RequireUsername(request?.Username, "username", errors);
         if (passwordRequired)
             RequestValidator.RequireMailboxPassword(request?.Password, "password", errors);
         RequestValidator.RequireHost(request?.ImapHost, "imapHost", errors);
@@ -204,8 +326,7 @@ public sealed class MailAccountService(
         var errors = new Dictionary<string, string[]>();
         RequestValidator.RequireEmail(request?.EmailAddress, "emailAddress", errors);
         RequestValidator.RequireDisplayName(request?.DisplayName, "displayName", 250, errors);
-        if (string.IsNullOrWhiteSpace(request?.Username))
-            errors["username"] = ["Username is required."];
+        RequestValidator.RequireUsername(request?.Username, "username", errors);
         if (request?.Password is not null)
             RequestValidator.RequireMailboxPassword(request.Password, "password", errors);
         RequestValidator.RequireHost(request?.ImapHost, "imapHost", errors);
