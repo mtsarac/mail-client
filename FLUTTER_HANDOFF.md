@@ -4,6 +4,8 @@ Backend API contract for the Flutter mail client. Base URL (dev): `http://localh
 
 All endpoints below except `POST /api/auth/register` and `POST /api/auth/login` require `Authorization: Bearer <JWT>`.
 
+Rate limits: auth endpoints are limited per client IP (20/min); test/refresh/send/mark-read/device endpoints are limited per user (20/min). Exceeding either returns `429` — back off and retry, never tight-loop.
+
 ## Local LAN development
 
 When the backend runs on another machine on the same LAN, never use `localhost` from the frontend device — `localhost` there means the device itself. Ask the backend developer for their current LAN IP and set the API base URL to:
@@ -35,8 +37,8 @@ POST /api/auth/login      { "email": "...", "password": "..." }
   { "message": "If the registration request can be accepted, it has been received." }
   ```
   This is identical for new and already-registered addresses (account existence is never disclosed). Do not show "email already registered" based on this response. Invalid input (bad email syntax, password shorter than 8 or longer than 128 chars, missing display name) returns `400` validation errors.
-- Depending on server `Registration:Mode`, a new account may be `Pending` (needs admin approval) rather than `Active`. `login` with a non-active account returns `403`.
-- Login returns `{ "accessToken": "...", "userId": "...", "email": "...", "role": "..." }`. Send the token as `Authorization: Bearer <token>` on every other call. Tokens expire after 12 hours; re-login afterwards. Admin actions (approve/disable/password reset) invalidate existing tokens — treat sudden `401`s as "session expired, log in again".
+- New accounts may be `Pending` (server default: admin approval required) rather than `Active`. `login` with a non-active account returns `403` — show "waiting for approval", not "wrong password".
+- Login returns `{ "accessToken": "...", "userId": "...", "email": "...", "role": "User|Admin" }`. Send the token as `Authorization: Bearer <token>` on every other call. Tokens expire after 12 hours; re-login afterwards. Admin actions (approve/disable/password reset) invalidate existing tokens — treat sudden `401`s as "session expired, log in again".
 
 ## Mail accounts
 
@@ -72,6 +74,8 @@ Account body (create; update takes the same fields with optional `password`):
 
 Limits: email/username ≤ 320 chars, display name ≤ 250, hosts must be valid DNS (loopback/private/reserved ranges are rejected), mailbox password ≤ 1024 chars. `imapSecurity`/`smtpSecurity`: `SslOnConnect`, `StartTls`, or (`None` in dev/test only).
 
+Folders come back as `{ "id", "name", "fullName", "folderType", "uidValidity", "isSyncEnabled", "isAvailable" }`. `folderType` is one of `Inbox|Sent|Drafts|Trash|Junk|Archive|Custom|Unknown`. `test` and `refresh` return `{ "succeeded", "message", "folders"? }` — show `message` on failure (wrong password, unreachable host, refused connection).
+
 Reconfiguration semantics (matter for settings UI):
 
 - Changing **IMAP identity** (`username`, `imapHost`, `imapPort`, `imapSecurity`) **wipes the locally cached mailbox** for that account and rebuilds it from the server on the next refresh/sync. Warn the user before saving such a change.
@@ -88,10 +92,10 @@ GET /api/mails/{mailId}/attachments/{attachmentId}
 PATCH /api/mails/{id}/read            { "isRead": true }
 ```
 
-- Pagination: `page >= 1`, `1 <= pageSize <= 100`, ordered newest-first. The list returns metadata only (no bodies, no storage paths — never persist or display a `storagePath`; it is never exposed).
+- Pagination: `page >= 1`, `1 <= pageSize <= 100`, ordered newest-first. List response: `{ "items": [...], "totalCount": N, "page": 1, "pageSize": 30 }` — use `totalCount` for infinite scroll. Items are metadata only (no bodies, no storage paths).
 - Detail adds `bodyHtml`/`bodyText` plus attachment metadata (`id`, `fileName`, `contentType`, `sizeBytes`, `isInline`, `contentId`).
 - Attachment download streams the file bytes; missing file → `404`. Both IDs in the path are verified end to end.
-- Read/unread is two-way with the server: the API applies the flag to IMAP first, so external mail clients stay in sync. A `409` on mark-read means the folder changed server-side — refresh and retry.
+- Read/unread is two-way with the server: the API applies the flag to IMAP first (response `{ "id", "isRead" }`), so external mail clients stay in sync. A `409` on mark-read means the folder changed server-side — refresh and retry. A `502` means the mail server itself failed — retry later.
 
 ## Sending
 
@@ -114,6 +118,7 @@ Rules:
 - A **new send action gets a new key**. Reusing a key with different recipients/subject/body/attachments returns `409 Conflict`.
 - `DeliveryUnknown`/`409` on the delivery field means "may have been sent — do NOT auto-resend"; show the message as uncertain and let the user decide.
 - Response: `{ "sent": true, "sentCopySaved": true|false, "warning": "..." }`. `sentCopySaved=false` with a warning means the mail WAS sent but the Sent-folder copy failed — do not resend; the warning text is user-presentable.
+- A `502` means sending failed before/without proof of delivery — retry with the **same** key.
 
 ## Device registration (push)
 
@@ -126,7 +131,7 @@ DELETE /api/devices/{id}
 - Register returns `200` with `{ "id": "...", "platform": "...", "registeredAt": "...", "lastSeenAt": "..." }`. Keep the returned `id` for later deletion (e.g. on logout).
 - **Re-register whenever Firebase rotates the token** — registration is idempotent per user (updates in place). If the same physical device logs in as a different user, the token is silently transferred, so the previous user stops receiving pushes there. No extra work needed on logout/login beyond registering the current token and deleting it on explicit logout.
 - Delete returns `204`; deleting another user's (or unknown) id returns `404`.
-- Registration endpoints are rate-limited per user (generous: token refresh loops are safe; do not retry in a tight loop).
+- Registration endpoints share the per-user rate limit (20/min) — token refresh loops are safe; do not retry in a tight loop.
 
 ## Push payload
 
@@ -162,4 +167,5 @@ Email HTML from `bodyHtml` is **untrusted**:
 - Validation failures: `400` with RFC 9457 problem details (`errors: { field: [messages] }`).
 - Ownership violations on mail data: `404` (never `403`, to avoid leaking existence).
 - Duplicate mail account / idempotency misuse: `409`.
+- Mail-server failures (IMAP/SMTP/provider): `502`, retryable later.
 - Rate limiting: `429`.
