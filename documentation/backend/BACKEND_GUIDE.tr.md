@@ -45,7 +45,7 @@ Posta hesap → klasör → mesaj olarak önbelleğe alınır. Birleşik liste
 (`GET /api/mails`) hesaplar arası çalışır; `folderType=Inbox|Sent|...` ile
 filtrelenir.
 
-### Teknolojiler (gerçekten referans verilenler)
+### Kullanılan teknolojiler
 
 .NET 10 · ASP.NET Core (minimal API, JWT bearer, rate limiting, Data
 Protection) · PostgreSQL + EF Core (Npgsql) · MailKit/MimeKit 4.17 ·
@@ -140,9 +140,9 @@ backend/
     Identity `PasswordHasher<User>`.
 11. JWT bearer doğrulama (issuer/audience/imza anahtarı/süre) + `Jwt:Key` 32
     karakterden kısaysa fail-fast. `OnTokenValidated` oturumu DB'ye karşı
-    yeniden doğrular (`UserSessionValidator`: kullanıcı var, `Active`,
-    `TokenVersion` eşleşiyor) ve **rol claim'ini veritabanından yeniden
-    yazar**: rol değişikliği eski tokenlara yansır, statü/token-versiyon
+  yeniden doğrular (`UserSessionValidator`: kullanıcı var, `Active`,
+  `TokenVersion` eşleşiyor) ve rol claim'ini veritabanından yeniden
+  yazar: rol değişikliği eski tokenlara yansır, statü/token-versiyon
     değişikliği tokenları öldürür.
 
 ### Middleware hattı (gerçek sıra)
@@ -243,8 +243,8 @@ sequenceDiagram
   onay/kapama/açma ve parola sıfırlama **`TokenVersion`'ı artırır**,
   dolaşımdaki tokenları anında öldürür; istemci ani `401`'i "yeniden giriş
   yap" olarak yorumlar.
-- Roller: `User`, `Admin`. Admin uçları `Admin` ister; **admin posta
-  sahipliğini atlamaz**: tüm posta sorguları çağıranın `UserId`'sine
+- Roller: `User`, `Admin`. Admin uçları `Admin` ister; admin posta
+  sahipliğini atlamaz: tüm posta sorguları çağıranın `UserId`'sine
   filtrelenir.
 - Parolalar: Identity `PasswordHasher<User>`; politika 8-128 karakter
   (`PasswordPolicy`); admin oluşturma/sıfırlama aynı kuralları kullanır.
@@ -406,7 +406,7 @@ Tekillikler: `User.Email`; `(MailAccount.UserId, EmailAddress)`;
 `(MailFolder.MailAccountId, FullName)`; `(Mail.FolderId, UidValidity, Uid)`;
 `SyncState.MailFolderId`; `(SyncSkippedUid.FolderId, Uid)`;
 `DeviceToken.Token`; `(SendOperation.UserId, IdempotencyKey)`. İkincil index
-`(Mail.MailAccountId, ReceivedAt)` birleşik listeyi besler
+`(Mail.MailAccountId, ReceivedAt)` birleşik listenin okuduğu index'tir
 (`ReceivedAt DESC, Id DESC`, `page ≥ 1`, `1 ≤ pageSize ≤ 100`).
 
 ---
@@ -424,7 +424,7 @@ Tekillikler: `User.Email`; `(MailAccount.UserId, EmailAddress)`;
   commit sonrası, ayrı scope'ta; toplam taşıma hatası hepsini
   başarısız-ama-korunmuş işaretler ve asla fırlatmaz. Başlık = gönderen,
   gövde = konu; veri = `type=new_mail,mailId,accountId,folderId`. Tokenlar
-  500'li parçalanır; **yalnızca** `MessagingErrorCode.Unregistered` token
+  500'li parçalanır; yalnızca `MessagingErrorCode.Unregistered` token
   siler (sahiplik yeniden kontrol edilir); kota/auth/geçici/sunucu hataları
   korur. `Enabled=false` → güvenli no-op.
 - **Cihazlar**: `POST /api/devices/register` (`pushToken` ≤ 500, `platform`

@@ -41,7 +41,7 @@ settings plus a Data-Protection-encrypted mailbox password. Mail is cached
 per account → folder → message. The unified list (`GET /api/mails`) can span
 accounts; `folderType=Inbox|Sent|...` filters across all of them.
 
-### Technologies (actually referenced)
+### Technologies used
 
 .NET 10 · ASP.NET Core (minimal APIs, JWT bearer, rate limiting, Data
 Protection) · PostgreSQL + EF Core (Npgsql) · MailKit/MimeKit 4.17 ·
@@ -137,7 +137,7 @@ backend/
 11. JWT bearer validation (issuer/audience/signing key/lifetime) + fail-fast
     when `Jwt:Key` < 32 chars. `OnTokenValidated` re-checks the session
     (`UserSessionValidator`: user exists, `Active`, `TokenVersion` match) and
-    **re-issues the role claim from the database**: role changes apply to
+    re-issues the role claim from the database: role changes apply to
     already-issued tokens, status/token-version changes kill them.
 
 ### Middleware pipeline (real order)
@@ -238,8 +238,8 @@ sequenceDiagram
   approve/disable/enable and password reset **bump `TokenVersion`**, instantly
   invalidating outstanding tokens; clients treat sudden `401` as
   "log in again".
-- Roles: `User`, `Admin`. Admin endpoints require `Admin`; **admin does not
-  bypass mail ownership**: all mail queries scope to the caller's `UserId`.
+- Roles: `User`, `Admin`. Admin endpoints require `Admin`; admin does not
+  bypass mail ownership: all mail queries scope to the caller's `UserId`.
 - Passwords: Identity `PasswordHasher<User>`; policy 8-128 chars
   (`PasswordPolicy`); admin create/reset use the same rules. Display names
   ≤ 250 chars, emails ≤ 320.
@@ -313,7 +313,7 @@ Key mechanics:
   oversized) → record in `SyncSkippedUids` (unique per folder+UID) and skip.
   Unknown errors retry: a wrong retry only delays, a wrong skip loses mail.
 - **Flags**: new mail maps `\Seen` → `IsRead` in the same fetch. `PATCH
-  /api/mails/{id}/read` sets `\Seen` on the server **first**, then updates
+  /api/mails/{id}/read` sets `\Seen` on the server first, then updates
   the row; UIDVALIDITY change → `409`, both sides untouched. Flag
   reconciliation (every `FlagSyncIntervalSeconds`, FLAGS-only batched fetch)
   imports external flag changes; failures never touch checkpoints.
@@ -395,8 +395,8 @@ Uniqueness: `User.Email`; `(MailAccount.UserId, EmailAddress)`;
 `(MailFolder.MailAccountId, FullName)`; `(Mail.FolderId, UidValidity, Uid)`;
 `SyncState.MailFolderId`; `(SyncSkippedUid.FolderId, Uid)`;
 `DeviceToken.Token`; `(SendOperation.UserId, IdempotencyKey)`.
-Secondary index `(Mail.MailAccountId, ReceivedAt)` serves the unified list
-(`ReceivedAt DESC, Id DESC`, `page ≥ 1`, `1 ≤ pageSize ≤ 100`).
+Secondary index `(Mail.MailAccountId, ReceivedAt)` is what the unified list
+reads (`ReceivedAt DESC, Id DESC`, `page ≥ 1`, `1 ≤ pageSize ≤ 100`).
 
 ---
 
@@ -412,7 +412,7 @@ Secondary index `(Mail.MailAccountId, ReceivedAt)` serves the unified list
   `SendEachAsync`): only genuinely new **Inbox** mail, strictly post-commit in
   a dedicated scope; total transport failure marks all failed-but-kept and
   never throws. Title = sender, body = subject; data =
-  `type=new_mail,mailId,accountId,folderId`. Tokens chunk at 500; **only**
+  `type=new_mail,mailId,accountId,folderId`. Tokens chunk at 500; only
   `MessagingErrorCode.Unregistered` deletes a token (ownership re-checked);
   quota/auth/transient/server failures keep it. `Enabled=false` → safe no-op.
 - **Devices**: `POST /api/devices/register` (`pushToken` ≤ 500, `platform`

@@ -41,7 +41,7 @@ connection (`MailConnectionHelper.ResolveAllowedAsync`):
 
 1. Literal check: empty, `localhost`, or IP literal → loopback/special ranges
    denied inline.
-2. Otherwise DNS-resolve **all** addresses (`IDnsResolver`); failure denies.
+2. Otherwise DNS-resolve all addresses (`IDnsResolver`); failure denies.
 3. Every resolved address checked: IPv4 denies loopback, private
    (10/8, 172.16/12, 192.168/16), link-local (169.254/16), CGNAT
    (100.64/10), multicast, reserved/broadcast, documentation/benchmark/relay

@@ -42,7 +42,7 @@ Kullanıcı denetimli IMAP/SMTP hostları her bağlantıdan önce
 
 1. Literal kontrol: boş, `localhost` veya IP literal → loopback/özel aralıklar
    anında reddedilir.
-2. Yoksa **tüm** adresler DNS ile çözülür (`IDnsResolver`); çözülememe ret demektir.
+2. Yoksa tüm adresler DNS ile çözülür (`IDnsResolver`); çözülememe ret demektir.
 3. Çözülen her adres kontrol edilir: IPv4'te loopback, özel (10/8,
    172.16/12, 192.168/16), link-local (169.254/16), CGNAT (100.64/10),
    multicast, rezerv/broadcast, dokümantasyon/kıyaslama/aktarma aralıkları;
