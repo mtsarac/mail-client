@@ -44,7 +44,14 @@ public sealed class UserAdministrationService(
         };
         user.PasswordHash = passwords.HashPassword(user, request.Password);
         db.Users.Add(user);
-        await db.SaveChangesAsync(cancellationToken);
+        try
+        {
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException ex) when (DbUniqueViolation.IsUniqueViolationFor(ex, "IX_Users_Email"))
+        {
+            return ServiceResult<UserDto>.Failure(ServiceOutcome.Conflict, "email", "Email is already registered.");
+        }
 
         logger.LogInformation("Admin created user {UserId} with role {Role}.", user.Id, user.Role);
         return ServiceResult<UserDto>.Success(ToDto(user));

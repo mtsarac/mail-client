@@ -22,10 +22,10 @@ public static class AuthEndpoints
 
             return result.Outcome switch
             {
-                ServiceOutcome.Ok => Results.Created(
-                    $"/api/admin/users/{result.Value!.Id}",
-                    new { result.Value.Id, result.Value.Email, result.Value.DisplayName, result.Value.Status }),
-                ServiceOutcome.Conflict => Results.Conflict(new { error = "Email is already registered." }),
+                // Security: identical response whether or not the address exists.
+                ServiceOutcome.Ok or ServiceOutcome.Conflict => Results.Accepted(
+                    "/api/auth/register",
+                    new { message = "If the registration request can be accepted, it has been received." }),
                 _ => Results.ValidationProblem(result.Errors.ToDictionary(entry => entry.Key, entry => entry.Value))
             };
         }).AllowAnonymous();

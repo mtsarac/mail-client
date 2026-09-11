@@ -310,7 +310,7 @@ public sealed class SendIdempotencyTests
     }
 
     [Fact]
-    public async Task NoKey_SendsEveryTime()
+    public async Task NoKey_RejectedWithoutSend()
     {
         await using var db = CreateDb();
         var (userId, accountId) = await SeedAccountAsync(db);
@@ -318,10 +318,10 @@ public sealed class SendIdempotencyTests
         var service = CreateService(db, transport);
         var command = new SendMailCommand(accountId, "friend@example.test", "Hi", null, "hello", []);
 
-        await service.SendAsync(userId, command, CancellationToken.None);
-        await service.SendAsync(userId, command, CancellationToken.None);
+        var result = await service.SendAsync(userId, command, CancellationToken.None);
 
-        Assert.Equal(2, transport.Sent.Count);
+        Assert.Equal(ServiceOutcome.Invalid, result.Outcome);
+        Assert.Empty(transport.Sent);
     }
 
     [Fact]

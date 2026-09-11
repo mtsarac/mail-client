@@ -28,8 +28,20 @@ public sealed class MailSendEndpointsTests(IntegrationFixture fixture) : Integra
         Authenticate(client, token);
         var accountId = await CreateAccountAsync(client);
 
+        var response = await client.SendAsync(KeyedRequest(accountId, $"key-{Guid.NewGuid():N}", "Hi", "not-an-address"));
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Send_MissingIdempotencyKey_ReturnsBadRequest()
+    {
+        var (_, token) = await SeedUserAsync(UniqueEmail("senderkey"), "sender-password-1");
+        var client = CreateClient();
+        Authenticate(client, token);
+        var accountId = await CreateAccountAsync(client);
+
         var response = await client.PostAsync(
-            $"/api/mail-accounts/{accountId}/send", SendForm("not-an-address", "Hi", "hello"));
+            $"/api/mail-accounts/{accountId}/send", SendForm("friend@example.test", "Hi", "hello"));
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
@@ -41,13 +53,14 @@ public sealed class MailSendEndpointsTests(IntegrationFixture fixture) : Integra
         Authenticate(client, token);
         var accountId = await CreateAccountAsync(client);
 
-        var form = new MultipartFormDataContent
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/api/mail-accounts/{accountId}/send");
+        request.Content = new MultipartFormDataContent
         {
             { new StringContent("friend@example.test"), "toAddress" },
             { new StringContent("Hi"), "subject" }
         };
-        Assert.Equal(HttpStatusCode.BadRequest,
-            (await client.PostAsync($"/api/mail-accounts/{accountId}/send", form)).StatusCode);
+        request.Headers.Add("Idempotency-Key", $"key-{Guid.NewGuid():N}");
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.SendAsync(request)).StatusCode);
     }
 
     [Fact]
@@ -62,8 +75,8 @@ public sealed class MailSendEndpointsTests(IntegrationFixture fixture) : Integra
         var clientB = CreateClient();
         Authenticate(clientB, tokenB);
 
-        var response = await clientB.PostAsync(
-            $"/api/mail-accounts/{accountId}/send", SendForm("friend@example.test", "Hi", "hello"));
+        var request = KeyedRequest(accountId, $"key-{Guid.NewGuid():N}", "Hi");
+        var response = await clientB.SendAsync(request);
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
@@ -75,8 +88,7 @@ public sealed class MailSendEndpointsTests(IntegrationFixture fixture) : Integra
         Authenticate(client, token);
         var accountId = await CreateUnreachableAccountAsync(client);
 
-        var response = await client.PostAsync(
-            $"/api/mail-accounts/{accountId}/send", SendForm("friend@example.test", "Hi", "hello"));
+        var response = await client.SendAsync(KeyedRequest(accountId, $"key-{Guid.NewGuid():N}", "Hi"));
         Assert.Equal(HttpStatusCode.BadGateway, response.StatusCode);
     }
 
@@ -125,10 +137,10 @@ public sealed class MailSendEndpointsTests(IntegrationFixture fixture) : Integra
         Assert.Equal(HttpStatusCode.Conflict, (await client.SendAsync(KeyedRequest(accountId, "mix-key-1", "Changed"))).StatusCode);
     }
 
-    private static HttpRequestMessage KeyedRequest(Guid accountId, string key, string subject)
+    private static HttpRequestMessage KeyedRequest(Guid accountId, string key, string subject, string to = "friend@example.test")
     {
         var request = new HttpRequestMessage(HttpMethod.Post, $"/api/mail-accounts/{accountId}/send");
-        request.Content = SendForm("friend@example.test", subject, "hello");
+        request.Content = SendForm(to, subject, "hello");
         request.Headers.Add("Idempotency-Key", key);
         return request;
     }

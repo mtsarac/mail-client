@@ -71,8 +71,9 @@ public sealed class MailSendService(
             return ServiceResult<SendMailResult>.Failure(
                 ServiceOutcome.NotFound, "account", "Mail account not found.");
 
-        if (command.IdempotencyKey is null)
-            return await SendAndStoreAsync(account, to, subject, command, operation: null, cancellationToken);
+        if (string.IsNullOrWhiteSpace(command.IdempotencyKey))
+            return ServiceResult<SendMailResult>.Failure(
+                ServiceOutcome.Invalid, "idempotencyKey", "Idempotency-Key header is required.");
 
         if (command.IdempotencyKey.Length > SendOperationStore.MaxKeyLength)
             return ServiceResult<SendMailResult>.Failure(

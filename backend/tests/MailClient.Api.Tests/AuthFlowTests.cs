@@ -18,7 +18,7 @@ public sealed class AuthFlowTests(IntegrationFixture fixture) : IntegrationTestB
             password = "correct-password-1",
             displayName = "Flow User"
         });
-        Assert.Equal(HttpStatusCode.Created, register.StatusCode);
+        Assert.Equal(HttpStatusCode.Accepted, register.StatusCode);
 
         var login = await client.PostAsJsonAsync("/api/auth/login", new { email, password = "correct-password-1" });
         Assert.Equal(HttpStatusCode.OK, login.StatusCode);
@@ -52,7 +52,7 @@ public sealed class AuthFlowTests(IntegrationFixture fixture) : IntegrationTestB
     }
 
     [Fact]
-    public async Task Register_DuplicateEmail_Returns409()
+    public async Task Register_DuplicateEmail_ReturnsSameGenericResponse()
     {
         var client = CreateClient();
         var email = UniqueEmail();
@@ -61,7 +61,11 @@ public sealed class AuthFlowTests(IntegrationFixture fixture) : IntegrationTestB
         var first = await client.PostAsJsonAsync("/api/auth/register", payload);
         var second = await client.PostAsJsonAsync("/api/auth/register", payload);
 
-        Assert.Equal(HttpStatusCode.Created, first.StatusCode);
-        Assert.Equal(HttpStatusCode.Conflict, second.StatusCode);
+        Assert.Equal(HttpStatusCode.Accepted, first.StatusCode);
+        Assert.Equal(HttpStatusCode.Accepted, second.StatusCode);
+        var firstBody = await first.Content.ReadAsStringAsync();
+        var secondBody = await second.Content.ReadAsStringAsync();
+        Assert.Equal(firstBody, secondBody);
+        Assert.DoesNotContain(email, secondBody, StringComparison.OrdinalIgnoreCase);
     }
 }

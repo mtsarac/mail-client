@@ -35,6 +35,10 @@ public static class MailAccountEndpoints
             {
                 return Results.ValidationProblem(ex.Errors.ToDictionary(entry => entry.Key, entry => entry.Value));
             }
+            catch (RequestConflictException ex)
+            {
+                return Results.Conflict(ex.Errors.ToDictionary(entry => entry.Key, entry => entry.Value));
+            }
         });
 
         group.MapPut("/{id:guid}", async (Guid id, UpdateMailAccountRequest? request, ClaimsPrincipal user, IMailAccountService service, CancellationToken ct) =>
@@ -49,6 +53,10 @@ public static class MailAccountEndpoints
             catch (RequestValidationException ex)
             {
                 return Results.ValidationProblem(ex.Errors.ToDictionary(entry => entry.Key, entry => entry.Value));
+            }
+            catch (RequestConflictException ex)
+            {
+                return Results.Conflict(ex.Errors.ToDictionary(entry => entry.Key, entry => entry.Value));
             }
         });
 
@@ -92,14 +100,15 @@ public static class MailAccountEndpoints
             CancellationToken ct) =>
         {
             var form = await request.ReadFormAsync(ct);
-            string? idempotencyKey = null;
-            if (request.Headers.ContainsKey("Idempotency-Key"))
-            {
-                idempotencyKey = request.Headers["Idempotency-Key"].ToString().Trim();
-                if (idempotencyKey.Length == 0 || idempotencyKey.Length > 200)
-                    return Results.ValidationProblem(new Dictionary<string, string[]>
-                    { ["idempotencyKey"] = ["Idempotency key must be 1-200 characters."] });
-            }
+            string? idempotencyKey = request.Headers.ContainsKey("Idempotency-Key")
+                ? request.Headers["Idempotency-Key"].ToString().Trim()
+                : null;
+            if (string.IsNullOrWhiteSpace(idempotencyKey))
+                return Results.ValidationProblem(new Dictionary<string, string[]>
+                { ["idempotencyKey"] = ["Idempotency-Key header is required."] });
+            if (idempotencyKey.Length > 200)
+                return Results.ValidationProblem(new Dictionary<string, string[]>
+                { ["idempotencyKey"] = ["Idempotency key must be 1-200 characters."] });
             var files = request.Form.Files
                 .Select(file => new SendMailAttachment(
                     file.FileName, file.ContentType, file.OpenReadStream())).ToList();

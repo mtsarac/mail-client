@@ -19,6 +19,18 @@ public class PasswordPolicyTests
         PasswordPolicy.ValidatePassword("long-enough-pass");
     }
 
+    [Fact]
+    public void ValidatePassword_RejectsOverlongPassword()
+    {
+        Assert.Throws<ArgumentException>(() => PasswordPolicy.ValidatePassword(new string('p', 129)));
+    }
+
+    [Fact]
+    public void ValidatePassword_AcceptsMaxLengthPassword()
+    {
+        PasswordPolicy.ValidatePassword(new string('p', 128));
+    }
+
     [Theory]
     [InlineData("not-an-email")]
     [InlineData("missing-at-sign.example.com")]

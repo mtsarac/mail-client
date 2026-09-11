@@ -27,12 +27,12 @@ public sealed class AuthenticationService(
         if (errors.Count > 0)
             return ServiceResult<RegisteredUser>.Failure(ServiceOutcome.Invalid, errors);
 
+        if (string.Equals(registrationMode, "Disabled", StringComparison.OrdinalIgnoreCase))
+            return ServiceResult<RegisteredUser>.Failure(ServiceOutcome.Invalid, "registration", "Registration is disabled.");
+
         var email = request!.Email.Trim().ToLowerInvariant();
         if (await db.Users.AnyAsync(user => user.Email == email, cancellationToken))
             return ServiceResult<RegisteredUser>.Failure(ServiceOutcome.Conflict, "email", "Email is already registered.");
-
-        if (string.Equals(registrationMode, "Disabled", StringComparison.OrdinalIgnoreCase))
-            return ServiceResult<RegisteredUser>.Failure(ServiceOutcome.Invalid, "registration", "Registration is disabled.");
 
         var user = new User
         {
@@ -45,7 +45,14 @@ public sealed class AuthenticationService(
         };
         user.PasswordHash = passwords.HashPassword(user, request.Password);
         db.Users.Add(user);
-        await db.SaveChangesAsync(cancellationToken);
+        try
+        {
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException ex) when (DbUniqueViolation.IsUniqueViolationFor(ex, "IX_Users_Email"))
+        {
+            return ServiceResult<RegisteredUser>.Failure(ServiceOutcome.Conflict, "email", "Email is already registered.");
+        }
 
         logger.LogInformation("User {UserId} registered with status {Status}.", user.Id, user.Status);
         return ServiceResult<RegisteredUser>.Success(new RegisteredUser(user.Id, user.Email, user.DisplayName, user.Status));

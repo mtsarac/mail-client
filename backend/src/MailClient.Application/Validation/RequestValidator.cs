@@ -6,6 +6,10 @@ namespace MailClient.Application.Validation;
 
 public static partial class RequestValidator
 {
+    public const int MaxEmailLength = 320;
+    public const int MaxUsernameLength = 320;
+    public const int MaxMailboxPasswordLength = 1024;
+    public const int MaxIdempotencyKeyLength = 200;
     private const int MaxHostLength = 253;
     private const int MaxLabelLength = 63;
 
@@ -18,6 +22,12 @@ public static partial class RequestValidator
         if (string.IsNullOrWhiteSpace(trimmed))
         {
             errors[field] = ["Email address is required."];
+            return;
+        }
+
+        if (trimmed.Length > MaxEmailLength)
+        {
+            errors[field] = [$"Email address must be at most {MaxEmailLength} characters."];
             return;
         }
 
@@ -53,6 +63,25 @@ public static partial class RequestValidator
     {
         if (string.IsNullOrWhiteSpace(value))
             errors[field] = ["Mailbox password is required."];
+        else if (value.Length > MaxMailboxPasswordLength)
+            errors[field] = [$"Mailbox password must be at most {MaxMailboxPasswordLength} characters."];
+    }
+
+    public static void RequireUsername(string? value, string field, Dictionary<string, string[]> errors)
+    {
+        var trimmed = value?.Trim();
+        if (string.IsNullOrWhiteSpace(trimmed))
+            errors[field] = ["Username is required."];
+        else if (trimmed.Length > MaxUsernameLength)
+            errors[field] = [$"Username must be at most {MaxUsernameLength} characters."];
+    }
+
+    public static void RequireIdempotencyKey(string? value, string field, Dictionary<string, string[]> errors)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            errors[field] = ["Idempotency key is required."];
+        else if (value.Trim().Length > MaxIdempotencyKeyLength)
+            errors[field] = [$"Idempotency key must be at most {MaxIdempotencyKeyLength} characters."];
     }
 
     public static void RequireDisplayName(string? value, string field, int maxLength, Dictionary<string, string[]> errors)
