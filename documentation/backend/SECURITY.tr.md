@@ -13,7 +13,7 @@ Aşağıdaki her kontrol kodda mevcuttur. Temenni yok.
   olmalı, `Active` olmalı, güncel `TokenVersion` sunmalı. Rol claim'i her
   istekte DB'den yeniden yazılır; statü/versiyon değişimi oturumları anında
   öldürür.
-- Parolalar: Identity `PasswordHasher<User>` (PBKDF2), 8–128 karakter.
+- Parolalar: Identity `PasswordHasher<User>` (PBKDF2), 8-128 karakter.
   Giriş/kayıt hataları geneldir (hep-`202` kayıt sözleşmesinin ötesinde
   kullanıcı sayımı yok).
 - Kayıt modları (`Registration:Mode`): `Open` / `ApprovalRequired`
@@ -42,7 +42,7 @@ Kullanıcı denetimli IMAP/SMTP hostları her bağlantıdan önce
 
 1. Literal kontrol: boş, `localhost` veya IP literal → loopback/özel aralıklar
    anında reddedilir.
-2. Yoksa **tüm** adresler DNS ile çözülür (`IDnsResolver`) — çözülememe ret demektir.
+2. Yoksa **tüm** adresler DNS ile çözülür (`IDnsResolver`); çözülememe ret demektir.
 3. Çözülen her adres kontrol edilir: IPv4'te loopback, özel (10/8,
    172.16/12, 192.168/16), link-local (169.254/16), CGNAT (100.64/10),
    multicast, rezerv/broadcast, dokümantasyon/kıyaslama/aktarma aralıkları;
@@ -51,14 +51,14 @@ Kullanıcı denetimli IMAP/SMTP hostları her bağlantıdan önce
 4. Bağlantıda doğrulanan IP kullanılır (helper yolunda TOCTOU yeniden çözüm
    boşluğu yok).
 
-Neden: kutu host alanı saldırgan denetimli girdidir; bu yoksa sunucu iç ağları
-yoklamaya zorlanabilir. Doğrulayıcı testlerle kapsanır
+Neden önemli: kutu host alanı saldırgan denetimli girdidir; bu kontrol
+yoksa sunucu iç ağları yoklamaya zorlanabilir. Doğrulayıcı testlerle kapsanır
 (`OutboundHostValidatorTests`); testlerde GreenMail/yerel sunucular kullanılır.
 
 ## Taşıma güvenliği
 
 `MailSecurity`: `SslOnConnect`, `StartTls`, `None`. `None`, Development/Test
-dışında `security` doğrulama hatasıyla reddedilir — production posta trafiği
+dışında `security` doğrulama hatasıyla reddedilir: production posta trafiği
 hep şifrelidir. (MailKit varsayılan sertifika doğrulaması geçerlidir; bunu
 gevşeten özel callback yok.)
 
@@ -93,7 +93,7 @@ gevşeten özel callback yok.)
 `SendOperations` kullanıcı+anahtar başına unique, işlemsel claim
 (`pg_advisory_xact_lock`), SHA-256 içerik parmak izi. Aynı anahtar+aynı
 içerikte kayıtlı sonucu tekrar oynatır; yeniden kullanım çakışmasında `409`;
-`DeliveryUnknown` sondur — SMTP kabul etmiş olabileceğinde uygulama asla
+`DeliveryUnknown` sondur: SMTP kabul etmiş olabileceğinde uygulama asla
 otomatik yeniden göndermez. Bkz. [BACKEND_GUIDE.tr.md](BACKEND_GUIDE.tr.md) §9.
 
 ## Push kimlik bilgisi yönetimi
@@ -108,7 +108,7 @@ env → bilinen ADC → `GetApplicationDefault()`. Sırlar loglanmaz. Yalnızca
 
 `X-Forwarded-For/Proto` yalnız `Proxy:KnownProxies/KnownNetworks` doluyken ve
 yalnız o ağlardan dikkate alınır (ayrıştırılmış IP/CIDR; bozuk girdiler
-yoksayılır). Yoksa doğrudan bağlantı değerleri kullanılır — güvenilmez
+yoksayılır). Yoksa doğrudan bağlantı değerleri kullanılır; güvenilmez
 ağlardan sahte başlıkların etkisi yoktur.
 
 ## Tedarik zinciri ve statik analiz
@@ -117,7 +117,7 @@ ağlardan sahte başlıkların etkisi yoktur.
   zafiyetli pakette (geçişliler dahil) derlemeyi düşürür.
 - Backend push/PR'larında + haftalık zamanlamada CodeQL C#.
 - `TreatWarningsAsErrors` (+ CS0618 pragma'sı tek FCM `Token` kullanımına
-  kapsamlı, gerekçe yorumlu — kayıt tokenları FID değildir).
+  kapsamlı, gerekçe yorumlu: kayıt tokenları FID değildir).
 
 ## Hata yönetimi
 

@@ -27,7 +27,7 @@ These files are the authoritative source; the
 ## Conventions
 
 - Code is the source of truth. If these docs ever disagree with
-  `backend/src`, the code wins — please fix the docs.
+  `backend/src`, the code wins; please fix the docs.
 - Secrets are never written here. Placeholders only
   (e.g. `Password=change-me`).
 - Ports/paths/config keys used everywhere: `http://localhost:5223`,

@@ -142,7 +142,7 @@ backend/
     karakterden kısaysa fail-fast. `OnTokenValidated` oturumu DB'ye karşı
     yeniden doğrular (`UserSessionValidator`: kullanıcı var, `Active`,
     `TokenVersion` eşleşiyor) ve **rol claim'ini veritabanından yeniden
-    yazar** — rol değişikliği eski tokenlara yansır, statü/token-versiyon
+    yazar**: rol değişikliği eski tokenlara yansır, statü/token-versiyon
     değişikliği tokenları öldürür.
 
 ### Middleware hattı (gerçek sıra)
@@ -221,7 +221,7 @@ hesabı JSON'u, Data Protection PFX/parolası, kutu parolaları.
 - `Disabled`: kayıt doğrulama hatasıyla reddedilir.
 - `POST /api/auth/register` yeni ve kayıtlı adresler için hep aynı
   **`202 Accepted`** genel mesajını döner (`IX_Users_Email` unique index'i
-  ile yarış güvenli) — adres varlığı dışarı sızmaz. Geçersiz girdi yine
+  ile yarış güvenli); adres varlığı dışarı sızmaz. Geçersiz girdi yine
   `400` döner.
 
 ### Giriş + JWT
@@ -241,12 +241,12 @@ sequenceDiagram
   HMAC-SHA256.
 - Her istek oturumu DB'ye karşı yeniden doğrular. Admin
   onay/kapama/açma ve parola sıfırlama **`TokenVersion`'ı artırır**,
-  dolaşımdaki tokenları anında öldürür — istemci ani `401`'i "yeniden giriş
+  dolaşımdaki tokenları anında öldürür; istemci ani `401`'i "yeniden giriş
   yap" olarak yorumlar.
 - Roller: `User`, `Admin`. Admin uçları `Admin` ister; **admin posta
-  sahipliğini atlamaz** — tüm posta sorguları çağıranın `UserId`'sine
+  sahipliğini atlamaz**: tüm posta sorguları çağıranın `UserId`'sine
   filtrelenir.
-- Parolalar: Identity `PasswordHasher<User>`; politika 8–128 karakter
+- Parolalar: Identity `PasswordHasher<User>`; politika 8-128 karakter
   (`PasswordPolicy`); admin oluşturma/sıfırlama aynı kuralları kullanır.
   Görünen ad ≤ 250, e-posta ≤ 320 karakter.
 
@@ -260,17 +260,16 @@ opsiyonel): `emailAddress`, `displayName`, `username`, `password`,
 `saveSentCopy`. Yanıt (`MailAccountResponse`) asla parola içermez.
 
 - Doğrulama: e-posta/kullanıcı adı ≤ 320, görünen ad ≤ 250, kutu parolası ≤
-  1024, port 1–65535, host geçerli DNS olmalı; `MailSecurity.None`
+  1024, port 1-65535, host geçerli DNS olmalı; `MailSecurity.None`
   **yalnızca Development/Test'te** izinli (yoksa `security` hatası).
 - Hostlar SSRF doğrulayıcıdan geçer (§12); oluşturma IMAP+SMTP bağlantı
   testleri çalıştırır (`POST …/test` + klasör keşfi).
 - Yinelenen `(UserId, EmailAddress)` → `409`, unique index ile yarış güvenli.
 - Sahiplik: her işlem çağıran `UserId`'ye filtrelenir; yabancı id → `404`.
 - **Yeniden yapılandırma kuralı**: IMAP kimliği değişirse (`username`,
-  `imapHost`, `imapPort`, `imapSecurity`) önbellekteki kutu sıfırlanır
-  (klasörler, senkron durumu, atlanan UID'ler, postalar, ek metaverisi +
-  dosyalar) — account+folder advisory lock'ları altında — sonra yeniden
-  keşfedilir. Yalnızca görünen ad, e-posta adresi, SMTP ayarları,
+  `imapHost`, `imapPort`, `imapSecurity`) önbellekteki kutu account+folder
+  advisory lock'ları altında sıfırlanır (klasörler, senkron durumu, atlanan
+  UID'ler, postalar, ek metaverisi + dosyalar), sonra yeniden keşfedilir. Yalnızca görünen ad, e-posta adresi, SMTP ayarları,
   `saveSentCopy` veya parola değişirse önbellek korunur.
 - `DELETE` hesabı, tüm önbellek satırlarını ve `data/attachments/{accountId}`
   dizinini siler. `IsActive` senkron seçimini belirler.
@@ -319,8 +318,8 @@ Temel mekanikler:
 - **Hata politikası** (`SyncFailurePolicy`): geçici (DB/ağ/IMAP/IO) → turu
   iptal et, aynı UID'yi sonraki turda dene. Kalıcı (bozuk/kaybolmuş/aşırı
   büyük) → `SyncSkippedUids`'e yaz (klasör+UID başına unique) ve geç.
-  Bilinmeyen hata retry eder — yanlış retry geciktirir, yanlış skip posta
-  kaybettirir.
+  Bilinmeyen hata retry eder: yanlış retry yalnızca geciktirir, yanlış skip
+  posta kaybettirir.
 - **Bayraklar**: yeni posta `\Seen` → `IsRead` eşlemesini aynı çekişte yapar.
   `PATCH /api/mails/{id}/read` önce sunucuda `\Seen`'i değiştirir, sonra
   satırı günceller; UIDVALIDITY değişmişse `409`, iki taraf da değişmez.
@@ -328,9 +327,9 @@ Temel mekanikler:
   çekiş) dışarıdaki bayrak değişimlerini içeri alır; hatalar kontrol
   noktalarına dokunmaz.
 - **Kullanılabilirlik**: son keşifte görünmeyen klasörler kullanılamaz
-  işaretlenir — postaları durur, yeniden görünene dek senkronlanmaz.
-- **Hata yalıtımı**: tek hesap/klasör hatası yalnızca loglanır; tur devam
-  eder. Çözülemeyen parola → kullanıcıya kutu parolasını yeniden girmesini
+  işaretlenir. Postaları durur ama yeniden görünene dek senkronlanmaz.
+- **Hata yalıtımı**: tek hesap veya klasördeki hata yalnızca loglanır; tur
+  devam eder. Çözülemeyen parola → kullanıcıya kutu parolasını yeniden girmesini
   söyleyen hata.
 
 ---
@@ -340,7 +339,7 @@ Temel mekanikler:
 `POST /api/mail-accounts/{accountId}/send` (`multipart/form-data`,
 `mail-operations` limiti): `toAddress`, `subject` (500 karaktere kırpılır),
 `bodyHtml` ve/veya `bodyText` (biri zorunlu, her biri ≤ `MaxSendBodyChars`),
-en fazla 20 `attachments`. **`Idempotency-Key` başlığı zorunlu (1–200 karakter).**
+en fazla 20 `attachments`. **`Idempotency-Key` başlığı zorunlu (1-200 karakter).**
 
 Idempotency durum makinesi (`SendOperations`, kullanıcı+anahtar başına
 unique, `pg_advisory_xact_lock` claim + insert-yarışı tekrarı):
@@ -360,7 +359,7 @@ InProgress --denendi, sonuç bilinemez--> DeliveryUnknown (son, asla otomatik ye
 - **SMTP başarısı = gönderildi**: iptal-güvenli şekilde APPEND işinden önce
   kalıcılaştırılır. `SaveSentCopy` açıksa aynı `MimeMessage` keşfedilen Sent
   klasörüne IMAP-APPEND edilir; APPEND hatası → `sent:true,
-  sentCopySaved:false` + kullanıcıya gösterilebilir uyarı — istemci yeniden
+  sentCopySaved:false` + kullanıcıya gösterilebilir uyarı; istemci yeniden
   göndermemelidir.
 - Kestrel/multipart üst sınırları
   `MaxMessageAttachmentBytes + 4·2·MaxSendBodyChars + 1 MiB`'den türetilir,
@@ -429,12 +428,12 @@ Tekillikler: `User.Email`; `(MailAccount.UserId, EmailAddress)`;
   siler (sahiplik yeniden kontrol edilir); kota/auth/geçici/sunucu hataları
   korur. `Enabled=false` → güvenli no-op.
 - **Cihazlar**: `POST /api/devices/register` (`pushToken` ≤ 500, `platform`
-  android/ios, küçük harf saklanır) token başına idempotent — aynı kullanıcı
+  android/ios, küçük harf saklanır) token başına idempotent: aynı kullanıcı
   yerinde günceller, kullanıcılar arası sessizce transfer eder (unique index
   + reassign retry ile yarış güvenli). `DELETE /api/devices/{id}` sahip
   kapsamlıdır (değilse `404`). Flutter FCM rotasyonunda yeniden kaydeder,
   çıkışta siler.
-- **Kilitler**: SHA-256 türevi int64 anahtarlarla `pg_advisory_lock` —
+- **Kilitler**: SHA-256 türevi int64 anahtarlarla `pg_advisory_lock`:
   hesap kapsamlı (`"account:"+id`), klasör kapsamlı (klasör id), gönderim
   claim'i işlem kapsamlı (`pg_advisory_xact_lock`), sıra hep hesap → klasör.
   İlişkisel olmayan (EF InMemory) sağlayıcılarda lock no-op'tur. Keşif
@@ -471,8 +470,8 @@ Zorunlu (kodda) vs önerilen (operasyonel):
 | Her yerde ani `401` | admin `TokenVersion` artırmış → yeniden giriş |
 | Okundu işaretlemede `409` | klasör UIDVALIDITY değişmiş; yenile, tekrar dene |
 | Klasör sessizce senkronlanmıyor | klasör kullanılamaz (keşifte yok) veya senkron kapalı |
-| `sent:true, sentCopySaved:false` | normal: gönderildi, Sent APPEND başarısız — yeniden gönderme |
-| Retry'de `409` | anahtar `InProgress`/`DeliveryUnknown` veya içerik değişmiş — asla otomatik yeniden gönderme |
+| `sent:true, sentCopySaved:false` | normal: gönderildi, Sent APPEND başarısız; yeniden gönderme |
+| Retry'de `409` | anahtar `InProgress`/`DeliveryUnknown` veya içerik değişmiş; asla otomatik yeniden gönderme |
 | Push gelmiyor | Firebase kapalı, cihaz token yok, Sent/Inbox-dışı posta veya geçici FCM hatası (token korunur) |
 | LAN reddi | yanlış IP (DHCP), 5223'te güvenlik duvarı, istemci izolasyonu; `/health` kontrol et |
 | Swagger 404 | yalnızca Development'te map edilir |
@@ -481,14 +480,14 @@ Zorunlu (kodda) vs önerilen (operasyonel):
 
 ## 15. Sözlük
 
-**IMAP** — kutu okuma protokolü; **SMTP** — posta gönderme protokolü;
-**UID** — klasör içi değişmez mesaj kimliği; **UIDVALIDITY** — klasör nesil
-sayacı (değişirse yeniden indirilir); **FCM** — Firebase Cloud Messaging;
-**ADC** — Application Default Credentials zinciri; **JWT** — imzalı erişim
-tokenı (12 saat, `sub`/`role`/`tv`); **SSRF** — sunucu taraflı istek sahteciliği
-(host doğrulamayla engellenir); **Data Protection** — kutu parolaları için
-ASP.NET anahtar halkası şifrelemesi; **Advisory lock** — Postgres işbirlikçi
-kilidi (`pg_advisory_lock`); **Idempotency** — aynı anahtar + aynı içerik
-yeniden göndermek yerine tekrar oynatır; **MimeMessage** — MailKit/MimeKit
-posta nesnesi; **SyncState** — klasör başına kontrol noktası satırı;
-**TokenVersion** — kullanıcı başına oturum nesil sayacı.
+**IMAP**: kutu okuma protokolü; **SMTP**: posta gönderme protokolü;
+**UID**: klasör içi değişmez mesaj kimliği; **UIDVALIDITY**: klasör nesil
+sayacı (değişirse yeniden indirilir); **FCM**: Firebase Cloud Messaging;
+**ADC**: Application Default Credentials zinciri; **JWT**: imzalı erişim
+tokenı (12 saat, `sub`/`role`/`tv`); **SSRF**: sunucu taraflı istek sahteciliği
+(host doğrulamayla engellenir); **Data Protection**: kutu parolaları için
+ASP.NET anahtar halkası şifrelemesi; **Advisory lock**: Postgres işbirlikçi
+kilidi (`pg_advisory_lock`); **Idempotency**: aynı anahtar + aynı içerik
+yeniden göndermek yerine tekrar oynatır; **MimeMessage**: MailKit/MimeKit
+posta nesnesi; **SyncState**: klasör başına kontrol noktası satırı;
+**TokenVersion**: kullanıcı başına oturum nesil sayacı.

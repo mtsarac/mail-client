@@ -1,4 +1,4 @@
-# Mail Client — Backend Wiki
+# Mail Client backend wiki
 
 Choose your language / Dilinizi seçin:
 

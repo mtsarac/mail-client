@@ -12,7 +12,7 @@ Every control below exists in code. Nothing here is aspirational.
 - Per-request session validation (`UserSessionValidator`): user must exist,
   be `Active`, and present the current `TokenVersion`. Role claim is rebuilt
   from the DB each request; status/version changes kill sessions immediately.
-- Passwords: Identity `PasswordHasher<User>` (PBKDF2), 8–128 chars.
+- Passwords: Identity `PasswordHasher<User>` (PBKDF2), 8-128 chars.
   Login/register errors are generic (no user enumeration beyond the
   always-`202` register contract).
 - Registration modes (`Registration:Mode`): `Open` / `ApprovalRequired`
@@ -41,7 +41,7 @@ connection (`MailConnectionHelper.ResolveAllowedAsync`):
 
 1. Literal check: empty, `localhost`, or IP literal → loopback/special ranges
    denied inline.
-2. Otherwise DNS-resolve **all** addresses (`IDnsResolver`) — failure denies.
+2. Otherwise DNS-resolve **all** addresses (`IDnsResolver`); failure denies.
 3. Every resolved address checked: IPv4 denies loopback, private
    (10/8, 172.16/12, 192.168/16), link-local (169.254/16), CGNAT
    (100.64/10), multicast, reserved/broadcast, documentation/benchmark/relay
@@ -50,14 +50,14 @@ connection (`MailConnectionHelper.ResolveAllowedAsync`):
 4. The validated IP is used for the connection (no TOCTOU re-resolve gap in
    the helper path).
 
-Why: a mailbox host field is attacker-controlled input; without this, the
-server could be made to probe internal networks. Tests cover the validator
+Why this matters: a mailbox host field is attacker-controlled input; without
+this check, the server could be made to probe internal networks. Tests cover the validator
 (`OutboundHostValidatorTests`) with GreenMail/local servers used in tests.
 
 ## Transport security
 
 `MailSecurity`: `SslOnConnect`, `StartTls`, `None`. `None` is rejected with a
-`security` validation error outside Development/Test — production mail
+`security` validation error outside Development/Test: production mail
 traffic is always encrypted. (MailKit default certificate validation applies;
 no custom callback weakens it.)
 
@@ -90,7 +90,7 @@ no custom callback weakens it.)
 
 `SendOperations` unique per user+key, transactional claim
 (`pg_advisory_xact_lock`), SHA-256 content fingerprint. Replays on
-same-key/same-content; `409` on reuse-conflict; `DeliveryUnknown` terminal —
+same-key/same-content; `409` on reuse-conflict; `DeliveryUnknown` terminal:
 the app never auto-resends once SMTP may have accepted. See
 [BACKEND_GUIDE.en.md](BACKEND_GUIDE.en.md) §9.
 
@@ -106,7 +106,7 @@ Only `Unregistered` prunes tokens. The server JSON must never ship in Flutter.
 
 `X-Forwarded-For/Proto` honored only when `Proxy:KnownProxies/KnownNetworks`
 non-empty and only from those networks (parsed IPs/CIDRs; invalid entries
-ignored). Otherwise direct-connection values are used — spoofed headers from
+ignored). Otherwise direct-connection values are used; spoofed headers from
 untrusted networks have no effect.
 
 ## Supply chain & static analysis
@@ -115,7 +115,7 @@ untrusted networks have no effect.
   the build on any vulnerable package, transitive included.
 - CodeQL C# on backend pushes/PRs + weekly schedule.
 - `TreatWarningsAsErrors` (+ the CS0618 pragma is scoped to the single FCM
-  `Token` usage with a justifying comment — registration tokens are not FIDs).
+  `Token` usage with a justifying comment: registration tokens are not FIDs).
 
 ## Error handling
 

@@ -15,8 +15,8 @@ Error shape: RFC 9457 problem details (`errors: { field: [messages] }`).
 { "email": "user@example.com", "password": "secret123", "displayName": "Ada" }
 ```
 
-- `202 Accepted` always (valid syntax): `{ "message": "If the registration request can be accepted, it has been received." }` — identical for new/existing addresses.
-- `400` validation: bad email, password not 8–128 chars, missing display name (>250), or `Registration:Mode=Disabled`.
+- `202 Accepted` always (valid syntax): `{ "message": "If the registration request can be accepted, it has been received." }`: identical for new/existing addresses.
+- `400` validation: bad email, password not 8-128 chars, missing display name (>250), or `Registration:Mode=Disabled`.
 
 ### `POST /api/auth/login` (anonymous, `auth` rate limit)
 
@@ -31,11 +31,11 @@ Error shape: RFC 9457 problem details (`errors: { field: [messages] }`).
 
 | Method & Path | Request | Response | Codes |
 |---|---|---|---|
-| `GET /api/admin/users` | — | `[{ id, email, displayName, role, status, ... }]` | 200, 401, 403 |
+| `GET /api/admin/users` | - | `[{ id, email, displayName, role, status, ... }]` | 200, 401, 403 |
 | `POST /api/admin/users` | `{ email, password, displayName, role, status }` | `201` + created user, `Location: /api/admin/users/{id}` | 201, 400, 409 (duplicate), 401, 403 |
-| `PATCH /api/admin/users/{id}/approve` | — | `204` (status→Active, tokens invalidated) | 204, 404, 401, 403 |
-| `PATCH /api/admin/users/{id}/disable` | — | `204` (status→Disabled, tokens invalidated) | 204, 404, 401, 403 |
-| `PATCH /api/admin/users/{id}/enable` | — | `204` (status→Active, tokens invalidated) | 204, 404, 401, 403 |
+| `PATCH /api/admin/users/{id}/approve` | - | `204` (status→Active, tokens invalidated) | 204, 404, 401, 403 |
+| `PATCH /api/admin/users/{id}/disable` | - | `204` (status→Disabled, tokens invalidated) | 204, 404, 401, 403 |
+| `PATCH /api/admin/users/{id}/enable` | - | `204` (status→Active, tokens invalidated) | 204, 404, 401, 403 |
 | `POST /api/admin/users/{id}/reset-password` | `{ password }` | `204` (tokens invalidated) | 204, 400, 404, 401, 403 |
 
 ## Mail accounts (JWT, owner-scoped)
@@ -53,7 +53,7 @@ Account body (create; update same fields, `password` optional):
 ```
 
 Limits: email/username ≤ 320, display ≤ 250, mailbox password ≤ 1024,
-ports 1–65535, valid DNS hosts (loopback/private/reserved rejected),
+ports 1-65535, valid DNS hosts (loopback/private/reserved rejected),
 `imapSecurity/smtpSecurity` ∈ `SslOnConnect|StartTls` (`None` dev/test only).
 
 | Method & Path | Response | Codes / Notes |
@@ -70,17 +70,17 @@ ports 1–65535, valid DNS hosts (loopback/private/reserved rejected),
 
 ## Mail (JWT, owner-scoped)
 
-- `GET /api/mails?folderType=Inbox&page=1&pageSize=30` — also
+- `GET /api/mails?folderType=Inbox&page=1&pageSize=30`: also
   `accountId`, `folderId` filters. `200 MailPageDto{ items: [MailSummaryDto{
   id, mailAccountId, mailAccountEmail, folderId, folderType,
   fromDisplayName, fromAddress, subject, receivedAt, isRead, hasAttachments
   }], totalCount, page, pageSize }`. `400` bad `folderType`/paging
   (`page ≥ 1`, `1 ≤ pageSize ≤ 100`), `404` unknown account/folder. Ordered
   `ReceivedAt DESC, Id DESC`. No bodies, no paths.
-- `GET /api/mails/{id}` — `200 MailDetailDto` (summary + `messageId`,
+- `GET /api/mails/{id}`: `200 MailDetailDto` (summary + `messageId`,
   `toAddress`, `bodyHtml`, `bodyText`, `attachments: [AttachmentDto{ id,
   fileName, contentType, sizeBytes, isInline, contentId }]`). Else `404`.
-- `GET /api/mails/{mailId}/attachments/{attachmentId}` — streams file bytes
+- `GET /api/mails/{mailId}/attachments/{attachmentId}`: streams file bytes
   (`Results.File`). `404` on any mismatch or missing file.
 - `PATCH /api/mails/{id}/read` (`mail-operations` limit),
   `{ "isRead": true }` → `200 MailReadDto{ id, isRead }`. `404` unknown,
@@ -89,12 +89,12 @@ ports 1–65535, valid DNS hosts (loopback/private/reserved rejected),
 
 ## Sending (JWT, `mail-operations` limit)
 
-`POST /api/mail-accounts/{accountId}/send` — `multipart/form-data` fields:
+`POST /api/mail-accounts/{accountId}/send`: `multipart/form-data` fields:
 `toAddress`, `subject`, `bodyHtml` and/or `bodyText`, up to 20 `attachments`.
 Header **`Idempotency-Key: <uuid>` mandatory** (missing/blank/>200 chars → 400).
 
 - `200 { sent, sentCopySaved, warning }` when `sent=true`. `sentCopySaved=false`
-  + warning = sent, Sent-folder copy failed — do not resend.
+  + warning = sent, Sent-folder copy failed; do not resend.
 - `502` SMTP/transport failure (before any delivery proof may retry with same key).
 - `404` unknown account; `409` key in use / uncertain / content mismatch;
   `400` validation; `429` rate limit.

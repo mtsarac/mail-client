@@ -60,13 +60,13 @@ dotnet test backend/MailClient.slnx --configuration Release --no-build
 dotnet format backend/MailClient.slnx --verify-no-changes
 ```
 
-`TreatWarningsAsErrors` is on — warnings fail the build.
+`TreatWarningsAsErrors` is on: warnings fail the build.
 
 ## LAN development
 
 Backend dev (Rider, this machine): start the **`lan-http`** profile
 (`http://0.0.0.0:5223`, plain HTTP, no browser). Find the LAN IP
-(`ip -4 addr show | grep inet` — DHCP changes it, never commit it).
+(`ip -4 addr show | grep inet`; DHCP changes it, so never commit it).
 API is at `http://<LAN-IP>:5223`.
 
 For the teammate / device / emulator / Flutter Web matrix, CORS/cleartext
@@ -102,13 +102,13 @@ Run locally only what you need; the suite needs Docker for the
 Testcontainers parts. **CI is where Testcontainers are validated.**
 Do not claim coverage beyond this table.
 
-## CI (not CD — no deploy pipeline)
+## CI (no deploy pipeline)
 
 `master` is protected: `build-test` + `format` are required checks.
 
 ### `ci.yml`
 
-- `changes`: `dorny/paths-filter` — backend jobs run only when
+- `changes`: `dorny/paths-filter`: backend jobs run only when
   `backend/**`, `ci.yml`, or `.editorconfig` changed (a skip counts as
   passing for required checks).
 - `build-test`: restore → Release build → **NuGet vulnerability audit**

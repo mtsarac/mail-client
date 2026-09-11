@@ -16,7 +16,7 @@ flowchart LR
 - `Domain` has no references: safe to reference from everywhere, contains
   only `Entities/` (9 classes) and `Enums/` (`UserRole`, `UserStatus`,
   `MailSecurity`, `MailFolderType`, `SendOperationStatus`).
-- `Application` depends only on `Domain`: all seams live here —
+- `Application` depends only on `Domain`: all seams live here:
   `Interfaces/` (account, folder, read, query, send, devices, push, auth,
   admin, session, JWT issuer, health, storage, credential protector,
   connectivity tester, folder explorer, DNS/host validators), `Sync/`
@@ -68,10 +68,10 @@ Key interface → implementation map:
 ## External dependencies
 
 PostgreSQL (state), IMAP servers (source of truth), SMTP servers (delivery),
-FCM (push), local filesystem (attachments, key ring). No Redis, no queue, no
-object store — background work is an in-process hosted service, so scale-out
-requires shared Postgres (advisory locks coordinate) plus shared storage and
-a shared Data Protection ring.
+FCM (push), local filesystem (attachments, key ring). Background work is an
+in-process hosted service; there is no Redis, queue, or object store, so
+scale-out requires shared Postgres (advisory locks coordinate) plus shared
+storage and a shared Data Protection ring.
 
 ## Lifecycles
 

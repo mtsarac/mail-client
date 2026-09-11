@@ -15,8 +15,8 @@ gövdesi: RFC 9457 problem details (`errors: { alan: [mesajlar] }`).
 { "email": "kullanici@ornek.com", "password": "gizli123", "displayName": "Ada" }
 ```
 
-- Geçerli sözdiziminde hep `202 Accepted`: `{ "message": "If the registration request can be accepted, it has been received." }` — yeni/kayıtlı adres ayırt edilmez.
-- `400`: bozuk e-posta, 8–128 dışı parola, eksik görünen ad (>250) veya `Registration:Mode=Disabled`.
+- Geçerli sözdiziminde hep `202 Accepted`: `{ "message": "If the registration request can be accepted, it has been received." }`: yeni/kayıtlı adres ayırt edilmez.
+- `400`: bozuk e-posta, 8-128 dışı parola, eksik görünen ad (>250) veya `Registration:Mode=Disabled`.
 
 ### `POST /api/auth/login` (anonim, `auth` limiti)
 
@@ -31,11 +31,11 @@ gövdesi: RFC 9457 problem details (`errors: { alan: [mesajlar] }`).
 
 | Metot ve Yol | İstek | Yanıt | Kodlar |
 |---|---|---|---|
-| `GET /api/admin/users` | — | `[{ id, email, displayName, role, status, ... }]` | 200, 401, 403 |
+| `GET /api/admin/users` | - | `[{ id, email, displayName, role, status, ... }]` | 200, 401, 403 |
 | `POST /api/admin/users` | `{ email, password, displayName, role, status }` | `201` + kullanıcı, `Location: /api/admin/users/{id}` | 201, 400, 409 (yinelenen), 401, 403 |
-| `PATCH /api/admin/users/{id}/approve` | — | `204` (statü→Active, tokenlar ölür) | 204, 404, 401, 403 |
-| `PATCH /api/admin/users/{id}/disable` | — | `204` (statü→Disabled, tokenlar ölür) | 204, 404, 401, 403 |
-| `PATCH /api/admin/users/{id}/enable` | — | `204` (statü→Active, tokenlar ölür) | 204, 404, 401, 403 |
+| `PATCH /api/admin/users/{id}/approve` | - | `204` (statü→Active, tokenlar ölür) | 204, 404, 401, 403 |
+| `PATCH /api/admin/users/{id}/disable` | - | `204` (statü→Disabled, tokenlar ölür) | 204, 404, 401, 403 |
+| `PATCH /api/admin/users/{id}/enable` | - | `204` (statü→Active, tokenlar ölür) | 204, 404, 401, 403 |
 | `POST /api/admin/users/{id}/reset-password` | `{ password }` | `204` (tokenlar ölür) | 204, 400, 404, 401, 403 |
 
 ## Posta hesapları (JWT, sahip kapsamlı)
@@ -53,7 +53,7 @@ Hesap gövdesi (oluşturma; güncelleme aynı alanlar, `password` opsiyonel):
 ```
 
 Sınırlar: e-posta/kullanıcı adı ≤ 320, görünen ad ≤ 250, kutu parolası ≤ 1024,
-port 1–65535, geçerli DNS hostları (loopback/özel/rezerv reddedilir),
+port 1-65535, geçerli DNS hostları (loopback/özel/rezerv reddedilir),
 `imapSecurity/smtpSecurity` ∈ `SslOnConnect|StartTls` (`None` yalnız dev/test).
 
 | Metot ve Yol | Yanıt | Kodlar / Notlar |
@@ -70,17 +70,17 @@ port 1–65535, geçerli DNS hostları (loopback/özel/rezerv reddedilir),
 
 ## Posta (JWT, sahip kapsamlı)
 
-- `GET /api/mails?folderType=Inbox&page=1&pageSize=30` — ayrıca `accountId`,
+- `GET /api/mails?folderType=Inbox&page=1&pageSize=30`: ayrıca `accountId`,
   `folderId` filtreleri. `200 MailPageDto{ items: [MailSummaryDto{ id,
   mailAccountId, mailAccountEmail, folderId, folderType, fromDisplayName,
   fromAddress, subject, receivedAt, isRead, hasAttachments }], totalCount,
   page, pageSize }`. `400` hatalı `folderType`/sayfalama (`page ≥ 1`,
   `1 ≤ pageSize ≤ 100`), `404` bilinmeyen hesap/klasör. Sıra
   `ReceivedAt DESC, Id DESC`. Gövde ve yol yok.
-- `GET /api/mails/{id}` — `200 MailDetailDto` (özet + `messageId`,
+- `GET /api/mails/{id}`: `200 MailDetailDto` (özet + `messageId`,
   `toAddress`, `bodyHtml`, `bodyText`, `attachments: [AttachmentDto{ id,
   fileName, contentType, sizeBytes, isInline, contentId }]`). Değilse `404`.
-- `GET /api/mails/{mailId}/attachments/{attachmentId}` — dosya bayt akışı
+- `GET /api/mails/{mailId}/attachments/{attachmentId}`: dosya bayt akışı
   (`Results.File`). Herhangi bir uyumsuzluk/kayıp dosyada `404`.
 - `PATCH /api/mails/{id}/read` (`mail-operations` limiti),
   `{ "isRead": true }` → `200 MailReadDto{ id, isRead }`. `404` bilinmeyen,
@@ -89,13 +89,13 @@ port 1–65535, geçerli DNS hostları (loopback/özel/rezerv reddedilir),
 
 ## Gönderim (JWT, `mail-operations` limiti)
 
-`POST /api/mail-accounts/{accountId}/send` — `multipart/form-data` alanları:
+`POST /api/mail-accounts/{accountId}/send`: `multipart/form-data` alanları:
 `toAddress`, `subject`, `bodyHtml` ve/veya `bodyText`, en fazla 20
 `attachments`. **`Idempotency-Key: <uuid>` başlığı zorunlu**
 (eksik/boş/200+ karakter → 400).
 
 - `sent=true` iken `200 { sent, sentCopySaved, warning }`.
-  `sentCopySaved=false` + uyarı = gönderildi ama Sent kopyası başarısız —
+  `sentCopySaved=false` + uyarı = gönderildi ama Sent kopyası başarısız;
   yeniden gönderme.
 - `502` SMTP/taşıma hatası (gönderim kanıtı yoksa aynı anahtarla retry olabilir).
 - `404` bilinmeyen hesap; `409` anahtar kullanımda / belirsiz / içerik

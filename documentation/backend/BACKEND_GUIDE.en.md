@@ -137,7 +137,7 @@ backend/
 11. JWT bearer validation (issuer/audience/signing key/lifetime) + fail-fast
     when `Jwt:Key` < 32 chars. `OnTokenValidated` re-checks the session
     (`UserSessionValidator`: user exists, `Active`, `TokenVersion` match) and
-    **re-issues the role claim from the database** — role changes apply to
+    **re-issues the role claim from the database**: role changes apply to
     already-issued tokens, status/token-version changes kill them.
 
 ### Middleware pipeline (real order)
@@ -216,7 +216,7 @@ service-account JSON, Data Protection PFX/password, mailbox passwords.
 - `Disabled`: registration rejected with a validation error.
 - `POST /api/auth/register` always returns **`202 Accepted`** with the same
   generic message for new and already-registered addresses (race-safe via the
-  `IX_Users_Email` unique index) — existence is never disclosed. Invalid
+  `IX_Users_Email` unique index); existence is never disclosed. Invalid
   input still returns `400`.
 
 ### Login + JWT
@@ -236,11 +236,11 @@ sequenceDiagram
   HMAC-SHA256.
 - Every request revalidates the session against the DB. Admin
   approve/disable/enable and password reset **bump `TokenVersion`**, instantly
-  invalidating outstanding tokens — clients treat sudden `401` as
+  invalidating outstanding tokens; clients treat sudden `401` as
   "log in again".
 - Roles: `User`, `Admin`. Admin endpoints require `Admin`; **admin does not
-  bypass mail ownership** — all mail queries scope to the caller's `UserId`.
-- Passwords: Identity `PasswordHasher<User>`; policy 8–128 chars
+  bypass mail ownership**: all mail queries scope to the caller's `UserId`.
+- Passwords: Identity `PasswordHasher<User>`; policy 8-128 chars
   (`PasswordPolicy`); admin create/reset use the same rules. Display names
   ≤ 250 chars, emails ≤ 320.
 
@@ -254,7 +254,7 @@ optional): `emailAddress`, `displayName`, `username`, `password`,
 `saveSentCopy`. Response (`MailAccountResponse`) never includes credentials.
 
 - Validation: email/username ≤ 320, display ≤ 250, mailbox password ≤ 1024,
-  ports 1–65535, hosts must be syntactically valid DNS; `MailSecurity.None`
+  ports 1-65535, hosts must be syntactically valid DNS; `MailSecurity.None`
   allowed **only in Development/Test** (else `security` error).
 - Hosts pass the SSRF validator (see §12); creation runs IMAP+SMTP
   connectivity checks (`POST …/test` + folder refresh).
@@ -304,22 +304,22 @@ sequenceDiagram
 Key mechanics:
 
 - **Checkpoints**: `SyncState(LastUid, UidValidity, NextUidScanStart,
-  LastNewMailSyncAt, LastFlagSyncAt)` — one row per folder (unique).
+  LastNewMailSyncAt, LastFlagSyncAt)`: one row per folder (unique).
 - **Sparse-range scan**: exponential UID windows against `UidNext`, max 8
   SEARCH roundtrips; the persisted cursor resumes across polls so huge UID
   gaps converge; `LastUid` advances only over processed mail.
 - **Failure policy** (`SyncFailurePolicy`): transient (DB/network/IMAP/IO) →
   abort run, retry same UID next poll. Permanent (malformed/vanished/
   oversized) → record in `SyncSkippedUids` (unique per folder+UID) and skip.
-  Unknown errors retry — a wrong retry delays, a wrong skip loses mail.
+  Unknown errors retry: a wrong retry only delays, a wrong skip loses mail.
 - **Flags**: new mail maps `\Seen` → `IsRead` in the same fetch. `PATCH
   /api/mails/{id}/read` sets `\Seen` on the server **first**, then updates
   the row; UIDVALIDITY change → `409`, both sides untouched. Flag
   reconciliation (every `FlagSyncIntervalSeconds`, FLAGS-only batched fetch)
   imports external flag changes; failures never touch checkpoints.
 - **Availability**: folders missing from last discovery are marked
-  unavailable — mail kept, never synced until they reappear.
-- **Error isolation**: one account/folder failing only logs; the poll
+  unavailable. Cached mail stays, but nothing syncs until they reappear.
+- **Error isolation**: a failure in one account or folder is only logged; the poll
   continues. Undecryptable credential → error telling the user to re-enter
   the mailbox password.
 
@@ -330,7 +330,7 @@ Key mechanics:
 `POST /api/mail-accounts/{accountId}/send` (`multipart/form-data`,
 `mail-operations` rate limit): `toAddress`, `subject` (truncated to 500),
 `bodyHtml` and/or `bodyText` (one required, each ≤ `MaxSendBodyChars`), up to
-20 `attachments`. **Mandatory `Idempotency-Key` header (1–200 chars).**
+20 `attachments`. **Mandatory `Idempotency-Key` header (1-200 chars).**
 
 Idempotency state machine (`SendOperations`, unique per user+key,
 `pg_advisory_xact_lock` claim + insert-race retry):
@@ -349,7 +349,7 @@ InProgress --attempted, outcome unknowable--> DeliveryUnknown (terminal, never a
 - **SMTP success = sent**: persisted immediately (cancellation-safe) before
   APPEND work. With `SaveSentCopy`, the same `MimeMessage` is IMAP-APPENDed
   to the discovered Sent folder; APPEND failure → `sent:true,
-  sentCopySaved:false` + user-presentable warning — client must not resend.
+  sentCopySaved:false` + user-presentable warning; client must not resend.
 - Kestrel/multipart caps derive from
   `MaxMessageAttachmentBytes + 4·2·MaxSendBodyChars + 1 MiB`, so oversized
   requests are rejected at the edge. Match reverse-proxy limits (~65M
@@ -416,11 +416,11 @@ Secondary index `(Mail.MailAccountId, ReceivedAt)` serves the unified list
   `MessagingErrorCode.Unregistered` deletes a token (ownership re-checked);
   quota/auth/transient/server failures keep it. `Enabled=false` → safe no-op.
 - **Devices**: `POST /api/devices/register` (`pushToken` ≤ 500, `platform`
-  android/ios, stored lowercase) is idempotent per token — same-user updates
+  android/ios, stored lowercase) is idempotent per token: same-user updates
   in place, cross-user silently reassigns (race-safe via unique index +
   reassign retry). `DELETE /api/devices/{id}` is owner-scoped (`404`
   otherwise). Flutter re-registers on FCM rotation and deletes on logout.
-- **Locks**: `pg_advisory_lock` on SHA-256-derived int64 keys —
+- **Locks**: `pg_advisory_lock` on SHA-256-derived int64 keys:
   account-scoped (`"account:"+id`), folder-scoped (folder id), send-claim
   transaction-scoped (`pg_advisory_xact_lock`), always account → folder order.
   Non-relational (EF InMemory) providers get no-op locks. Discovery commits
@@ -456,8 +456,8 @@ Implemented requirements vs recommendations:
 | Sudden `401` everywhere | admin action bumped `TokenVersion` → log in again |
 | `409` on mark-read | folder UIDVALIDITY changed; refresh, retry |
 | Sync silent for a folder | folder unavailable (missing from discovery) or sync disabled |
-| `sent:true, sentCopySaved:false` | normal: sent, Sent APPEND failed — do not resend |
-| Retry returns `409` | key in `InProgress`/`DeliveryUnknown` or content changed — never auto-resend |
+| `sent:true, sentCopySaved:false` | normal: sent, Sent APPEND failed; do not resend |
+| Retry returns `409` | key in `InProgress`/`DeliveryUnknown` or content changed; never auto-resend |
 | No push | Firebase disabled, no device token, Sent/non-Inbox mail, or transient FCM failure (kept token) |
 | LAN refused | wrong IP (DHCP), firewall on 5223, client isolation; check `/health` |
 | Swagger 404 | only mapped in Development |
@@ -466,14 +466,14 @@ Implemented requirements vs recommendations:
 
 ## 15. Glossary
 
-**IMAP** — mailbox read protocol; **SMTP** — mail send protocol;
-**UID** — per-folder immutable message id; **UIDVALIDITY** — folder
-generation counter (change = re-download); **FCM** — Firebase Cloud
-Messaging; **ADC** — Application Default Credentials chain;
-**JWT** — signed access token (12 h, `sub`/`role`/`tv`);
-**SSRF** — server-side request forgery (blocked by host validation);
-**Data Protection** — ASP.NET key-ring encryption for mailbox passwords;
-**Advisory lock** — Postgres cooperative mutex (`pg_advisory_lock`);
-**Idempotency** — same key + same content replays instead of resending;
-**MimeMessage** — MailKit/MimeKit mail object; **SyncState** — per-folder
-checkpoint row; **TokenVersion** — session generation counter per user.
+**IMAP**: mailbox read protocol; **SMTP**: mail send protocol;
+**UID**: per-folder immutable message id; **UIDVALIDITY**: folder
+generation counter (change = re-download); **FCM**: Firebase Cloud
+Messaging; **ADC**: Application Default Credentials chain;
+**JWT**: signed access token (12 h, `sub`/`role`/`tv`);
+**SSRF**: server-side request forgery (blocked by host validation);
+**Data Protection**: ASP.NET key-ring encryption for mailbox passwords;
+**Advisory lock**: Postgres cooperative mutex (`pg_advisory_lock`);
+**Idempotency**: same key + same content replays instead of resending;
+**MimeMessage**: MailKit/MimeKit mail object; **SyncState**: per-folder
+checkpoint row; **TokenVersion**: session generation counter per user.

@@ -16,7 +16,7 @@ flowchart LR
 - `Domain`'in referansı yok: her yerden güvenle referans verilir; yalnızca
   `Entities/` (9 sınıf) ve `Enums/` (`UserRole`, `UserStatus`,
   `MailSecurity`, `MailFolderType`, `SendOperationStatus`) içerir.
-- `Application` yalnız `Domain`'e dayanır: tüm dikişler burada —
+- `Application` yalnız `Domain`'e dayanır: tüm dikişler burada:
   `Interfaces/` (hesap, klasör, okuma, sorgu, gönderim, cihazlar, push, auth,
   admin, oturum, JWT üretici, sağlık, depolama, parola koruyucu, bağlantı
   test edici, klasör gezgini, DNS/host doğrulayıcılar), `Sync/`
@@ -70,10 +70,10 @@ Temel arayüz → gerçekleme tablosu:
 ## Dış bağımlılıklar
 
 PostgreSQL (durum), IMAP sunucuları (doğruluk kaynağı), SMTP sunucuları
-(teslim), FCM (push), yerel dosya sistemi (ekler, anahtar halkası). Redis,
-kuyruk, nesne deposu yok — arka plan işi süreç-içi hosted servistir; ölçek
-genişletme paylaşımlı Postgres (advisory lock'lar koordine eder) + paylaşımlı
-depolama ve paylaşımlı Data Protection halkası gerektirir.
+(teslim), FCM (push), yerel dosya sistemi (ekler, anahtar halkası). Arka
+plan işi süreç-içi hosted servistir; Redis, kuyruk veya nesne deposu yoktur,
+bu yüzden ölçek genişletme paylaşımlı Postgres (advisory lock'lar koordine
+eder) + paylaşımlı depolama ve paylaşımlı Data Protection halkası gerektirir.
 
 ## Yaşam döngüleri
 

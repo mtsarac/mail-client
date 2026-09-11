@@ -61,13 +61,13 @@ dotnet test backend/MailClient.slnx --configuration Release --no-build
 dotnet format backend/MailClient.slnx --verify-no-changes
 ```
 
-`TreatWarningsAsErrors` açık — uyarılar derlemeyi düşürür.
+`TreatWarningsAsErrors` açık: uyarılar derlemeyi düşürür.
 
 ## LAN geliştirme
 
 Backend geliştirici (Rider, bu makine): **`lan-http`** profilini başlatın
 (`http://0.0.0.0:5223`, düz HTTP, tarayıcı yok). LAN IP'yi bulun
-(`ip -4 addr show | grep inet` — DHCP değiştirir, repoya yazmayın).
+(`ip -4 addr show | grep inet`; DHCP değiştirir, bu yüzden repoya yazmayın).
 API: `http://<LAN-IP>:5223`.
 
 Ekip arkadaşı / cihaz / emülatör / Flutter Web matrisi, CORS/cleartext
@@ -103,13 +103,13 @@ Yerelde yalnızca ihtiyacınızı çalıştırın; Testcontainers kısımları D
 ister. **Testcontainers'ın doğrulandığı yer CI'dır.** Bu tablonun ötesinde
 kapsam iddiasında bulunmayın.
 
-## CI (CD değil — deploy hattı yok)
+## CI (deploy hattı yok)
 
 `master` korumalı: `build-test` + `format` zorunlu kontrollerdir.
 
 ### `ci.yml`
 
-- `changes`: `dorny/paths-filter` — backend işleri yalnız
+- `changes`: `dorny/paths-filter`: backend işleri yalnız
   `backend/**`, `ci.yml` veya `.editorconfig` değiştiyse çalışır (atlama,
   zorunlu kontroller için geçmiş sayılır).
 - `build-test`: restore → Release derleme → **NuGet zafiyet denetimi**
