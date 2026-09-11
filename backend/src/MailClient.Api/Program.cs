@@ -7,6 +7,7 @@ using System.Threading.RateLimiting;
 using MailClient.Api.Health;
 using MailClient.Api.Auth;
 using MailClient.Api.Accounts;
+using MailClient.Api.Devices;
 using MailClient.Api.Mails;
 using MailClient.Application.Interfaces;
 using MailClient.Application.Sync;
@@ -14,6 +15,7 @@ using MailClient.Infrastructure.Email;
 using MailClient.Infrastructure.Identity;
 using MailClient.Infrastructure.Network;
 using MailClient.Infrastructure.Persistence;
+using MailClient.Infrastructure.Push;
 using MailClient.Infrastructure.Security;
 using MailClient.Infrastructure.Services;
 using MailClient.Infrastructure.Storage;
@@ -89,7 +91,8 @@ var keyPath = configuredKeyPath is null
     : Path.IsPathFullyQualified(configuredKeyPath)
         ? configuredKeyPath
         : Path.Combine(builder.Environment.ContentRootPath, configuredKeyPath);
-builder.Services.AddDataProtection().PersistKeysToFileSystem(new DirectoryInfo(keyPath));
+var dataProtectionBuilder = builder.Services.AddDataProtection().PersistKeysToFileSystem(new DirectoryInfo(keyPath));
+DataProtectionSetup.Configure(dataProtectionBuilder, builder.Configuration, builder.Environment);
 var trustedProxy = (builder.Configuration.GetSection("Proxy:KnownProxies").Get<string[]>() ?? []).Length > 0
     || (builder.Configuration.GetSection("Proxy:KnownNetworks").Get<string[]>() ?? []).Length > 0;
 if (trustedProxy)
@@ -128,6 +131,22 @@ builder.Services.AddScoped<IMailTransport, MailKitMailTransport>();
 builder.Services.AddScoped<IFileStorage>(_ => new LocalFileStorage(attachmentRoot));
 builder.Services.AddScoped<MailFolderSyncService>();
 builder.Services.AddScoped<IMailFolderClient, MailFolderClient>();
+var firebaseOptions = builder.Configuration.GetSection("Firebase").Get<FirebaseOptions>() ?? new FirebaseOptions();
+firebaseOptions.Validate();
+builder.Services.AddSingleton(firebaseOptions);
+if (firebaseOptions.Enabled)
+{
+    builder.Services.AddSingleton<IFirebaseAccessTokenProvider>(_ =>
+        new ServiceAccountTokenProvider(firebaseOptions, FirebaseHttp.Create()));
+    builder.Services.AddSingleton<IFirebaseGateway, FcmHttpGateway>();
+    builder.Services.AddScoped<IPushNotificationService, FirebasePushNotificationService>();
+}
+else
+{
+    builder.Services.AddScoped<IPushNotificationService, NoOpPushNotificationService>();
+}
+
+builder.Services.AddScoped<IDeviceTokenService, DeviceTokenService>();
 if (mailSyncOptions.Enabled)
     builder.Services.AddHostedService<MailSyncService>();
 builder.Services.AddScoped<IAuthenticationService, AuthenticationService>();
@@ -190,8 +209,8 @@ var app = builder.Build();
 
 if (!app.Environment.IsDevelopment() && !app.Environment.IsEnvironment("Test"))
 {
-    app.Logger.LogWarning(
-        "DataProtection keys persist at {KeyPath}. Production requires a persistent shared volume, restrictive file permissions, and key protection at rest; all instances must share the same ring.",
+    app.Logger.LogInformation(
+        "DataProtection keys persist at {KeyPath} encrypted with the configured X509 certificate. All instances must share the same ring.",
         keyPath);
 }
 
@@ -215,6 +234,7 @@ app.MapAuthEndpoints();
 app.MapAdminUserEndpoints();
 app.MapMailAccountEndpoints();
 app.MapMailEndpoints();
+app.MapDeviceEndpoints();
 
 app.Run();
 
