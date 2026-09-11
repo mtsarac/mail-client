@@ -47,6 +47,13 @@ appsettings.Local.json
 *.pfx
 *.pem
 
+# Firebase service-account credentials (never commit)
+firebase-service-account*.json
+serviceAccountKey.json
+*-firebase-adminsdk-*.json
+google-services.json
+GoogleService-Info.plist
+
 # Logs
 *.log
 logs/
