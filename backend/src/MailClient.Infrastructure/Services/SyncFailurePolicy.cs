@@ -4,6 +4,7 @@ using MailKit.Net.Imap;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 
+// Classifies per-message sync failures as retry (transient) or skip (permanent).
 namespace MailClient.Infrastructure.Services;
 
 // Decides whether a per-message sync failure is permanent (skip the UID and

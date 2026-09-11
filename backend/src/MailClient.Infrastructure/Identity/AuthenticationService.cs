@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
+// Registration and login use cases with mode handling and race-safe duplicate mapping.
 namespace MailClient.Infrastructure.Identity;
 
 public sealed class AuthenticationService(

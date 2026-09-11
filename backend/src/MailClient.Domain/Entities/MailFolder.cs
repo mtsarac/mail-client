@@ -1,5 +1,6 @@
 using MailClient.Domain.Enums;
 
+// Cached IMAP folder with sync preference, availability, and checkpoint state.
 namespace MailClient.Domain.Entities;
 
 public class MailFolder

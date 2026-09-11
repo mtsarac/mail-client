@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
+// Admin user lifecycle: listing, creation, status changes, and password resets.
 namespace MailClient.Infrastructure.Identity;
 
 public sealed class UserAdministrationService(

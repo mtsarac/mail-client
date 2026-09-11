@@ -1,3 +1,4 @@
+// Application entry point: configuration, service registration, middleware pipeline, and endpoint mapping.
 using System.IdentityModel.Tokens.Jwt;
 using System.Net;
 using System.Security.Claims;

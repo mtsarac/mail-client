@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Sockets;
 using MailClient.Application.Interfaces;
 
+// SSRF protection: validates mail hosts and resolved IPs against blocked ranges.
 namespace MailClient.Infrastructure.Network;
 
 public sealed class OutboundHostValidator(IDnsResolver dns) : IOutboundHostValidator

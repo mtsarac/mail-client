@@ -1,5 +1,6 @@
 using MailClient.Domain.Enums;
 
+// JWT issuance seam used by the login endpoint.
 namespace MailClient.Application.Interfaces;
 
 public interface IJwtTokenIssuer

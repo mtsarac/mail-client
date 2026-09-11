@@ -2,6 +2,7 @@ using MailClient.Application;
 using MailClient.Application.Interfaces;
 using MailClient.Domain.Enums;
 
+// Maps admin-only user lifecycle endpoints (list, create, approve, disable, reset password).
 namespace MailClient.Api.Auth;
 
 public static class AdminUserEndpoints

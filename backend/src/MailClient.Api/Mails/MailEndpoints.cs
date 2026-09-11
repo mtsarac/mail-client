@@ -4,6 +4,7 @@ using MailClient.Application;
 using MailClient.Application.Interfaces;
 using MailClient.Domain.Enums;
 
+// Maps mail reading endpoints: unified list, detail, attachment download, and mark read.
 namespace MailClient.Api.Mails;
 
 public static class MailEndpoints

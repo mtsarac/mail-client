@@ -2,6 +2,7 @@ using FirebaseAdmin;
 using FirebaseAdmin.Messaging;
 using Microsoft.Extensions.Logging;
 
+// Sends Firebase Cloud Messaging notifications through the Firebase Admin SDK.
 namespace MailClient.Infrastructure.Push;
 
 // Production IFirebaseMessageSender over the official Firebase Admin .NET SDK.

@@ -1,3 +1,4 @@
+// Minimal push-transport seam isolating callers from the FCM implementation.
 namespace MailClient.Infrastructure.Push;
 
 // Minimal gateway seam between the push service and the FCM transport.

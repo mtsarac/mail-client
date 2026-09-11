@@ -5,6 +5,7 @@ using MailClient.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
+// Device-token registration with idempotent update and cross-user reassignment.
 namespace MailClient.Infrastructure.Push;
 
 public sealed class DeviceTokenService(

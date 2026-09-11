@@ -3,6 +3,7 @@ using MailClient.Application.Network;
 using MailClient.Domain.Entities;
 using MimeKit;
 
+// SMTP delivery over MailKit with classified connection failures.
 namespace MailClient.Infrastructure.Email;
 
 public interface IMailTransport

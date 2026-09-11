@@ -1,6 +1,7 @@
 using MailClient.Domain.Enums;
 using MailKit.Security;
 
+// Maps domain mail-security modes to MailKit socket options.
 namespace MailClient.Infrastructure.Services;
 
 internal static class MailSecurityMapper

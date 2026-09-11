@@ -1,5 +1,6 @@
 using MailClient.Domain.Enums;
 
+// Mail-account management seam with create/update request and response models.
 namespace MailClient.Application.Interfaces;
 
 public interface IMailAccountService

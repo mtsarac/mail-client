@@ -1,5 +1,6 @@
 using MailClient.Domain.Enums;
 
+// Application user with role, approval status, and JWT session version.
 namespace MailClient.Domain.Entities;
 
 public class User

@@ -1,5 +1,6 @@
 using MimeKit;
 
+// Maps downloaded MIME messages to cached mail and attachment records.
 namespace MailClient.Infrastructure.Email;
 
 internal sealed record IncomingMail(

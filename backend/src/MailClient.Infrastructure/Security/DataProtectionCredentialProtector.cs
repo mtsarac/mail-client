@@ -1,6 +1,7 @@
 using MailClient.Application.Interfaces;
 using Microsoft.AspNetCore.DataProtection;
 
+// Encrypts mailbox passwords with ASP.NET Core Data Protection.
 namespace MailClient.Infrastructure.Security;
 
 public sealed class DataProtectionCredentialProtector(IDataProtectionProvider provider) : ICredentialProtector

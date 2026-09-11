@@ -1,6 +1,7 @@
 using MailClient.Application.Interfaces;
 using MailClient.Application.Network;
 
+// Tests IMAP/SMTP reachability and credentials for account setup.
 namespace MailClient.Infrastructure.Email;
 
 public sealed class MailKitConnectivityTester(MailConnectionHelper connections) : IMailConnectivityTester

@@ -1,3 +1,4 @@
+// Size-bounded write stream enforcing attachment byte caps during download.
 namespace MailClient.Infrastructure.Storage;
 
 public sealed class AttachmentLimitExceededException : Exception;

@@ -7,6 +7,7 @@ using MailKit.Net.Smtp;
 using Microsoft.Extensions.Logging;
 using System.Net.Sockets;
 
+// Opens validated IMAP/SMTP connections using SSRF-checked resolved addresses.
 namespace MailClient.Infrastructure.Email;
 
 public sealed class MailConnectionHelper(

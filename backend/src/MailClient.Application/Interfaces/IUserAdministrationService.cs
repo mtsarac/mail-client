@@ -1,5 +1,6 @@
 using MailClient.Domain.Enums;
 
+// Admin user-management seam: listing, creation, status changes, and password resets.
 namespace MailClient.Application.Interfaces;
 
 public sealed record UserDto(Guid Id, string Email, string DisplayName, UserRole Role, UserStatus Status);

@@ -1,3 +1,4 @@
+// Exception carrying conflict errors, translated to 409 responses at endpoints.
 namespace MailClient.Application.Validation;
 
 // Thrown when a request conflicts with an existing row protected by a

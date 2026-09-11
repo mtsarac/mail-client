@@ -1,5 +1,6 @@
 using MailClient.Application.Interfaces;
 
+// Maps anonymous liveness (/health) and Postgres readiness (/health/db) endpoints.
 namespace MailClient.Api.Health;
 
 public static class HealthEndpoints

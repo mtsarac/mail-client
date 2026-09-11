@@ -6,6 +6,7 @@ using MailClient.Domain.Enums;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 
+// Issues signed JWT access tokens carrying user id, role, and token version.
 namespace MailClient.Api.Auth;
 
 public sealed class JwtTokenIssuer(IOptions<JwtOptions> options) : IJwtTokenIssuer

@@ -1,3 +1,4 @@
+// Binds and validates MailSync configuration (intervals, bounds, size caps).
 namespace MailClient.Application.Sync;
 
 public sealed class MailSyncOptions

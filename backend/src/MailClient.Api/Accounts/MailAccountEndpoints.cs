@@ -5,6 +5,7 @@ using MailClient.Application.Interfaces;
 using MailClient.Application.Validation;
 using Microsoft.AspNetCore.Http;
 
+// Maps mail-account endpoints: CRUD, connection test, folders, refresh, and idempotent send.
 namespace MailClient.Api.Accounts;
 
 public static class MailAccountEndpoints

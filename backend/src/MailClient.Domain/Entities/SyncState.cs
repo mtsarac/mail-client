@@ -1,3 +1,4 @@
+// Per-folder IMAP sync checkpoint (UIDVALIDITY, last UID, scan cursor, flag-sync stamp).
 namespace MailClient.Domain.Entities;
 
 public class SyncState

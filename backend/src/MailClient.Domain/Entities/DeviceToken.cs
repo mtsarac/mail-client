@@ -1,3 +1,4 @@
+// FCM registration token owned by a user for new-mail push delivery.
 namespace MailClient.Domain.Entities;
 
 public class DeviceToken

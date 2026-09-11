@@ -1,6 +1,7 @@
 using FirebaseAdmin.Messaging;
 using Microsoft.Extensions.Logging;
 
+// FCM gateway mapping send outcomes to keep-or-remove token decisions.
 namespace MailClient.Infrastructure.Push;
 
 // IFirebaseGateway over the official Firebase Admin SDK (via

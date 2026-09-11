@@ -1,3 +1,4 @@
+// Service-layer result envelope (outcome + value + field errors) shared by all use cases.
 namespace MailClient.Application;
 
 public enum ServiceOutcome

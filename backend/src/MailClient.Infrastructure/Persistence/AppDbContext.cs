@@ -1,6 +1,7 @@
 using MailClient.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 
+// EF Core context: DbSets and assembly-scanned entity configurations.
 namespace MailClient.Infrastructure.Persistence;
 
 public class AppDbContext : DbContext

@@ -4,6 +4,7 @@ using MailClient.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
+// Folder listing, sync toggling, and discovery refresh for user accounts.
 namespace MailClient.Infrastructure.Services;
 
 public sealed class MailFolderService(

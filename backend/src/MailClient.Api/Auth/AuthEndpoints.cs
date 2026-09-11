@@ -2,6 +2,7 @@ using MailClient.Application;
 using MailClient.Application.Interfaces;
 using MailClient.Domain.Enums;
 
+// Maps public authentication endpoints (register, login) under /api/auth.
 namespace MailClient.Api.Auth;
 
 public static class AuthEndpoints

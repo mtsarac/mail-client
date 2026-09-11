@@ -1,5 +1,6 @@
 using MailClient.Domain.Enums;
 
+// Idempotent send-operation record keyed by user and idempotency key.
 namespace MailClient.Domain.Entities;
 
 public class SendOperation

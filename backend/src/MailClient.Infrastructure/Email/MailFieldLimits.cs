@@ -1,3 +1,4 @@
+// Field-length caps and truncation helpers for incoming mail data.
 namespace MailClient.Infrastructure.Email;
 
 // Keep in sync with EF Core configurations:

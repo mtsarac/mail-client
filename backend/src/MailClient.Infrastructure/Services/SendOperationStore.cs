@@ -7,6 +7,7 @@ using MailClient.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
+// Transactional idempotency-claim store for send operations (proceed, replay, or deny).
 namespace MailClient.Infrastructure.Services;
 
 // Request-level SMTP deduplication for the send-mail operation.

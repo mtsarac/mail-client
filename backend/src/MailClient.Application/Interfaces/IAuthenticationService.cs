@@ -1,5 +1,6 @@
 using MailClient.Domain.Enums;
 
+// Authentication seam: registration and login use cases with their request/response models.
 namespace MailClient.Application.Interfaces;
 
 public sealed record RegisterUserRequest(string Email, string Password, string DisplayName);

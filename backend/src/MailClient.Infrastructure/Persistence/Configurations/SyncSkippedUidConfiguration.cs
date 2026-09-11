@@ -2,6 +2,7 @@ using MailClient.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
+// EF mapping for SyncSkippedUid: unique folder+UID skip records.
 namespace MailClient.Infrastructure.Persistence.Configurations;
 
 public class SyncSkippedUidConfiguration : IEntityTypeConfiguration<SyncSkippedUid>

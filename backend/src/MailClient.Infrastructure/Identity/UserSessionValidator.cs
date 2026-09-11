@@ -3,6 +3,7 @@ using MailClient.Domain.Enums;
 using MailClient.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 
+// Validates JWT sessions against live user status and token version.
 namespace MailClient.Infrastructure.Identity;
 
 public sealed class UserSessionValidator(AppDbContext db) : IUserSessionValidator

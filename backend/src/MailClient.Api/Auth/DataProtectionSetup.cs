@@ -1,6 +1,7 @@
 using System.Security.Cryptography.X509Certificates;
 using Microsoft.AspNetCore.DataProtection;
 
+// Configures Data Protection key-ring encryption (X509 required outside Development/Test).
 namespace MailClient.Api.Auth;
 
 public static class DataProtectionSetup

@@ -1,5 +1,6 @@
 using MailClient.Application;
 
+// Two-way read/unread seam: applies flag changes to IMAP before local state.
 namespace MailClient.Application.Interfaces;
 
 public interface IMailReadService

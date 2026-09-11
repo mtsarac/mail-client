@@ -2,6 +2,7 @@ using MailClient.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
+// EF mapping for Attachment: filename, content-type, and path column limits.
 namespace MailClient.Infrastructure.Persistence.Configurations;
 
 public class AttachmentConfiguration : IEntityTypeConfiguration<Attachment>

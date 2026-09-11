@@ -2,6 +2,7 @@ using System.Net.Mail;
 using System.Text.RegularExpressions;
 using MailClient.Application.Auth;
 
+// Shared request field validators accumulating per-field error dictionaries.
 namespace MailClient.Application.Validation;
 
 public static partial class RequestValidator

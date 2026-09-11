@@ -1,3 +1,4 @@
+// Attachment metadata pointing at a file under the local storage root.
 namespace MailClient.Domain.Entities;
 
 public class Attachment

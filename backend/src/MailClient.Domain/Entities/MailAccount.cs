@@ -1,5 +1,6 @@
 using MailClient.Domain.Enums;
 
+// User-owned IMAP/SMTP mailbox configuration with an encrypted password.
 namespace MailClient.Domain.Entities;
 
 public class MailAccount

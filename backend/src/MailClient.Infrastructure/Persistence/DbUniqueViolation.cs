@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 
+// Maps Postgres unique violations to named constraints for race-safe conflict handling.
 namespace MailClient.Infrastructure.Persistence;
 
 // Race-safe unique-constraint recognition for PostgreSQL (SQLSTATE 23505).

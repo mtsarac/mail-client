@@ -48,6 +48,23 @@ The frontend team can place the Flutter project in `flutter_client/`. That path 
 - Rate limiting: fixed-window limiter on auth endpoints per client IP and on mail operations (including send and device registration) per user
 - Tests: xUnit; integration tests run against throwaway PostgreSQL via Testcontainers (plus GreenMail), unit tests use EF InMemory with fakes for validation, account reconfiguration, idempotent send, device registration, and push (fake FCM gateway — no network)
 
+## Backend Documentation
+
+Full bilingual guides live in [`documentation/backend/`](documentation/backend/)
+(canonical source, also mirrored to the
+[GitHub Wiki](https://github.com/mtsarac/mail-client/wiki)):
+
+- English: [Backend Guide](documentation/backend/BACKEND_GUIDE.en.md) ·
+  [Architecture](documentation/backend/ARCHITECTURE.en.md) ·
+  [API Reference](documentation/backend/API_REFERENCE.en.md) ·
+  [Development](documentation/backend/DEVELOPMENT.en.md) ·
+  [Security](documentation/backend/SECURITY.en.md)
+- Türkçe: [Backend Kılavuzu](documentation/backend/BACKEND_GUIDE.tr.md) ·
+  [Mimari](documentation/backend/ARCHITECTURE.tr.md) ·
+  [API Referansı](documentation/backend/API_REFERENCE.tr.md) ·
+  [Geliştirme](documentation/backend/DEVELOPMENT.tr.md) ·
+  [Güvenlik](documentation/backend/SECURITY.tr.md)
+
 ## Backend Setup
 
 Prerequisites:

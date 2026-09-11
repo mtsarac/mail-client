@@ -2,6 +2,7 @@ using MailClient.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
+// EF mapping for MailFolder: unique account+path index and column limits.
 namespace MailClient.Infrastructure.Persistence.Configurations;
 
 public class MailFolderConfiguration : IEntityTypeConfiguration<MailFolder>

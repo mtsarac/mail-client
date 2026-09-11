@@ -1,5 +1,6 @@
 using MailClient.Application;
 
+// Idempotent mail-sending seam with the send command and result models.
 namespace MailClient.Application.Interfaces;
 
 public interface IMailSendService

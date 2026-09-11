@@ -1,6 +1,7 @@
 using MailClient.Application;
 using MailClient.Domain.Enums;
 
+// Mail reading seam: paged lists, detail, and attachment download models.
 namespace MailClient.Application.Interfaces;
 
 public interface IMailQueryService

@@ -2,6 +2,7 @@ using MailClient.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
+// EF mapping for SyncState: one checkpoint row per folder.
 namespace MailClient.Infrastructure.Persistence.Configurations;
 
 public class SyncStateConfiguration : IEntityTypeConfiguration<SyncState>

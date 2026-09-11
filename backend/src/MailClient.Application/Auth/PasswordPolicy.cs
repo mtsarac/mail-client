@@ -1,5 +1,6 @@
 using System.Net.Mail;
 
+// Central password and email format rules (length bounds, MailAddress parsing).
 namespace MailClient.Application.Auth;
 
 public static class PasswordPolicy

@@ -1,5 +1,6 @@
 using FirebaseAdmin.Messaging;
 
+// Batch FCM transport seam with per-token delivery outcomes.
 namespace MailClient.Infrastructure.Push;
 
 // Narrow seam between the push gateway and the Firebase Admin SDK transport.

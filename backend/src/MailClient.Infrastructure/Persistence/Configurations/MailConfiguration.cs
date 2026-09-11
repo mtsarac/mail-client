@@ -2,6 +2,7 @@ using MailClient.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
+// EF mapping for Mail: unique folder+validity+UID index and list-serving indexes.
 namespace MailClient.Infrastructure.Persistence.Configurations;
 
 public class MailConfiguration : IEntityTypeConfiguration<Mail>

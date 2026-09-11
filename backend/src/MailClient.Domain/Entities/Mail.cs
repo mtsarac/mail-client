@@ -1,3 +1,4 @@
+// Cached mail message: metadata, bodies, and read state mirrored from IMAP.
 namespace MailClient.Domain.Entities;
 
 public class Mail

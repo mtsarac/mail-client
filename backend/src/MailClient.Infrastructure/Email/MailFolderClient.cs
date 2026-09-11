@@ -2,6 +2,7 @@ using MailClient.Application.Interfaces;
 using MailClient.Application.Network;
 using MailClient.Domain.Entities;
 
+// Scoped IMAP folder access with advisory locking and flag operations.
 namespace MailClient.Infrastructure.Email;
 
 public interface IMailFolderClient

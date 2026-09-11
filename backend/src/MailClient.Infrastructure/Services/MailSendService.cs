@@ -12,6 +12,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using MimeKit;
 
+// Validates, deduplicates, and sends mail through the account's SMTP server.
 namespace MailClient.Infrastructure.Services;
 
 public sealed class MailSendService(

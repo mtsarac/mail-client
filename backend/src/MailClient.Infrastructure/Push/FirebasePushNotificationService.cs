@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
+// Post-commit best-effort new-mail push fan-out with invalid-token pruning.
 namespace MailClient.Infrastructure.Push;
 
 // Post-commit, best-effort new-mail fan-out. Token loading and invalid-token

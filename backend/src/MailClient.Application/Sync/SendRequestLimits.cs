@@ -1,3 +1,4 @@
+// Derives Kestrel and multipart request caps from the sync size options.
 namespace MailClient.Application.Sync;
 
 public static class SendRequestLimits

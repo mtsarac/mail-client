@@ -1,3 +1,4 @@
+// Durable record of a permanently unprocessable UID skipped by sync.
 namespace MailClient.Domain.Entities;
 
 public class SyncSkippedUid

@@ -1,3 +1,4 @@
+// New-mail push fan-out seam with the post-commit notification model.
 namespace MailClient.Application.Interfaces;
 
 // Technology-neutral new-mail push contract. Firebase types must not leak

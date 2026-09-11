@@ -1,3 +1,4 @@
+// Classified mail-connection failure kinds plus the connection exception type.
 namespace MailClient.Application.Network;
 
 public enum MailConnectionFailure

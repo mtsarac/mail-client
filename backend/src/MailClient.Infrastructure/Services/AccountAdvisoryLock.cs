@@ -3,6 +3,7 @@ using System.Text;
 using MailClient.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 
+// PostgreSQL advisory lock serializing account-level mutations across instances.
 namespace MailClient.Infrastructure.Services;
 
 internal sealed class AccountAdvisoryLock(AppDbContext db, long key, bool ownsConnection) : IAsyncDisposable

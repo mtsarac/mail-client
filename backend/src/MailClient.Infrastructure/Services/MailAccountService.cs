@@ -8,6 +8,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
+// Mail-account lifecycle: validation, connectivity checks, updates, and cache resets.
 namespace MailClient.Infrastructure.Services;
 
 public sealed class MailAccountService(

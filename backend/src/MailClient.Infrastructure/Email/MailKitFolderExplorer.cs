@@ -4,6 +4,7 @@ using MailClient.Infrastructure.Services;
 using MailKit;
 using MailKit.Net.Imap;
 
+// Discovers IMAP folders and maps special-use attributes to folder types.
 namespace MailClient.Infrastructure.Email;
 
 public sealed class MailKitFolderExplorer(MailConnectionHelper connections) : IMailFolderExplorer

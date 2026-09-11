@@ -3,6 +3,7 @@ using System.Security.Claims;
 using MailClient.Application.Interfaces;
 using MailClient.Application.Validation;
 
+// Maps device-token endpoints for push registration and removal.
 namespace MailClient.Api.Devices;
 
 public static class DeviceEndpoints

@@ -2,6 +2,7 @@ using MailClient.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
+// EF mapping for DeviceToken: globally unique token index and column limits.
 namespace MailClient.Infrastructure.Persistence.Configurations;
 
 public class DeviceTokenConfiguration : IEntityTypeConfiguration<DeviceToken>

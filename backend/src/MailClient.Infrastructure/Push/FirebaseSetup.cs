@@ -3,6 +3,7 @@ using System.Text.Json;
 using FirebaseAdmin;
 using Google.Apis.Auth.OAuth2;
 
+// Fail-fast Firebase Admin SDK initialization with credential-chain resolution.
 namespace MailClient.Infrastructure.Push;
 
 // Fail-fast Firebase initialization. When Firebase:Enabled is true this loads

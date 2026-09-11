@@ -1,3 +1,4 @@
+// SMTP delivery failure carrying the underlying transport error.
 namespace MailClient.Application.Network;
 
 // Thrown when an SMTP send was attempted but the application cannot prove

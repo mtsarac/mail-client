@@ -1,6 +1,7 @@
 using MailClient.Domain.Enums;
 using MailKit;
 
+// Reconciles discovered IMAP folders with cached rows, tracking availability.
 namespace MailClient.Infrastructure.Services;
 
 public static class MailFolderDiscovery

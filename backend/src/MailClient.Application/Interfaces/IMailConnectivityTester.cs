@@ -1,5 +1,6 @@
 using MailClient.Application.Network;
 
+// IMAP/SMTP connectivity-test seam used during account creation and testing.
 namespace MailClient.Application.Interfaces;
 
 public interface IMailConnectivityTester

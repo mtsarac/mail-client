@@ -2,6 +2,7 @@ using MailClient.Application.Interfaces;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
+// Postgres connectivity probe backing the /health/db endpoint.
 namespace MailClient.Infrastructure.Persistence;
 
 public sealed class DatabaseHealthProbe(AppDbContext db, ILogger<DatabaseHealthProbe> logger) : IHealthProbe

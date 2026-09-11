@@ -4,6 +4,7 @@ using MailClient.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
+// Ownership-scoped mail lists, detail, and attachment downloads.
 namespace MailClient.Infrastructure.Services;
 
 public sealed class MailQueryService(

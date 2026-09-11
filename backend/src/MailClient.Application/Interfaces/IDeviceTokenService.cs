@@ -1,3 +1,4 @@
+// Device-token registration seam backing push delivery per user.
 namespace MailClient.Application.Interfaces;
 
 public sealed record DeviceTokenResponse(

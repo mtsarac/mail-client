@@ -3,6 +3,7 @@ using System.Text;
 using MailClient.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 
+// PostgreSQL advisory lock serializing per-folder sync across instances.
 namespace MailClient.Infrastructure.Services;
 
 internal sealed class FolderAdvisoryLock(AppDbContext db, long key, bool ownsConnection) : IAsyncDisposable

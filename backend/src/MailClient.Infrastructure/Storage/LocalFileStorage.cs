@@ -1,5 +1,6 @@
 using MailClient.Application.Interfaces;
 
+// Traversal-pinned local disk storage for attachment files.
 namespace MailClient.Infrastructure.Storage;
 
 public sealed class LocalFileStorage(string rootPath) : IFileStorage

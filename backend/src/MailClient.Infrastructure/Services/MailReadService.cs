@@ -8,6 +8,7 @@ using MailKit;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
+// Applies read/unread changes to IMAP first, then to the local cache.
 namespace MailClient.Infrastructure.Services;
 
 public sealed class MailReadService(

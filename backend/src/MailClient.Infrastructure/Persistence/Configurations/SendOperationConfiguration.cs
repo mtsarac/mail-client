@@ -2,6 +2,7 @@ using MailClient.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
+// EF mapping for SendOperation: unique user+idempotency-key index and limits.
 namespace MailClient.Infrastructure.Persistence.Configurations;
 
 public class SendOperationConfiguration : IEntityTypeConfiguration<SendOperation>

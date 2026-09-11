@@ -1,3 +1,4 @@
+// Attachment file-storage seam (store, read, delete) with the stored-file model.
 namespace MailClient.Application.Interfaces;
 
 public interface IFileStorage

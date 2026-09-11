@@ -1,3 +1,4 @@
+// Send idempotency states from claim through delivery resolution.
 namespace MailClient.Domain.Enums;
 
 public enum SendOperationStatus

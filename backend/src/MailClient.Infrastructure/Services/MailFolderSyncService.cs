@@ -12,6 +12,7 @@ using MailKit.Net.Imap;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
+// Synchronizes remote IMAP folder state into the local PostgreSQL cache.
 namespace MailClient.Infrastructure.Services;
 
 public sealed class MailFolderSyncService(

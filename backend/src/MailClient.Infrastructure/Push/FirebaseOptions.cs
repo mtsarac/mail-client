@@ -1,3 +1,4 @@
+// Binds Firebase configuration and fail-fast validates it when enabled.
 namespace MailClient.Infrastructure.Push;
 
 public sealed class FirebaseOptions

@@ -1,6 +1,7 @@
 using MailClient.Application.Network;
 using MailClient.Domain.Enums;
 
+// IMAP folder-discovery seam with the discovered-folder model.
 namespace MailClient.Application.Interfaces;
 
 public sealed record DiscoveredMailFolder(

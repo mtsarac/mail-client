@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
+// Hosted background worker polling active accounts on the configured interval.
 namespace MailClient.Infrastructure.Services;
 
 public sealed class MailSyncService(

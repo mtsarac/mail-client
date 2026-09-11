@@ -2,6 +2,7 @@ using MailKit;
 using MailKit.Search;
 using MimeKit;
 
+// Testable IMAP folder abstraction (summaries, UID search, flag updates) with a MailKit adapter.
 namespace MailClient.Infrastructure.Email;
 
 // Smallest useful seam around MailKit so folder sync can be tested without a live IMAP server.

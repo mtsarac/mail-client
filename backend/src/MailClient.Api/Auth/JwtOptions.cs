@@ -1,3 +1,4 @@
+// Binds Jwt configuration (issuer, audience, signing key).
 namespace MailClient.Api.Auth;
 
 public class JwtOptions

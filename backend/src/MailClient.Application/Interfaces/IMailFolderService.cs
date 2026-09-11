@@ -1,5 +1,6 @@
 using MailClient.Domain.Enums;
 
+// Mail-folder seam: listing, sync toggling, and discovery refresh with response models.
 namespace MailClient.Application.Interfaces;
 
 public interface IMailFolderService

@@ -1,5 +1,6 @@
 using System.Net;
 
+// SSRF-protection seam: validates user-supplied mail hosts with DNS resolution.
 namespace MailClient.Application.Interfaces;
 
 public sealed record HostCheckResult(bool Allowed, string Reason)
