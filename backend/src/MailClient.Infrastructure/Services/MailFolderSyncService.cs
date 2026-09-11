@@ -3,6 +3,7 @@ using MailClient.Application.Interfaces;
 using MailClient.Application.Network;
 using MailClient.Application.Sync;
 using MailClient.Domain.Entities;
+using MailClient.Domain.Enums;
 using MailClient.Infrastructure.Email;
 using MailClient.Infrastructure.Persistence;
 using MailClient.Infrastructure.Storage;
@@ -19,6 +20,7 @@ public sealed class MailFolderSyncService(
     MailConnectionHelper connections,
     IFileStorage storage,
     MailSyncOptions options,
+    IPushNotificationService push,
     ILogger<MailFolderSyncService> logger)
 {
     public async Task SyncAllAsync(CancellationToken cancellationToken)
@@ -207,11 +209,14 @@ public sealed class MailFolderSyncService(
             .ToListAsync(cancellationToken)).ToHashSet();
         var summaries = await remote.GetSummariesAsync(batch, cancellationToken);
 
+        var newMail = new List<NewMailCandidate>();
         foreach (var uid in batch)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            await SyncOneAsync(accountId, folderId, state, remote, uid,
+            var candidate = await SyncOneAsync(accountId, folderId, state, remote, uid,
                 summaries.GetValueOrDefault(uid.Id), committedUids, skippedUids, cancellationToken);
+            if (candidate is not null)
+                newMail.Add(candidate);
         }
 
         state.UidValidity = remote.UidValidity;
@@ -219,7 +224,62 @@ public sealed class MailFolderSyncService(
         state.NextUidScanStart = CursorAfter(batch.Max(item => item.Id));
         await ReconcileFlagsIfDueAsync(folderId, state, remote, cancellationToken);
         await db.SaveChangesAsync(cancellationToken);
+
+        // Post-commit: FCM failures must never roll back committed state. Inbox only.
+        if (newMail.Count > 0 && localFolder.FolderType == MailFolderType.Inbox)
+            await NotifyNewMailAsync(accountId, folderId, newMail, cancellationToken);
     }
+
+    private async Task NotifyNewMailAsync(
+        Guid accountId,
+        Guid folderId,
+        IReadOnlyList<NewMailCandidate> candidates,
+        CancellationToken cancellationToken)
+    {
+        Guid ownerId;
+        try
+        {
+            ownerId = await db.MailAccounts
+                .Where(account => account.Id == accountId)
+                .Select(account => account.UserId)
+                .SingleAsync(cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Skipped push notification for account {AccountId}: owner lookup failed.", accountId);
+            return;
+        }
+
+        foreach (var candidate in candidates)
+        {
+            try
+            {
+                await push.NotifyNewMailAsync(
+                    new NewMailNotification(
+                        ownerId,
+                        candidate.MailId,
+                        accountId,
+                        folderId,
+                        string.IsNullOrWhiteSpace(candidate.FromDisplayName) ? candidate.FromAddress : candidate.FromDisplayName,
+                        candidate.Subject),
+                    cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Push notification failed for mail {MailId}. Sync state is unaffected.", candidate.MailId);
+            }
+        }
+    }
+
+    private sealed record NewMailCandidate(Guid MailId, string FromAddress, string FromDisplayName, string Subject);
 
     // Cursor advance without wraparound. The one-past-end sentinel
     // (uint.MaxValue + 1) is representable because the cursor is a long;
@@ -324,7 +384,7 @@ public sealed class MailFolderSyncService(
         }
     }
 
-    private async Task SyncOneAsync(
+    private async Task<NewMailCandidate?> SyncOneAsync(
         Guid accountId,
         Guid folderId,
         SyncState state,
@@ -338,7 +398,7 @@ public sealed class MailFolderSyncService(
         if (committedUids.Contains(uid.Id) || skippedUids.Contains(uid.Id))
         {
             await AdvanceCheckpointAsync(state, uid.Id, cancellationToken);
-            return;
+            return null;
         }
 
         var checkpointBefore = state.LastUid;
@@ -349,7 +409,7 @@ public sealed class MailFolderSyncService(
             {
                 await SkipAndAdvanceAsync(state, folderId, uid.Id, "gone", "Message no longer exists on server.",
                     accountId, folderId, cancellationToken);
-                return;
+                return null;
             }
 
             if (summary.Size > (ulong)options.MaxMessageBytes)
@@ -359,7 +419,7 @@ public sealed class MailFolderSyncService(
                     uid.Id, summary.Size, accountId, folderId);
                 await SkipAndAdvanceAsync(state, folderId, uid.Id, "oversized", "Message exceeds MaxMessageBytes.",
                     accountId, folderId, cancellationToken);
-                return;
+                return null;
             }
 
             var message = await remote.GetMessageAsync(uid, cancellationToken);
@@ -450,7 +510,9 @@ public sealed class MailFolderSyncService(
                 throw;
             }
 
+            var candidate = new NewMailCandidate(mail.Id, mail.FromAddress, mail.FromDisplayName, mail.Subject);
             Detach(mail);
+            return candidate;
         }
         catch (OperationCanceledException)
         {
@@ -474,6 +536,8 @@ public sealed class MailFolderSyncService(
                 state.LastUid = checkpointBefore;
                 throw;
             }
+
+            return null;
         }
         catch (Exception ex)
         {

@@ -229,6 +229,7 @@ public sealed class SyncBacklogTests
             null!,
             new FakeFileStorage(),
             options,
+            new FakePushNotificationService(),
             NullLogger<MailFolderSyncService>.Instance);
 
     private static AppDbContext CreateDb() => new(new DbContextOptionsBuilder<AppDbContext>()

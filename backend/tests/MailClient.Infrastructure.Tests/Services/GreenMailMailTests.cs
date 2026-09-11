@@ -274,6 +274,7 @@ public sealed class GreenMailMailTests(GreenMailFixture greenmail)
             MaxMessageAttachmentBytes = 10 * 1024 * 1024,
             MaxMessageBytes = 100 * 1024 * 1024
         },
+        new FakePushNotificationService(),
         NullLogger<MailFolderSyncService>.Instance);
 
     private static AppDbContext CreateDb() => new(new DbContextOptionsBuilder<AppDbContext>()

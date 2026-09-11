@@ -192,6 +192,20 @@ internal sealed class FailNextSaveDbContext(DbContextOptions<AppDbContext> optio
     }
 }
 
+internal sealed class FakePushNotificationService : IPushNotificationService
+{
+    public List<NewMailNotification> Notifications { get; } = [];
+    public Func<NewMailNotification, Exception>? Failure { get; set; }
+
+    public Task NotifyNewMailAsync(NewMailNotification notification, CancellationToken cancellationToken)
+    {
+        if (Failure is not null)
+            throw Failure(notification);
+        Notifications.Add(notification);
+        return Task.CompletedTask;
+    }
+}
+
 internal static class SyncTestSeed
 {
     public static async Task<(Guid AccountId, Guid FolderId)> SeedFolderAsync(AppDbContext db)

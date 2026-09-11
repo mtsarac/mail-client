@@ -130,7 +130,8 @@ public sealed class MailFolderAvailabilityTests
             [new DiscoveredMailFolder("INBOX", "INBOX", MailFolderType.Inbox, 100, true)],
             CancellationToken.None);
         var sync = new MailFolderSyncService(db, new PassthroughProtector(), null!,
-            new FakeFileStorage(), TestOptions(), NullLogger<MailFolderSyncService>.Instance);
+            new FakeFileStorage(), TestOptions(), new FakePushNotificationService(),
+            NullLogger<MailFolderSyncService>.Instance);
 
         var syncable = await sync.GetSyncableFoldersAsync(accountId, CancellationToken.None);
 

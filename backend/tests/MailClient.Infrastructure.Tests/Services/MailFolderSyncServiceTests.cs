@@ -460,6 +460,7 @@ public sealed class MailFolderSyncServiceTests
             null!,
             new FakeFileStorage(),
             Options(),
+            new FakePushNotificationService(),
             NullLogger<MailFolderSyncService>.Instance);
 
         await service.SyncAllAsync(CancellationToken.None);
@@ -507,6 +508,7 @@ public sealed class MailFolderSyncServiceTests
             null!,
             storage ?? new FakeFileStorage(),
             options ?? Options(),
+            new FakePushNotificationService(),
             NullLogger<MailFolderSyncService>.Instance);
 
     private static AppDbContext CreateDb(string? name = null) => new(CreateOptions(name));

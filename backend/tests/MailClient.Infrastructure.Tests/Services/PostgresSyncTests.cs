@@ -338,6 +338,7 @@ public sealed class PostgresSyncTests(PostgresSyncFixture fixture)
         null!,
         new FakeFileStorage(),
         Options(),
+        new FakePushNotificationService(),
         NullLogger<MailFolderSyncService>.Instance);
 
     private static MailAccountService CreateAccountService(AppDbContext db, IFileStorage storage) => new(

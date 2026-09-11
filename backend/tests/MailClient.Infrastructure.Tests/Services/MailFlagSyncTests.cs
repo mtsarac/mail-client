@@ -363,6 +363,7 @@ public sealed class MailFlagSyncTests
             null!,
             new FakeFileStorage(),
             Options(),
+            new FakePushNotificationService(),
             NullLogger<MailFolderSyncService>.Instance);
 
     private static MailReadService CreateReadService(AppDbContext db, FakeRemoteMailFolder remote) =>

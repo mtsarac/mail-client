@@ -32,8 +32,28 @@ public sealed class MailSendServiceTests
         string subject = "Hello",
         string? html = "<p>hi</p>",
         string? text = "hi",
-        IReadOnlyList<SendMailAttachment>? attachments = null) =>
-        new(accountId, to, subject, html, text, attachments ?? []);
+        IReadOnlyList<SendMailAttachment>? attachments = null,
+        string? key = null)
+    {
+        var command = new SendMailCommand(accountId, to, subject, html, text, attachments ?? []);
+        return command with { IdempotencyKey = key ?? $"key-{Guid.NewGuid():N}" };
+    }
+
+    [Fact]
+    public async Task Send_MissingIdempotencyKey_RejectedWithoutSend()
+    {
+        await using var db = CreateDb();
+        var (userId, accountId) = await SeedAccountAsync(db);
+        var transport = new FakeMailTransport();
+        var service = CreateService(db, transport);
+        var command = new SendMailCommand(accountId, "friend@example.test", "Hi", null, "hello", []);
+
+        var result = await service.SendAsync(userId, command, CancellationToken.None);
+
+        Assert.Equal(ServiceOutcome.Invalid, result.Outcome);
+        Assert.Contains("idempotencyKey", result.Errors.Keys);
+        Assert.Empty(transport.Sent);
+    }
 
     [Fact]
     public async Task Send_OwnAccount_AppendsSameMessageToSent()
