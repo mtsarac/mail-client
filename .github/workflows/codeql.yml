@@ -3,7 +3,13 @@ name: codeql
 on:
   push:
     branches: [master]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/codeql.yml'
   pull_request:
+    paths:
+      - 'backend/**'
+      - '.github/workflows/codeql.yml'
   schedule:
     - cron: "0 6 * * 1"
 

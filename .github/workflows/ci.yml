@@ -13,7 +13,34 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Lightweight gate: master requires the build-test and format checks, so this
+  # workflow must run on every push/PR. Expensive jobs below are skipped (which
+  # counts as passing for required checks) when no backend-relevant file changed.
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            backend:
+              - 'backend/**'
+              - '.github/workflows/ci.yml'
+              - '.editorconfig'
+
   build-test:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -43,6 +70,8 @@ jobs:
         run: dotnet test backend/MailClient.slnx --configuration Release --no-build --verbosity normal
 
   format:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
