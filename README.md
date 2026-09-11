@@ -92,6 +92,34 @@ Open Swagger:
 http://localhost:5223/swagger
 ```
 
+## Local LAN development
+
+To expose the API to another machine on the same trusted local network (teammate PC, phone, emulator):
+
+Backend (Rider, on this machine):
+
+1. Select the **`lan-http`** launch profile and start the API. It listens on `http://0.0.0.0:5223` (all interfaces, plain HTTP, no browser launch). Existing `http`/`https` localhost profiles are unchanged.
+2. Find this machine's current LAN IPv4 address (DHCP can change it — never hard-code it into the repo):
+   ```bash
+   ip -4 addr show | grep inet
+   ```
+3. The API is reachable at `http://<LAN-IP>:5223`.
+
+LAN behavior notes:
+
+- Development never redirects HTTP to HTTPS and allows permissive CORS (`AllowAnyOrigin/Headers/Methods`); Production keeps HTTPS redirection and registers no CORS policy.
+- Swagger stays Development-only: `http://<LAN-IP>:5223/swagger`.
+- Connectivity check (no auth): `http://<LAN-IP>:5223/health` should return `{ "status": "ok" }`. `/health/db` also reports PostgreSQL status.
+- Only the ASP.NET API binds to the LAN. PostgreSQL stays on localhost; nothing else changes (JWT, auth, rate limiting, sync, push, Data Protection all intact).
+
+Linux firewall troubleshooting (manual, only if LAN requests time out while localhost works):
+
+- Check whether a firewall is active: `sudo firewall-cmd --state`, `sudo ufw status`, or `sudo nft list ruleset`.
+- If one is blocking the port, allow TCP `5223` for the trusted local network only — e.g. a firewalld rich rule scoped to your LAN subnet, or a UFW rule scoped to a single source IP. Do not expose the port publicly.
+- Both devices must be on a network that allows peer-to-peer LAN traffic; guest Wi-Fi with client isolation blocks this regardless of firewall rules.
+
+The Flutter-side URL matrix and the Android cleartext note live in `FLUTTER_HANDOFF.md`.
+
 ## Database
 
 The committed placeholder connection string points at:

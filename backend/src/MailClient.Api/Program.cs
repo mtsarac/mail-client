@@ -37,6 +37,16 @@ if (builder.Environment.IsDevelopment())
 
 builder.Services.AddOpenApi();
 builder.Services.AddProblemDetails();
+// LAN development uses plain HTTP from untrusted clients (teammate PCs, phones,
+// Flutter Web), so Development gets a permissive CORS policy. Production registers
+// no CORS policy: browser cross-origin calls stay blocked by default.
+if (builder.Environment.IsDevelopment())
+{
+    builder.Services.AddCors(options => options.AddPolicy("DevelopmentLan", policy => policy
+        .AllowAnyOrigin()
+        .AllowAnyHeader()
+        .AllowAnyMethod()));
+}
 builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 builder.Services.AddRateLimiter(options =>
@@ -224,7 +234,13 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseExceptionHandler();
-app.UseHttpsRedirection();
+// The lan-http profile serves plain HTTP to LAN clients that cannot trust the
+// ASP.NET dev certificate, so Development skips HTTPS redirection. Production
+// and Test keep it.
+if (!app.Environment.IsDevelopment() && !app.Environment.IsEnvironment("Test"))
+    app.UseHttpsRedirection();
+if (app.Environment.IsDevelopment())
+    app.UseCors("DevelopmentLan");
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseRateLimiter();

@@ -4,6 +4,25 @@ Backend API contract for the Flutter mail client. Base URL (dev): `http://localh
 
 All endpoints below except `POST /api/auth/register` and `POST /api/auth/login` require `Authorization: Bearer <JWT>`.
 
+## Local LAN development
+
+When the backend runs on another machine on the same LAN, never use `localhost` from the frontend device — `localhost` there means the device itself. Ask the backend developer for their current LAN IP and set the API base URL to:
+
+```text
+http://<BACKEND-PC-IP>:5223
+```
+
+Example only: `http://192.168.1.50:5223` (the real IP changes with DHCP).
+
+- Another Windows PC (browser/desktop): `http://<BACKEND-PC-IP>:5223`.
+- Physical Android device on the same Wi-Fi: `http://<BACKEND-PC-IP>:5223`.
+- Android emulator running on your own PC: still `http://<BACKEND-PC-IP>:5223` — the backend is on a different physical machine, so `10.0.2.2` does not apply.
+- Flutter Web: same LAN URL; the backend's Development CORS policy allows it.
+- Connectivity check: open `http://<BACKEND-PC-IP>:5223/health` (expect `{ "status": "ok" }`) and `http://<BACKEND-PC-IP>:5223/swagger` for interactive docs.
+- Both devices must be on a network that allows peer-to-peer LAN traffic; guest Wi-Fi with client isolation blocks this.
+
+Android cleartext note: the LAN URL is plain HTTP, and Android may block cleartext traffic depending on the app's network-security configuration. Allow cleartext HTTP **for debug/development builds only** (e.g. a debug-only `networkSecurityConfig` / `usesCleartextTraffic` scoped to development). Never enable it for release/production builds.
+
 ## Authentication
 
 ```text
