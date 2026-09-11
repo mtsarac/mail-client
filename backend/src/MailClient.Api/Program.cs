@@ -136,9 +136,8 @@ firebaseOptions.Validate();
 builder.Services.AddSingleton(firebaseOptions);
 if (firebaseOptions.Enabled)
 {
-    builder.Services.AddSingleton<IFirebaseAccessTokenProvider>(_ =>
-        new ServiceAccountTokenProvider(firebaseOptions, FirebaseHttp.Create()));
-    builder.Services.AddSingleton<IFirebaseGateway, FcmHttpGateway>();
+    builder.Services.AddSingleton<IFirebaseMessageSender, FirebaseMessageSender>();
+    builder.Services.AddSingleton<IFirebaseGateway, FirebaseAdminGateway>();
     builder.Services.AddScoped<IPushNotificationService, FirebasePushNotificationService>();
 }
 else

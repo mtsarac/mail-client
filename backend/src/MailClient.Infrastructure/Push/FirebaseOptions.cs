@@ -8,13 +8,9 @@ public sealed class FirebaseOptions
 
     public void Validate()
     {
-        if (!Enabled)
-            return;
-        if (string.IsNullOrWhiteSpace(ProjectId))
-            throw new InvalidOperationException(
-                "Firebase:ProjectId must be configured when Firebase:Enabled is true.");
-        if (FirebaseCredentials.ResolvePath(CredentialsPath) is null)
-            throw new InvalidOperationException(
-                "Firebase credentials could not be resolved. Set Firebase:CredentialsPath or GOOGLE_APPLICATION_CREDENTIALS.");
+        // Fail-fast: when enabled, actually load the credentials and
+        // initialize the Firebase Admin SDK so configuration problems
+        // surface at startup instead of as silent push outages.
+        FirebaseSetup.EnsureInitialized(this);
     }
 }

@@ -200,7 +200,7 @@ Attachments:
 
 Mail account reconfiguration:
 
-- Changing the IMAP identity (`Username`, `ImapHost`, `ImapPort`, `ImapSecurity`) resets the locally cached mailbox for that account (folders, sync state, skipped UIDs, mail and attachment metadata, attachment files) under the same advisory locks as deletion, then rediscovers folders and rebuilds on the next refresh/sync. The account row itself is preserved.
+- Changing the IMAP identity (`Username`, `ImapHost`, `ImapPort`, `ImapSecurity`) resets the locally cached mailbox for that account (folders, sync state, skipped UIDs, mail and attachment metadata, attachment files) under the same advisory locks as deletion, then rediscovers folders and rebuilds on the next refresh/sync. The account row itself is preserved. A folder refresh running concurrently with such a change is discarded (client should retry the refresh) so stale discovery results can never repopulate the reset account.
 - Changing only `DisplayName`, `EmailAddress` (per-user identity/From metadata, never the IMAP login), SMTP settings, `SaveSentCopy`, or the mailbox password alone keeps the cache.
 - Duplicate `(UserId, EmailAddress)` accounts are rejected with `409 Conflict`, race-safe via the database unique constraint.
 
@@ -221,10 +221,10 @@ Firebase:
   "Firebase": { "Enabled": false, "ProjectId": "", "CredentialsPath": "" }
   ```
 - `Enabled=false` (default): push is a safe no-op; no credentials, network, or `FirebaseApp` needed. Local development and tests run this way.
-- `Enabled=true`: the backend resolves a service-account file from `Firebase:CredentialsPath`, then `GOOGLE_APPLICATION_CREDENTIALS`, then the well-known ADC location, and fails fast at startup when the project ID or credentials are missing/invalid.
+- `Enabled=true`: the backend resolves a service-account file from `Firebase:CredentialsPath`, then `GOOGLE_APPLICATION_CREDENTIALS`, then the well-known ADC location, and fails fast at startup when the project ID or credentials are missing/invalid. Startup loads the credentials and initializes the Firebase Admin SDK (local validation only — no test notification is sent).
 - **Firebase service-account credentials must never be committed.** `.gitignore` already blocks `firebase-service-account*.json`, `serviceAccountKey.json`, `*-firebase-adminsdk-*.json`, `google-services.json`, and `GoogleService-Info.plist`. Production should use a secret-mounted path.
 - Device API (JWT required, ownership always from the token): `POST /api/devices/register` (`{"pushToken":"...","platform":"android"}`; platform `android`/`ios`, stored lowercase; repeat registration when Firebase rotates the token — same-user re-registration updates in place, cross-user tokens are silently reassigned to the current user) and `DELETE /api/devices/{id}` (only the owning user; other users get `404`).
-- Push behavior: only genuinely new Inbox mail notifies (never Sent/Drafts/Trash/Junk/Archive/Custom, never re-scans or flag changes). Notification runs strictly after the mail commit and can never roll back sync state. Data payload is `type=new_mail` plus string `mailId`/`accountId`/`folderId`; display title is the sender name (or address), body is the subject; no mail body, HTML, attachments, or credentials are included. Tokens chunk at the documented FCM multicast limit (500); permanently unregistered tokens are removed, transient/quota/auth failures keep the token.
+- Push behavior: only genuinely new Inbox mail notifies (never Sent/Drafts/Trash/Junk/Archive/Custom, never re-scans or flag changes). Notification runs strictly after the mail commit and can never roll back sync state. Delivery uses the official Firebase Admin .NET SDK (`SendEachAsync`, 500 tokens per call). Data payload is `type=new_mail` plus string `mailId`/`accountId`/`folderId`; display title is the sender name (or address), body is the subject; no mail body, HTML, attachments, or credentials are included. Tokens chunk at the documented FCM multicast limit (500); only a definitive SDK `Unregistered` report removes a token — transient/quota/auth/server/malformed failures keep it.
 - Live FCM delivery was not exercised in this environment (no service-account credentials or device token available); behavior is covered by automated fake-gateway tests.
 
 Reverse proxy:

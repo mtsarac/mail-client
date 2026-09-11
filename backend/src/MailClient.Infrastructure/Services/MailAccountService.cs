@@ -123,7 +123,10 @@ public sealed class MailAccountService(
 
         // Serialize against in-flight folder syncs the same way deletion
         // does: sync holds these advisory locks while committing, so no new
-        // cached state can land during the reset.
+        // cached state can land during the reset. The account lock additionally
+        // serializes against folder discovery commits, which re-check the
+        // account fingerprint under the same lock before storing results.
+        await using var accountLock = await AccountAdvisoryLock.AcquireAsync(db, accountId, cancellationToken);
         var folderIds = await db.MailFolders
             .Where(folder => folder.MailAccountId == accountId && folder.IsSyncEnabled)
             .Select(folder => folder.Id)

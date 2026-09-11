@@ -32,6 +32,7 @@ jobs:
 
       - name: Audit NuGet vulnerabilities (transitive included)
         run: |
+          set -o pipefail
           dotnet list backend/MailClient.slnx package --vulnerable --include-transitive 2>&1 | tee nuget-audit.txt
           if grep -q "has the following vulnerable packages" nuget-audit.txt; then
             echo "::error::Vulnerable NuGet packages detected (see audit above)."

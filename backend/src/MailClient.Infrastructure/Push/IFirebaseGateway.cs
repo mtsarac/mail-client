@@ -1,8 +1,8 @@
 namespace MailClient.Infrastructure.Push;
 
 // Minimal gateway seam between the push service and the FCM transport.
-// Kept small so unit tests can fake it and a future FirebaseAdmin-based
-// transport can replace FcmHttpGateway without touching callers.
+// Kept small so unit tests can fake it and the FirebaseAdmin-based
+// transport can evolve without touching callers.
 public sealed record FirebaseRecipient(Guid DbId, string PushToken);
 
 public sealed record FirebaseSendResult(Guid DbId, bool Succeeded, bool RemoveToken);

@@ -46,6 +46,7 @@ public sealed class MailFolderService(
         var account = await db.MailAccounts.SingleOrDefaultAsync(item => item.Id == accountId && item.UserId == userId, cancellationToken);
         if (account is null) return null;
 
+        var discoveredAgainst = Fingerprint(account);
         IReadOnlyList<DiscoveredMailFolder> discovered;
         try
         {
@@ -68,6 +69,20 @@ public sealed class MailFolderService(
 
         try
         {
+            await using var accountLock = await AccountAdvisoryLock.AcquireAsync(db, accountId, cancellationToken);
+            var current = await db.MailAccounts
+                .AsNoTracking()
+                .SingleOrDefaultAsync(item => item.Id == accountId && item.UserId == userId, cancellationToken);
+            if (current is null)
+                return new MailFolderRefreshResponse(false, "Mail account no longer exists.", []);
+            if (!string.Equals(discoveredAgainst, Fingerprint(current), StringComparison.Ordinal))
+            {
+                logger.LogWarning(
+                    "Discarding folder discovery for account {AccountId}: the account was reconfigured during discovery.",
+                    accountId);
+                return new MailFolderRefreshResponse(false, "Mail account was reconfigured during folder discovery; refresh again.", []);
+            }
+
             var foldersResponse = await UpsertAsync(accountId, discovered, cancellationToken);
             logger.LogInformation(
                 "Mail folder discovery stored {Count} folders for account {AccountId} of user {UserId}.",
@@ -144,4 +159,12 @@ public sealed class MailFolderService(
 
     private static MailFolderResponse ToResponse(MailClient.Domain.Entities.MailFolder folder) => new(
         folder.Id, folder.Name, folder.FullName, folder.FolderType, folder.UidValidity, folder.IsSyncEnabled, folder.IsAvailable);
+
+    private static string Fingerprint(MailClient.Domain.Entities.MailAccount account) =>
+        string.Join('\n',
+            account.Username,
+            account.ImapHost.ToLowerInvariant(),
+            account.ImapPort.ToString(),
+            ((int)account.ImapSecurity).ToString(),
+            account.UpdatedAt.ToString("o"));
 }
