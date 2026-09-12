@@ -21,7 +21,7 @@ jobs:
     outputs:
       backend: ${{ steps.filter.outputs.backend }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - uses: dorny/paths-filter@v3
@@ -44,7 +44,7 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
