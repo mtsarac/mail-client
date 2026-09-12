@@ -3,13 +3,7 @@ name: codeql
 on:
   push:
     branches: [master]
-    paths:
-      - 'backend/**'
-      - '.github/workflows/codeql.yml'
   pull_request:
-    paths:
-      - 'backend/**'
-      - '.github/workflows/codeql.yml'
   schedule:
     - cron: "0 6 * * 1"
 
@@ -17,7 +11,31 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            backend:
+              - 'backend/**'
+              - '.github/workflows/codeql.yml'
+              - '.editorconfig'
+
   analyze:
+    needs: changes
+    if: always() && (github.event_name == 'schedule' || needs.changes.outputs.backend == 'true')
     name: Analyze (csharp)
     runs-on: ubuntu-latest
     timeout-minutes: 20
