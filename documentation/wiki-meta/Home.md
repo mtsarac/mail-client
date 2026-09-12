@@ -1,17 +1,13 @@
-# Mail Client backend wiki
+# Mail Client
 
-Choose your language / Dilinizi seçin:
+Mail Client pairs a Flutter app with an ASP.NET Core backend for standard IMAP and SMTP email accounts.
 
-- **English:** [Backend Guide](Backend-Guide) · [Architecture](Architecture) ·
-  [API Reference](API-Reference) · [Development](Development) · [Security](Security)
-- **Türkçe:** [Backend Kılavuzu](Backend-Kilavuzu) · [Mimari](Mimari) ·
-  [API Referansı](API-Referansi) · [Geliştirme](Gelistirme) · [Güvenlik](Guvenlik)
+## English
 
-> Authoritative source: the tracked files in
-> [`documentation/backend/`](https://github.com/mtsarac/mail-client/tree/master/documentation/backend)
-> in the main repository. This Wiki mirrors them; if anything disagrees,
-> the repository wins.
->
-> Yetkili kaynak: ana repodaki
-> [`documentation/backend/`](https://github.com/mtsarac/mail-client/tree/master/documentation/backend)
-> dosyalarıdır. Bu Wiki onların aynasıdır; çelişki varsa repo geçerlidir.
+[Backend Guide](Backend-Guide) · [Architecture](Architecture) · [API Reference](API-Reference) · [Development](Development) · [Security](Security)
+
+## Türkçe
+
+[Backend Kılavuzu](Backend-Kilavuzu) · [Mimari](Mimari) · [API Referansı](API-Referansi) · [Geliştirme](Gelistirme) · [Güvenlik](Guvenlik)
+
+The tracked [backend documentation](https://github.com/mtsarac/mail-client/tree/master/documentation/backend) in the repository is the source of truth. This wiki mirrors it.
