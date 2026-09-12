@@ -70,9 +70,7 @@ Backend geliştirici (Rider, bu makine): **`lan-http`** profilini başlatın
 (`ip -4 addr show | grep inet`; DHCP değiştirir, bu yüzden repoya yazmayın).
 API: `http://<LAN-IP>:5223`.
 
-Ekip arkadaşı / cihaz / emülatör / Flutter Web matrisi, CORS/cleartext
-kuralları ve güvenlik duvarı sorun giderme için `FLUTTER_HANDOFF.md` ve kök
-`README.md` ("Local LAN development") bölümüne bakın. Özeti:
+LAN CORS/cleartext kuralları ve güvenlik duvarı sorun giderme özeti:
 
 - Dev HTTP→HTTPS yönlendirmez, serbest CORS verir; production tam tersi.
 - Yalnızca API LAN'e bağlanır; Postgres localhost'ta kalır.
