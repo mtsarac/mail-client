@@ -69,9 +69,7 @@ Backend dev (Rider, this machine): start the **`lan-http`** profile
 (`ip -4 addr show | grep inet`; DHCP changes it, so never commit it).
 API is at `http://<LAN-IP>:5223`.
 
-For the teammate / device / emulator / Flutter Web matrix, CORS/cleartext
-rules, and firewall troubleshooting, see `FLUTTER_HANDOFF.md` and the root
-`README.md` ("Local LAN development"). The short version:
+For LAN CORS, cleartext rules, and firewall troubleshooting:
 
 - Dev never redirects HTTP→HTTPS and allows permissive CORS; production does
   the opposite.
