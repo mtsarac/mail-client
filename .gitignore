@@ -86,6 +86,7 @@ flutter_client/macos/Pods/
 # Private planning docs
 docs/
 backend/docs/
+FLUTTER_HANDOFF.md
 
 # OpenCode / agent artifacts
 .omo/
