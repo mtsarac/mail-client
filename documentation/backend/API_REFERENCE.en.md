@@ -124,3 +124,13 @@ Header **`Idempotency-Key: <uuid>` mandatory** (missing/blank/>200 chars → 400
 | 429 | rate limit (`auth` per IP / `mail-operations` per user, 20/min) |
 | 502 | mail-server operation failed (IMAP/SMTP/provider) |
 | 503 | `/health/db` unhealthy |
+
+## Swagger / OpenAPI (dev only)
+
+Every endpoint carries `WithName`/`WithSummary`/`WithDescription` plus
+accurate `Accepts`/`Produces` metadata — auth, route/query params, body
+type, success and error codes render in `/swagger` without guessing.
+`POST /api/mail-accounts/{id}/send` documents multipart form fields and
+the required `Idempotency-Key` header. Example payloads use fake values
+(`ExamplePassword123!` for passwords). Swagger UI persists authorization
+per session and shows request duration.

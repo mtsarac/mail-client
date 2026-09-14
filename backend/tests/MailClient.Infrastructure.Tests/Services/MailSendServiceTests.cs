@@ -435,7 +435,7 @@ public sealed class MailSendServiceTests
 
     private static MailSendService CreateService(AppDbContext db, IMailTransport transport) =>
         new(db, transport, new SendOperationStore(db, NullLogger<SendOperationStore>.Instance),
-            Options(), NullLogger<MailSendService>.Instance);
+            Options(), NullAuditLogger.Instance, NullLogger<MailSendService>.Instance);
 
     private static AppDbContext CreateDb() => new(new DbContextOptionsBuilder<AppDbContext>()
         .UseInMemoryDatabase(Guid.NewGuid().ToString("N")).Options);

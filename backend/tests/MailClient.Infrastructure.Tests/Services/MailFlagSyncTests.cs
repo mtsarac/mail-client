@@ -369,7 +369,7 @@ public sealed class MailFlagSyncTests
     private static MailReadService CreateReadService(AppDbContext db, FakeRemoteMailFolder remote) =>
         new(db,
             new FakeMailFolderClient(remote),
-            NullLogger<MailReadService>.Instance);
+            NullAuditLogger.Instance, NullLogger<MailReadService>.Instance);
 
     private static AppDbContext CreateDb() => new(new DbContextOptionsBuilder<AppDbContext>()
         .UseInMemoryDatabase(Guid.NewGuid().ToString("N")).Options);

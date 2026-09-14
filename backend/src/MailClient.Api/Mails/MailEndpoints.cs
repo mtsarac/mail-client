@@ -40,7 +40,14 @@ public static class MailEndpoints
                 ServiceOutcome.NotFound => Results.NotFound(),
                 _ => Results.ValidationProblem(result.Errors.ToDictionary(entry => entry.Key, entry => entry.Value))
             };
-        });
+        })
+        .WithName("ListMails")
+        .WithSummary("List mails with paging and filters")
+        .WithDescription("Unified list across accounts. Optional filters: folderType (Inbox, Sent, Drafts, Trash, Archive, Spam, Other), accountId, folderId. Page starts at 1, pageSize 1-200.")
+        .Produces<MailPageDto>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status404NotFound)
+        .ProducesValidationProblem();
 
         group.MapGet("/{id:guid}", async (
             Guid id,
@@ -50,7 +57,13 @@ public static class MailEndpoints
         {
             var result = await service.GetDetailAsync(GetUserId(user), id, ct);
             return result.Outcome == ServiceOutcome.Ok ? Results.Ok(result.Value) : Results.NotFound();
-        });
+        })
+        .WithName("GetMailDetail")
+        .WithSummary("Get one mail with body and attachments")
+        .WithDescription("Returns full body plus attachment metadata. Storage paths are never exposed.")
+        .Produces<MailDetailDto>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status404NotFound);
 
         group.MapGet("/{mailId:guid}/attachments/{attachmentId:guid}", async (
             Guid mailId,
@@ -63,7 +76,13 @@ public static class MailEndpoints
             return result.Outcome == ServiceOutcome.Ok && result.Value is not null
                 ? Results.File(result.Value.Content, result.Value.ContentType, result.Value.FileName)
                 : Results.NotFound();
-        });
+        })
+        .WithName("DownloadAttachment")
+        .WithSummary("Download an attachment")
+        .WithDescription("Streams stored attachment bytes with the original content type and filename.")
+        .Produces(StatusCodes.Status200OK, contentType: "application/octet-stream")
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status404NotFound);
 
         group.MapPatch("/{id:guid}/read", async (
             Guid id,
@@ -85,7 +104,19 @@ public static class MailEndpoints
                     statusCode: StatusCodes.Status502BadGateway),
                 _ => Results.ValidationProblem(result.Errors.ToDictionary(entry => entry.Key, entry => entry.Value))
             };
-        }).RequireRateLimiting("mail-operations");
+        })
+        .RequireRateLimiting("mail-operations")
+        .WithName("SetMailReadState")
+        .WithSummary("Mark a mail read or unread")
+        .WithDescription("Applies the flag to IMAP first, then the local cache. Example: { \"isRead\": true }. A changed mailbox returns 409; provider failures return 502. Rate limited to 20/min per user.")
+        .Accepts<SetReadRequest>("application/json")
+        .Produces<MailReadDto>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status404NotFound)
+        .Produces(StatusCodes.Status409Conflict)
+        .Produces(StatusCodes.Status429TooManyRequests)
+        .ProducesProblem(StatusCodes.Status502BadGateway)
+        .ProducesValidationProblem();
 
         return app;
     }

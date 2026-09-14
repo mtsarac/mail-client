@@ -36,7 +36,7 @@ public sealed class MailFolderRefreshRaceTests
         await using var db = CreateDb(dbName);
         var explorer = new ReconfiguringExplorer(dbName, accountId);
         var service = new MailFolderService(
-            db, new PassthroughProtector(), explorer, NullLogger<MailFolderService>.Instance);
+            db, new PassthroughProtector(), explorer, NullAuditLogger.Instance, NullLogger<MailFolderService>.Instance);
 
         var result = await service.RefreshAsync(userId, accountId, CancellationToken.None);
 
@@ -72,7 +72,7 @@ public sealed class MailFolderRefreshRaceTests
             db,
             new PassthroughProtector(),
             new StaticExplorer([new DiscoveredMailFolder("INBOX", "INBOX", MailFolderType.Inbox, 100, true)]),
-            NullLogger<MailFolderService>.Instance);
+            NullAuditLogger.Instance, NullLogger<MailFolderService>.Instance);
 
         var result = await service.RefreshAsync(userId, accountId, CancellationToken.None);
 

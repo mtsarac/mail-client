@@ -140,7 +140,7 @@ public sealed class DeviceTokenServiceTests
     }
 
     private static DeviceTokenService CreateService(AppDbContext db) =>
-        new(db, NullLogger<DeviceTokenService>.Instance);
+        new(db, NullAuditLogger.Instance, NullLogger<DeviceTokenService>.Instance);
 
     private static AppDbContext CreateDb() => new(new DbContextOptionsBuilder<AppDbContext>()
         .UseInMemoryDatabase(Guid.NewGuid().ToString("N")).Options);

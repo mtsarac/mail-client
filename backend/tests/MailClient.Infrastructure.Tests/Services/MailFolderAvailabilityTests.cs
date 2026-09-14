@@ -140,7 +140,7 @@ public sealed class MailFolderAvailabilityTests
     }
 
     private static MailFolderService CreateFolderService(AppDbContext db) =>
-        new(db, new PassthroughProtector(), new EmptyExplorer(), NullLogger<MailFolderService>.Instance);
+        new(db, new PassthroughProtector(), new EmptyExplorer(), NullAuditLogger.Instance, NullLogger<MailFolderService>.Instance);
 
     private static MailSyncOptions TestOptions() => new()
     {

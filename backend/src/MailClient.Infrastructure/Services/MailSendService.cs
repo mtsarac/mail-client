@@ -4,6 +4,7 @@ using MailClient.Application;
 using MailClient.Application.Interfaces;
 using MailClient.Application.Network;
 using MailClient.Application.Sync;
+using MailClient.Domain;
 using MailClient.Domain.Entities;
 using MailClient.Domain.Enums;
 using MailClient.Infrastructure.Email;
@@ -20,6 +21,7 @@ public sealed class MailSendService(
     IMailTransport transport,
     SendOperationStore operations,
     MailSyncOptions options,
+    IAuditLogger audit,
     ILogger<MailSendService> logger) : IMailSendService
 {
     private const int MaxAttachmentCount = 20;
@@ -96,11 +98,39 @@ public sealed class MailSendService(
                 new SendMailResult(true, replay.Operation.SentCopySaved, replay.Operation.Warning)),
             SendOperationStore.Denied denied => ServiceResult<SendMailResult>.Failure(
                 ServiceOutcome.Conflict, "idempotencyKey", denied.Reason),
-            SendOperationStore.Proceed proceed => await SendAndStoreAsync(
-                account, to, subject, command, proceed.Operation, cancellationToken),
+            SendOperationStore.Proceed proceed => await SendAndAuditAsync(
+                userId, account, to, subject, command, proceed.Operation, cancellationToken),
             _ => ServiceResult<SendMailResult>.Failure(
                 ServiceOutcome.Invalid, "idempotencyKey", "Idempotency key could not be processed.")
         };
+    }
+
+    private async Task<ServiceResult<SendMailResult>> SendAndAuditAsync(
+        Guid userId,
+        MailAccount account,
+        MailboxAddress to,
+        string subject,
+        SendMailCommand command,
+        SendOperation? operation,
+        CancellationToken cancellationToken)
+    {
+        var result = await SendAndStoreAsync(account, to, subject, command, operation, cancellationToken);
+        if (result is { Succeeded: true, Value.Sent: true })
+        {
+            await audit.LogAsync(
+                userId,
+                AuditActions.MailSent,
+                AuditEntities.MailAccount,
+                account.Id.ToString(),
+                new Dictionary<string, string?>
+                {
+                    ["toAddress"] = to.Address,
+                    ["sentCopySaved"] = result.Value!.SentCopySaved.ToString()
+                },
+                cancellationToken);
+        }
+
+        return result;
     }
 
     private async Task<ServiceResult<SendMailResult>> SendAndStoreAsync(

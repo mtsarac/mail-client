@@ -59,7 +59,7 @@ public sealed class SendIdempotencyPostgresTests(PostgresSyncFixture fixture)
                 MaxMessageAttachmentBytes = 4096,
                 MaxMessageBytes = 100000
             },
-            NullLogger<MailSendService>.Instance);
+            NullAuditLogger.Instance, NullLogger<MailSendService>.Instance);
 
     private static async Task<(Guid UserId, Guid AccountId)> SeedAccountAsync(AppDbContext db)
     {

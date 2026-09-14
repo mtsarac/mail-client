@@ -112,7 +112,7 @@ public sealed class PostgresSyncTests(PostgresSyncFixture fixture)
             .Options;
         await using var db = new AppDbContext(options);
         var folders = await new MailFolderService(
-                db, new PassthroughProtector(), new FixedExplorer(), NullLogger<MailFolderService>.Instance)
+                db, new PassthroughProtector(), new FixedExplorer(), NullAuditLogger.Instance, NullLogger<MailFolderService>.Instance)
             .UpsertAsync(accountId,
             [
                 new DiscoveredMailFolder("INBOX", "INBOX", MailFolderType.Inbox, 7, true),
@@ -348,7 +348,7 @@ public sealed class PostgresSyncTests(PostgresSyncFixture fixture)
         new AllowConnectivityTester(),
         new AllowHostValidator(),
         storage,
-        NullLogger<MailAccountService>.Instance);
+        NullAuditLogger.Instance, NullLogger<MailAccountService>.Instance);
 
     private static MailAccountRequest AccountRequest() => new(
         "account@example.com", "Account", "account@example.com", "password",

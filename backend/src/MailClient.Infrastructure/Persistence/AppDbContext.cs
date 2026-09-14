@@ -19,6 +19,7 @@ public class AppDbContext : DbContext
     public DbSet<SyncState> SyncStates => Set<SyncState>();
     public DbSet<SyncSkippedUid> SyncSkippedUids => Set<SyncSkippedUid>();
     public DbSet<SendOperation> SendOperations => Set<SendOperation>();
+    public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

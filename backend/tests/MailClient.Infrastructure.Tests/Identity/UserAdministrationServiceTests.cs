@@ -113,7 +113,7 @@ public class UserAdministrationServiceTests
     }
 
     private static UserAdministrationService CreateService(AppDbContext db) => new(
-        db, new PasswordHasher<User>(), NullLogger<UserAdministrationService>.Instance);
+        db, new PasswordHasher<User>(), NullAuditLogger.Instance, NullLogger<UserAdministrationService>.Instance);
 
     private static AppDbContext CreateDb() => new(new DbContextOptionsBuilder<AppDbContext>()
         .UseInMemoryDatabase(Guid.NewGuid().ToString())

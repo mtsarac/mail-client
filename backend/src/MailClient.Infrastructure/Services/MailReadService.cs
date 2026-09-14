@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using MailClient.Application;
 using MailClient.Application.Interfaces;
 using MailClient.Application.Network;
+using MailClient.Domain;
 using MailClient.Infrastructure.Email;
 using MailClient.Infrastructure.Persistence;
 using MailKit;
@@ -14,6 +15,7 @@ namespace MailClient.Infrastructure.Services;
 public sealed class MailReadService(
     AppDbContext db,
     IMailFolderClient folders,
+    IAuditLogger audit,
     ILogger<MailReadService> logger) : IMailReadService
 {
     public async Task<ServiceResult<MailReadDto>> SetReadAsync(
@@ -72,6 +74,13 @@ public sealed class MailReadService(
 
         mail.IsRead = isRead;
         await db.SaveChangesAsync(cancellationToken);
+        await audit.LogAsync(
+            userId,
+            AuditActions.MailReadStateChanged,
+            AuditEntities.Mail,
+            mail.Id.ToString(),
+            new Dictionary<string, string?> { ["isRead"] = isRead.ToString() },
+            cancellationToken);
         return ServiceResult<MailReadDto>.Success(new MailReadDto(mail.Id, mail.IsRead));
     }
 

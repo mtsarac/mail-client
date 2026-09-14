@@ -356,7 +356,7 @@ public sealed class SendIdempotencyTests
 
     private static MailSendService CreateService(AppDbContext db, MailSendServiceTests.FakeMailTransport transport) =>
         new(db, transport, new SendOperationStore(db, NullLogger<SendOperationStore>.Instance),
-            Options(), NullLogger<MailSendService>.Instance);
+            Options(), NullAuditLogger.Instance, NullLogger<MailSendService>.Instance);
 
     private static AppDbContext CreateDb(string name) => new(new DbContextOptionsBuilder<AppDbContext>()
         .UseInMemoryDatabase(name).Options);
