@@ -111,29 +111,31 @@ public sealed class HttpBodyLoggingMiddleware(
             ?? context.Response.Headers["X-Correlation-ID"].ToString();
         if (string.IsNullOrEmpty(correlationId))
             correlationId = context.TraceIdentifier;
-        var mailAccountId = context.User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value;
+        var accountClaim = context.User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value;
+        var path = Sanitize(context.Request.Path.Value ?? "/");
+        var method = Sanitize(context.Request.Method);
         var query = context.Request.QueryString.Value;
         var log = logger
-            .ForContext("RequestPath", context.Request.Path.Value ?? "/")
-            .ForContext("Path", context.Request.Path.Value ?? "/")
-            .ForContext("Method", context.Request.Method)
+            .ForContext("RequestPath", path)
+            .ForContext("Path", path)
+            .ForContext("Method", method)
             .ForContext("StatusCode", context.Response.StatusCode)
             .ForContext("ElapsedMs", elapsedMs)
-            .ForContext("CorrelationId", correlationId)
+            .ForContext("CorrelationId", Sanitize(correlationId))
             .ForContext("TimestampUtc", DateTime.UtcNow)
             .ForContext("RequestBodyTruncated", requestBody.Truncated)
             .ForContext("ResponseBodyTruncated", responseBody.Truncated)
-            .ForContext("RequestContentType", context.Request.ContentType)
-            .ForContext("ResponseContentType", context.Response.ContentType)
-            .ForContext("RequestBody", requestBody.Value, destructureObjects: true)
-            .ForContext("ResponseBody", responseBody.Value, destructureObjects: true);
+            .ForContext("RequestContentType", Sanitize(context.Request.ContentType))
+            .ForContext("ResponseContentType", Sanitize(context.Response.ContentType))
+            .ForContext("RequestBody", SanitizeBody(requestBody.Value), destructureObjects: true)
+            .ForContext("ResponseBody", SanitizeBody(responseBody.Value), destructureObjects: true);
         if (!string.IsNullOrEmpty(query))
-            log = log.ForContext("QueryString", query);
-        if (!string.IsNullOrWhiteSpace(mailAccountId))
+            log = log.ForContext("QueryString", Sanitize(query));
+        if (Guid.TryParse(accountClaim, out var mailAccountId))
             log = log.ForContext("MailAccountId", mailAccountId);
         log.Information(
             "HTTP {Method} {RequestPath} responded {StatusCode} in {ElapsedMs} ms.",
-            context.Request.Method, context.Request.Path.Value, context.Response.StatusCode, elapsedMs);
+            method, path, context.Response.StatusCode, elapsedMs);
     }
 
     private static CapturedBody BuildResponseBody(string? contentType, CappedTeeStream capture)
@@ -170,6 +172,19 @@ public sealed class HttpBodyLoggingMiddleware(
             ["contentType"] = contentType,
             ["lengthBytes"] = lengthBytes,
         };
+
+    private static object? SanitizeBody(object? value) => value switch
+    {
+        string text => Sanitize(text),
+        Dictionary<string, object?> dictionary => dictionary.ToDictionary(
+            item => Sanitize(item.Key) ?? string.Empty,
+            item => SanitizeBody(item.Value)),
+        IEnumerable<object?> sequence => sequence.Select(SanitizeBody).ToList(),
+        _ => value,
+    };
+
+    private static string? Sanitize(string? value) =>
+        value?.Replace('\r', ' ').Replace('\n', ' ');
 
     private static async Task<(byte[] Bytes, bool Truncated)> ReadCappedAsync(Stream stream, int maxBytes)
     {
