@@ -7,7 +7,7 @@ using MailClient.Domain.Enums;
 
 namespace MailClient.Infrastructure.Discovery;
 
-public sealed class DnsSrvDiscoveryStrategy(LookupClient dns) : IMailDiscoveryStrategy
+public class DnsSrvDiscoveryStrategy(LookupClient dns) : IMailDiscoveryStrategy
 {
     public int Order => 2;
 
@@ -29,7 +29,7 @@ public sealed class DnsSrvDiscoveryStrategy(LookupClient dns) : IMailDiscoverySt
         }
     }
 
-    private async Task<(string Host, int Port)?> QueryAsync(string domain, string[] services, CancellationToken cancellationToken)
+    protected virtual async Task<(string Host, int Port)?> QueryAsync(string domain, string[] services, CancellationToken cancellationToken)
     {
         foreach (var service in services)
         {
