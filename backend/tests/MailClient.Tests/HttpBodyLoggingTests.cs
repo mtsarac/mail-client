@@ -219,7 +219,7 @@ public sealed class HttpBodyLoggingTests : IDisposable
             await Task.CompletedTask;
         });
         var context = JsonContext("GET", "/api/mails", "", "?folder=inbox");
-        context.Items["CorrelationId"] = "corr-123";
+        context.Response.Headers[CorrelationMiddleware.HeaderName] = "corr-123";
         context.User = new ClaimsPrincipal(new ClaimsIdentity(
             [new Claim(JwtRegisteredClaimNames.Sub, accountId.ToString())], "test"));
 
@@ -247,6 +247,28 @@ public sealed class HttpBodyLoggingTests : IDisposable
         var evt = SingleEvent();
         Assert.DoesNotContain("QueryString", Render(evt));
         Assert.DoesNotContain("MailAccountId", Render(evt));
+    }
+
+    [Fact]
+    public async Task ExceptionResponse_IsLoggedExactlyOnce()
+    {
+        var middleware = Create(async context =>
+        {
+            context.Response.StatusCode = 500;
+            context.Response.ContentType = "application/problem+json";
+            await context.Response.WriteAsync("{\"status\":500,\"correlationId\":\"corr-500\"}");
+            throw new InvalidOperationException("boom");
+        });
+        var context = JsonContext("POST", "/test/throw", "{\"password\":\"secret-value\"}");
+        context.Response.Headers[CorrelationMiddleware.HeaderName] = "corr-500";
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => middleware.InvokeAsync(context));
+
+        var evt = SingleEvent();
+        Assert.Contains("corr-500", evt.Properties["CorrelationId"].ToString());
+        Assert.Contains("corr-500", evt.Properties["ResponseBody"].ToString());
+        Assert.DoesNotContain("secret-value", Render(evt));
+        Assert.Equal(500, ((ScalarValue)evt.Properties["StatusCode"]).Value);
     }
 
     [Fact]
