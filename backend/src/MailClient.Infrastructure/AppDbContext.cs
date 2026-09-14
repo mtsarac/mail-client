@@ -9,7 +9,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<MailCredential> MailCredentials => Set<MailCredential>();
     public DbSet<MailSession> MailSessions => Set<MailSession>();
     public DbSet<MailFolder> MailFolders => Set<MailFolder>();
-    public DbSet<Mail> Mails => Set<Mail>();
+    public DbSet<MailClient.Domain.Entities.Mail> Mails => Set<MailClient.Domain.Entities.Mail>();
     public DbSet<Attachment> Attachments => Set<Attachment>();
     public DbSet<SyncState> SyncStates => Set<SyncState>();
     public DbSet<SyncSkippedUid> SyncSkippedUids => Set<SyncSkippedUid>();
@@ -27,7 +27,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         model.Entity<MailSession>().HasOne(x => x.MailAccount).WithMany(x => x.Sessions).HasForeignKey(x => x.MailAccountId).OnDelete(DeleteBehavior.Cascade);
         model.Entity<MailSession>().HasIndex(x => x.RefreshTokenHash).IsUnique();
         model.Entity<MailFolder>().HasIndex(x => new { x.MailAccountId, x.FullName }).IsUnique();
-        model.Entity<Mail>().HasIndex(x => new { x.MailFolderId, x.Uid }).IsUnique();
+        model.Entity<MailClient.Domain.Entities.Mail>().HasIndex(x => new { x.MailFolderId, x.Uid }).IsUnique();
         model.Entity<Attachment>().HasIndex(x => new { x.MailAccountId, x.MailId });
         model.Entity<SyncState>().HasIndex(x => x.MailFolderId).IsUnique();
         model.Entity<SyncSkippedUid>().HasIndex(x => new { x.MailFolderId, x.Uid }).IsUnique();
