@@ -1,10 +1,9 @@
-using MailClient.Application.Interfaces;
+using MailClient.Application.Mail;
 using MimeKit;
 
-// Builds outgoing MIME messages with normalized attachments for sending.
 namespace MailClient.Infrastructure.Email;
 
-internal static class MimeMessageBuilder
+public static class MimeMessageBuilder
 {
     public static MimeMessage Build(
         string fromAddress,

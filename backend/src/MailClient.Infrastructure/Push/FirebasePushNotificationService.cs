@@ -1,15 +1,11 @@
-using MailClient.Application.Interfaces;
+using MailClient.Application.Mail;
 using MailClient.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
-// Post-commit best-effort new-mail push fan-out with invalid-token pruning.
 namespace MailClient.Infrastructure.Push;
 
-// Post-commit, best-effort new-mail fan-out. Token loading and invalid-token
-// cleanup run in a dedicated scope so a push failure can never disturb the
-// already-committed sync state on the caller's DbContext.
 public sealed class FirebasePushNotificationService(
     IServiceScopeFactory scopes,
     IFirebaseGateway gateway,
@@ -27,9 +23,7 @@ public sealed class FirebasePushNotificationService(
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex,
-                "Push notification failed for user {UserId}, mail {MailId}. Sync state is unaffected.",
-                notification.UserId, notification.MailId);
+            logger.LogWarning(ex, "Push notification delivery failed. Sync state is unaffected.");
         }
     }
 
@@ -39,7 +33,7 @@ public sealed class FirebasePushNotificationService(
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var tokens = await db.DeviceTokens
             .AsNoTracking()
-            .Where(token => token.UserId == notification.UserId)
+            .Where(token => token.MailAccountId == notification.MailAccountId)
             .Select(token => new { token.Id, token.Token })
             .ToListAsync(cancellationToken);
         if (tokens.Count == 0)
@@ -49,7 +43,7 @@ public sealed class FirebasePushNotificationService(
         {
             ["type"] = "new_mail",
             ["mailId"] = notification.MailId.ToString(),
-            ["accountId"] = notification.AccountId.ToString(),
+            ["accountId"] = notification.MailAccountId.ToString(),
             ["folderId"] = notification.FolderId.ToString()
         };
         var results = await gateway.SendNewMailAsync(
@@ -63,12 +57,16 @@ public sealed class FirebasePushNotificationService(
         if (invalidIds.Count > 0)
         {
             var invalid = await db.DeviceTokens
-                .Where(token => invalidIds.Contains(token.Id) && token.UserId == notification.UserId)
+                .Where(token => invalidIds.Contains(token.Id) && token.MailAccountId == notification.MailAccountId)
                 .ToListAsync(cancellationToken);
             db.DeviceTokens.RemoveRange(invalid);
             await db.SaveChangesAsync(cancellationToken);
-            logger.LogInformation(
-                "Removed {Count} invalid device tokens for user {UserId}.", invalid.Count, notification.UserId);
+            logger.LogInformation("Removed {Count} invalid device tokens.", invalid.Count);
         }
     }
+}
+
+public sealed class NoOpPushNotificationService : IPushNotificationService
+{
+    public Task NotifyNewMailAsync(NewMailNotification notification, CancellationToken cancellationToken) => Task.CompletedTask;
 }

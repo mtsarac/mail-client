@@ -3,15 +3,8 @@ using System.Text.Json;
 using FirebaseAdmin;
 using Google.Apis.Auth.OAuth2;
 
-// Fail-fast Firebase Admin SDK initialization with credential-chain resolution.
 namespace MailClient.Infrastructure.Push;
 
-// Fail-fast Firebase initialization. When Firebase:Enabled is true this loads
-// credentials and creates the FirebaseApp at startup, so missing/unreadable/
-// malformed/invalid credentials and SDK initialization failures surface as a
-// clear configuration exception instead of a silent runtime push outage.
-// No network or test notification is sent: only local credential loading and
-// SDK object construction. Never includes secrets in messages or logs.
 public static class FirebaseSetup
 {
     public const string AppName = "mail-client-push";
@@ -54,7 +47,6 @@ public static class FirebaseSetup
 
     private static GoogleCredential LoadCredential(string configuredPath)
     {
-        // 1. Explicitly configured path wins and must be usable.
         if (!string.IsNullOrWhiteSpace(configuredPath))
         {
             if (!File.Exists(configuredPath))
@@ -63,7 +55,6 @@ public static class FirebaseSetup
             return LoadServiceAccountFile(configuredPath);
         }
 
-        // 2. GOOGLE_APPLICATION_CREDENTIALS.
         var fromEnv = Environment.GetEnvironmentVariable("GOOGLE_APPLICATION_CREDENTIALS");
         if (!string.IsNullOrWhiteSpace(fromEnv))
         {
@@ -73,12 +64,10 @@ public static class FirebaseSetup
             return LoadServiceAccountFile(fromEnv);
         }
 
-        // 3. Well-known Application Default Credentials location.
         var wellKnown = WellKnownApplicationDefaultPath();
         if (wellKnown is not null)
             return LoadServiceAccountFile(wellKnown);
 
-        // 4. Normal Google ADC behavior (gcloud, GCE/GKE metadata, etc.).
         try
         {
             return GoogleCredential.GetApplicationDefault();

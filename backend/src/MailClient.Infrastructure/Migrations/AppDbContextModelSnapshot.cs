@@ -46,6 +46,9 @@ namespace MailClient.Infrastructure.Migrations
                     b.Property<bool>("IsInline")
                         .HasColumnType("boolean");
 
+                    b.Property<Guid>("MailAccountId")
+                        .HasColumnType("uuid");
+
                     b.Property<Guid>("MailId")
                         .HasColumnType("uuid");
 
@@ -54,12 +57,13 @@ namespace MailClient.Infrastructure.Migrations
 
                     b.Property<string>("StoragePath")
                         .IsRequired()
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
+                        .HasColumnType("text");
 
                     b.HasKey("Id");
 
                     b.HasIndex("MailId");
+
+                    b.HasIndex("MailAccountId", "MailId");
 
                     b.ToTable("Attachments");
                 });
@@ -72,34 +76,30 @@ namespace MailClient.Infrastructure.Migrations
 
                     b.Property<string>("Action")
                         .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
+                        .HasColumnType("text");
 
                     b.Property<string>("CorrelationId")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
+                        .HasColumnType("text");
 
                     b.Property<string>("EntityId")
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
+                        .HasColumnType("text");
 
                     b.Property<string>("EntityType")
                         .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
+                        .HasColumnType("text");
+
+                    b.Property<Guid?>("MailAccountId")
+                        .HasColumnType("uuid");
 
                     b.Property<string>("Metadata")
-                        .HasColumnType("jsonb");
+                        .HasColumnType("text");
 
                     b.Property<DateTime>("TimestampUtc")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<Guid?>("UserId")
-                        .HasColumnType("uuid");
-
                     b.HasKey("Id");
 
-                    b.HasIndex("UserId", "TimestampUtc");
+                    b.HasIndex("MailAccountId", "TimestampUtc");
 
                     b.ToTable("AuditLogs");
                 });
@@ -113,28 +113,27 @@ namespace MailClient.Infrastructure.Migrations
                     b.Property<DateTime?>("LastSeenAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<Guid>("MailAccountId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("MailSessionId")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("Platform")
                         .IsRequired()
-                        .HasMaxLength(30)
-                        .HasColumnType("character varying(30)");
+                        .HasColumnType("text");
 
                     b.Property<DateTime>("RegisteredAt")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("Token")
                         .IsRequired()
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
-
-                    b.Property<Guid>("UserId")
-                        .HasColumnType("uuid");
+                        .HasColumnType("text");
 
                     b.HasKey("Id");
 
-                    b.HasIndex("Token")
+                    b.HasIndex("MailAccountId", "Token")
                         .IsUnique();
-
-                    b.HasIndex("UserId");
 
                     b.ToTable("DeviceTokens");
                 });
@@ -201,9 +200,9 @@ namespace MailClient.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("MailAccountId", "ReceivedAt");
+                    b.HasIndex("MailAccountId");
 
-                    b.HasIndex("MailFolderId", "UidValidity", "Uid")
+                    b.HasIndex("MailFolderId", "Uid")
                         .IsUnique();
 
                     b.ToTable("Mails");
@@ -215,28 +214,27 @@ namespace MailClient.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<int>("AuthenticationMethod")
+                        .HasColumnType("integer");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<int>("DiscoverySource")
+                        .HasColumnType("integer");
+
                     b.Property<string>("DisplayName")
                         .IsRequired()
-                        .HasMaxLength(250)
-                        .HasColumnType("character varying(250)");
+                        .HasColumnType("text");
 
                     b.Property<string>("EmailAddress")
                         .IsRequired()
                         .HasMaxLength(320)
                         .HasColumnType("character varying(320)");
 
-                    b.Property<string>("EncryptedPassword")
-                        .IsRequired()
-                        .HasMaxLength(2000)
-                        .HasColumnType("character varying(2000)");
-
                     b.Property<string>("ImapHost")
                         .IsRequired()
-                        .HasMaxLength(255)
-                        .HasColumnType("character varying(255)");
+                        .HasColumnType("text");
 
                     b.Property<int>("ImapPort")
                         .HasColumnType("integer");
@@ -244,16 +242,23 @@ namespace MailClient.Infrastructure.Migrations
                     b.Property<int>("ImapSecurity")
                         .HasColumnType("integer");
 
-                    b.Property<bool>("IsActive")
-                        .HasColumnType("boolean");
+                    b.Property<DateTime?>("LastAuthenticatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("NormalizedEmailAddress")
+                        .IsRequired()
+                        .HasMaxLength(320)
+                        .HasColumnType("character varying(320)");
+
+                    b.Property<int>("Provider")
+                        .HasColumnType("integer");
 
                     b.Property<bool>("SaveSentCopy")
                         .HasColumnType("boolean");
 
                     b.Property<string>("SmtpHost")
                         .IsRequired()
-                        .HasMaxLength(255)
-                        .HasColumnType("character varying(255)");
+                        .HasColumnType("text");
 
                     b.Property<int>("SmtpPort")
                         .HasColumnType("integer");
@@ -261,23 +266,64 @@ namespace MailClient.Infrastructure.Migrations
                     b.Property<int>("SmtpSecurity")
                         .HasColumnType("integer");
 
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
+
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<Guid>("UserId")
-                        .HasColumnType("uuid");
-
                     b.Property<string>("Username")
                         .IsRequired()
-                        .HasMaxLength(320)
-                        .HasColumnType("character varying(320)");
+                        .HasColumnType("text");
 
                     b.HasKey("Id");
 
-                    b.HasIndex("UserId", "EmailAddress")
+                    b.HasIndex("NormalizedEmailAddress")
                         .IsUnique();
 
                     b.ToTable("MailAccounts");
+                });
+
+            modelBuilder.Entity("MailClient.Domain.Entities.MailCredential", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("AuthenticationMethod")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("EncryptedMaterial")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("MailAccountId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Provider")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ProviderMetadata")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Scopes")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MailAccountId", "AuthenticationMethod")
+                        .IsUnique();
+
+                    b.ToTable("MailCredentials");
                 });
 
             modelBuilder.Entity("MailClient.Domain.Entities.MailFolder", b =>
@@ -291,8 +337,7 @@ namespace MailClient.Infrastructure.Migrations
 
                     b.Property<string>("FullName")
                         .IsRequired()
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
+                        .HasColumnType("text");
 
                     b.Property<bool>("IsAvailable")
                         .HasColumnType("boolean");
@@ -305,8 +350,7 @@ namespace MailClient.Infrastructure.Migrations
 
                     b.Property<string>("Name")
                         .IsRequired()
-                        .HasMaxLength(255)
-                        .HasColumnType("character varying(255)");
+                        .HasColumnType("text");
 
                     b.Property<long>("UidValidity")
                         .HasColumnType("bigint");
@@ -319,13 +363,51 @@ namespace MailClient.Infrastructure.Migrations
                     b.ToTable("MailFolders");
                 });
 
-            modelBuilder.Entity("MailClient.Domain.Entities.SendOperation", b =>
+            modelBuilder.Entity("MailClient.Domain.Entities.MailSession", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
-                    b.Property<Guid>("AccountId")
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DeviceIdentifier")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("LastUsedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("MailAccountId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("RefreshTokenHash")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid?>("ReplacedBySessionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("RevokedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MailAccountId");
+
+                    b.HasIndex("RefreshTokenHash")
+                        .IsUnique();
+
+                    b.ToTable("MailSessions");
+                });
+
+            modelBuilder.Entity("MailClient.Domain.Entities.SendOperation", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
                     b.Property<DateTime>("CreatedAt")
@@ -333,13 +415,14 @@ namespace MailClient.Infrastructure.Migrations
 
                     b.Property<string>("Fingerprint")
                         .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
+                        .HasColumnType("text");
 
                     b.Property<string>("IdempotencyKey")
                         .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("MailAccountId")
+                        .HasColumnType("uuid");
 
                     b.Property<bool>("SentCopySaved")
                         .HasColumnType("boolean");
@@ -350,16 +433,12 @@ namespace MailClient.Infrastructure.Migrations
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<Guid>("UserId")
-                        .HasColumnType("uuid");
-
                     b.Property<string>("Warning")
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
+                        .HasColumnType("text");
 
                     b.HasKey("Id");
 
-                    b.HasIndex("UserId", "IdempotencyKey")
+                    b.HasIndex("MailAccountId", "IdempotencyKey")
                         .IsUnique();
 
                     b.ToTable("SendOperations");
@@ -371,13 +450,15 @@ namespace MailClient.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<Guid>("MailAccountId")
+                        .HasColumnType("uuid");
+
                     b.Property<Guid>("MailFolderId")
                         .HasColumnType("uuid");
 
                     b.Property<string>("Reason")
                         .IsRequired()
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
+                        .HasColumnType("text");
 
                     b.Property<DateTime>("SkippedAt")
                         .HasColumnType("timestamp with time zone");
@@ -408,6 +489,9 @@ namespace MailClient.Infrastructure.Migrations
                     b.Property<long>("LastUid")
                         .HasColumnType("bigint");
 
+                    b.Property<Guid>("MailAccountId")
+                        .HasColumnType("uuid");
+
                     b.Property<Guid>("MailFolderId")
                         .HasColumnType("uuid");
 
@@ -425,50 +509,6 @@ namespace MailClient.Infrastructure.Migrations
                     b.ToTable("SyncStates");
                 });
 
-            modelBuilder.Entity("MailClient.Domain.Entities.User", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("DisplayName")
-                        .IsRequired()
-                        .HasMaxLength(250)
-                        .HasColumnType("character varying(250)");
-
-                    b.Property<string>("Email")
-                        .IsRequired()
-                        .HasMaxLength(320)
-                        .HasColumnType("character varying(320)");
-
-                    b.Property<DateTime?>("LastLoginAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("PasswordHash")
-                        .IsRequired()
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
-
-                    b.Property<int>("Role")
-                        .HasColumnType("integer");
-
-                    b.Property<int>("Status")
-                        .HasColumnType("integer");
-
-                    b.Property<int>("TokenVersion")
-                        .HasColumnType("integer");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("Email")
-                        .IsUnique();
-
-                    b.ToTable("Users");
-                });
-
             modelBuilder.Entity("MailClient.Domain.Entities.Attachment", b =>
                 {
                     b.HasOne("MailClient.Domain.Entities.Mail", "Mail")
@@ -478,27 +518,6 @@ namespace MailClient.Infrastructure.Migrations
                         .IsRequired();
 
                     b.Navigation("Mail");
-                });
-
-            modelBuilder.Entity("MailClient.Domain.Entities.AuditLog", b =>
-                {
-                    b.HasOne("MailClient.Domain.Entities.User", "User")
-                        .WithMany()
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
-                    b.Navigation("User");
-                });
-
-            modelBuilder.Entity("MailClient.Domain.Entities.DeviceToken", b =>
-                {
-                    b.HasOne("MailClient.Domain.Entities.User", "User")
-                        .WithMany("DeviceTokens")
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("MailClient.Domain.Entities.Mail", b =>
@@ -520,15 +539,15 @@ namespace MailClient.Infrastructure.Migrations
                     b.Navigation("MailFolder");
                 });
 
-            modelBuilder.Entity("MailClient.Domain.Entities.MailAccount", b =>
+            modelBuilder.Entity("MailClient.Domain.Entities.MailCredential", b =>
                 {
-                    b.HasOne("MailClient.Domain.Entities.User", "User")
-                        .WithMany("MailAccounts")
-                        .HasForeignKey("UserId")
+                    b.HasOne("MailClient.Domain.Entities.MailAccount", "MailAccount")
+                        .WithMany("Credentials")
+                        .HasForeignKey("MailAccountId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.Navigation("User");
+                    b.Navigation("MailAccount");
                 });
 
             modelBuilder.Entity("MailClient.Domain.Entities.MailFolder", b =>
@@ -542,26 +561,15 @@ namespace MailClient.Infrastructure.Migrations
                     b.Navigation("MailAccount");
                 });
 
-            modelBuilder.Entity("MailClient.Domain.Entities.SendOperation", b =>
+            modelBuilder.Entity("MailClient.Domain.Entities.MailSession", b =>
                 {
-                    b.HasOne("MailClient.Domain.Entities.User", "User")
-                        .WithMany()
-                        .HasForeignKey("UserId")
+                    b.HasOne("MailClient.Domain.Entities.MailAccount", "MailAccount")
+                        .WithMany("Sessions")
+                        .HasForeignKey("MailAccountId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.Navigation("User");
-                });
-
-            modelBuilder.Entity("MailClient.Domain.Entities.SyncSkippedUid", b =>
-                {
-                    b.HasOne("MailClient.Domain.Entities.MailFolder", "MailFolder")
-                        .WithMany()
-                        .HasForeignKey("MailFolderId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("MailFolder");
+                    b.Navigation("MailAccount");
                 });
 
             modelBuilder.Entity("MailClient.Domain.Entities.SyncState", b =>
@@ -582,9 +590,13 @@ namespace MailClient.Infrastructure.Migrations
 
             modelBuilder.Entity("MailClient.Domain.Entities.MailAccount", b =>
                 {
+                    b.Navigation("Credentials");
+
                     b.Navigation("Folders");
 
                     b.Navigation("Mails");
+
+                    b.Navigation("Sessions");
                 });
 
             modelBuilder.Entity("MailClient.Domain.Entities.MailFolder", b =>
@@ -592,13 +604,6 @@ namespace MailClient.Infrastructure.Migrations
                     b.Navigation("Mails");
 
                     b.Navigation("SyncState");
-                });
-
-            modelBuilder.Entity("MailClient.Domain.Entities.User", b =>
-                {
-                    b.Navigation("DeviceTokens");
-
-                    b.Navigation("MailAccounts");
                 });
 #pragma warning restore 612, 618
         }

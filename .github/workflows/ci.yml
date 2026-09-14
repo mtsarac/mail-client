@@ -43,6 +43,26 @@ jobs:
     if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      greenmail:
+        image: greenmail/standalone:2.1.8
+        env:
+          GREENMAIL_OPTS: -Dgreenmail.setup.test.all -Dgreenmail.hostname=0.0.0.0 -Dgreenmail.users=test@localhost:test123
+        ports:
+          - 3143:3143
     steps:
       - uses: actions/checkout@v7
 
@@ -67,6 +87,9 @@ jobs:
           fi
 
       - name: Test (Release, no build)
+        env:
+          MAILCLIENT_TEST_POSTGRES_ADMIN: Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgres
+          MAILCLIENT_TEST_GREENMAIL: "1"
         run: dotnet test backend/MailClient.slnx --configuration Release --no-build --verbosity normal
 
   format:

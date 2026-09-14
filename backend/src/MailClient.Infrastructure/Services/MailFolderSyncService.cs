@@ -1,24 +1,22 @@
 using System.Security.Cryptography;
-using MailClient.Application.Interfaces;
-using MailClient.Application.Network;
+using MailClient.Application.Mail;
 using MailClient.Application.Sync;
 using MailClient.Domain.Entities;
 using MailClient.Domain.Enums;
 using MailClient.Infrastructure.Email;
 using MailClient.Infrastructure.Persistence;
-using MailClient.Infrastructure.Storage;
+using MailClient.Infrastructure.Security;
 using MailKit;
-using MailKit.Net.Imap;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using MailEntity = MailClient.Domain.Entities.Mail;
 
-// Synchronizes remote IMAP folder state into the local PostgreSQL cache.
 namespace MailClient.Infrastructure.Services;
 
 public sealed class MailFolderSyncService(
     AppDbContext db,
-    ICredentialProtector credentials,
-    MailConnectionHelper connections,
+    MailCredentialResolver credentials,
+    Mail.MailConnectionHelper connections,
     IFileStorage storage,
     MailSyncOptions options,
     IPushNotificationService push,
@@ -27,7 +25,7 @@ public sealed class MailFolderSyncService(
     public async Task SyncAllAsync(CancellationToken cancellationToken)
     {
         var accountIds = await db.MailAccounts
-            .Where(account => account.IsActive && account.Folders.Any(folder => folder.IsSyncEnabled && folder.IsAvailable))
+            .Where(account => account.Status == MailAccountStatus.Active && account.Folders.Any(folder => folder.IsSyncEnabled && folder.IsAvailable))
             .Select(account => account.Id)
             .ToListAsync(cancellationToken);
 
@@ -43,42 +41,67 @@ public sealed class MailFolderSyncService(
             }
             catch (CryptographicException ex)
             {
-                logger.LogError(ex,
-                    "Mail sync failed for account {AccountId}: stored credential cannot be decrypted. Re-enter the mailbox password.",
-                    accountId);
+                logger.LogError(ex, "Mail sync failed because the stored credential cannot be decrypted.");
+                await MarkReauthenticationAsync(accountId, cancellationToken);
+            }
+            catch (MailConnectionException ex) when (ex.Failure == MailConnectionFailure.Authentication)
+            {
+                logger.LogWarning(ex, "Mail sync failed because the provider rejected the credential.");
+                await MarkReauthenticationAsync(accountId, cancellationToken);
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "Mail sync failed for account {AccountId}.", accountId);
+                logger.LogError(ex, "Mail sync failed.");
             }
         }
+    }
+
+    private async Task MarkReauthenticationAsync(Guid accountId, CancellationToken cancellationToken)
+    {
+        var account = await db.MailAccounts.SingleOrDefaultAsync(item => item.Id == accountId, cancellationToken);
+        if (account is null)
+            return;
+        account.Status = MailAccountStatus.NeedsReauthentication;
+        account.UpdatedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync(cancellationToken);
     }
 
     private async Task SyncAccountAsync(Guid accountId, CancellationToken cancellationToken)
     {
         var account = await db.MailAccounts
             .SingleOrDefaultAsync(item => item.Id == accountId, cancellationToken);
-        // Account may have been deactivated or deleted after the poll listed it.
-        if (account is null || !account.IsActive)
+        if (account is null || account.Status != MailAccountStatus.Active)
             return;
-        var endpoint = new MailServerEndpoint(account.ImapHost, account.ImapPort, account.ImapSecurity);
-        var password = credentials.Unprotect(account.EncryptedPassword);
+        ResolvedCredential resolved;
+        try
+        {
+            resolved = await credentials.ResolveAsync(accountId, cancellationToken);
+        }
+        catch (CryptographicException ex)
+        {
+            logger.LogError(ex, "Mail sync failed because the stored credential cannot be decrypted.");
+            await MarkReauthenticationAsync(accountId, cancellationToken);
+            return;
+        }
+        catch (InvalidOperationException ex) when (ex.Message is "credential_missing" or "mail_account_not_found" or "mail_account_disabled")
+        {
+            logger.LogWarning(ex, "Mail sync skipped because the credential is unavailable.");
+            await MarkReauthenticationAsync(accountId, cancellationToken);
+            return;
+        }
+
+        var endpoint = new MailServerEndpoint(resolved.Account.ImapHost, resolved.Account.ImapPort, resolved.Account.ImapSecurity);
 
         foreach (var (folderId, fullName) in await GetSyncableFoldersAsync(accountId, cancellationToken))
         {
-            // Acquire the folder lock BEFORE opening the IMAP connection so a second
-            // instance waits without holding an unnecessary authenticated connection.
-            await using var folderLock = await FolderAdvisoryLock.AcquireAsync(db, folderId, cancellationToken);
             try
             {
-                // Re-check under the lock: deletion holds this lock while removing
-                // the account, so a missing account here means deletion won.
                 if (!await db.MailAccounts.AnyAsync(item => item.Id == accountId, cancellationToken))
                     return;
                 await connections.WithImapAsync(
                     endpoint,
-                    account.Username,
-                    password,
+                    resolved.Username,
+                    resolved.Password,
                     "SyncFolder",
                     async (client, ct) =>
                     {
@@ -94,19 +117,19 @@ public sealed class MailFolderSyncService(
             {
                 throw;
             }
+            catch (MailConnectionException ex) when (ex.Failure == MailConnectionFailure.Authentication)
+            {
+                logger.LogWarning(ex, "Mail sync failed because the provider rejected the credential.");
+                await MarkReauthenticationAsync(accountId, cancellationToken);
+                return;
+            }
             catch (Exception ex)
             {
-                logger.LogWarning(ex,
-                    "Mail sync failed for account {AccountId}, folder {FolderId}, host {Host}.",
-                    account.Id,
-                    folderId,
-                    account.ImapHost);
+                logger.LogWarning(ex, "Mail sync failed while communicating with the provider.");
             }
         }
     }
 
-    // Folders eligible for sync: user-enabled and last seen by discovery.
-    // Unavailable (stale) folders are never synchronized; their mail is kept.
     internal async Task<IReadOnlyList<(Guid FolderId, string FullName)>> GetSyncableFoldersAsync(
         Guid accountId,
         CancellationToken cancellationToken)
@@ -120,8 +143,6 @@ public sealed class MailFolderSyncService(
             .ToList();
     }
 
-    // Testable core: no IMAP connection management, no advisory lock.
-    // The caller owns the lock and the open remote folder.
     internal async Task SyncFolderCoreAsync(
         Guid accountId,
         Guid folderId,
@@ -138,6 +159,7 @@ public sealed class MailFolderSyncService(
             state = new SyncState
             {
                 Id = Guid.NewGuid(),
+                MailAccountId = accountId,
                 MailFolderId = folderId,
                 UidValidity = remote.UidValidity
             };
@@ -168,19 +190,11 @@ public sealed class MailFolderSyncService(
                 }
                 catch (Exception ex)
                 {
-                    logger.LogWarning(ex, "Failed to remove obsolete attachment for folder {FolderId}.", folderId);
+                    logger.LogWarning(ex, "Failed to remove an obsolete attachment.");
                 }
             }
         }
 
-        // Scan cursor invariants (persisted in NextUidScanStart, a long):
-        // - LastUid = highest UID safely processed; never advanced over unsearched ranges.
-        // - The cursor only moves forward over UID ranges SEARCH actually covered,
-        //   or past fully processed UIDs, so every UID above LastUid stays reachable.
-        // - A fully scanned 32-bit UID space is the one-past-end sentinel
-        //   (uint.MaxValue + 1); the derived IMAP search point (cursor - 1)
-        //   always stays inside uint range, so there is no wraparound.
-        // - New arrivals always land at or beyond UidNext, hence ahead of the cursor.
         var afterUid = state.NextUidScanStart <= 1
             ? 0u
             : (uint)Math.Min(state.NextUidScanStart - 1, (long)uint.MaxValue);
@@ -226,7 +240,6 @@ public sealed class MailFolderSyncService(
         await ReconcileFlagsIfDueAsync(folderId, state, remote, cancellationToken);
         await db.SaveChangesAsync(cancellationToken);
 
-        // Post-commit: FCM failures must never roll back committed state. Inbox only.
         if (newMail.Count > 0 && localFolder.FolderType == MailFolderType.Inbox)
             await NotifyNewMailAsync(accountId, folderId, newMail, cancellationToken);
     }
@@ -237,33 +250,14 @@ public sealed class MailFolderSyncService(
         IReadOnlyList<NewMailCandidate> candidates,
         CancellationToken cancellationToken)
     {
-        Guid ownerId;
-        try
-        {
-            ownerId = await db.MailAccounts
-                .Where(account => account.Id == accountId)
-                .Select(account => account.UserId)
-                .SingleAsync(cancellationToken);
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(ex, "Skipped push notification for account {AccountId}: owner lookup failed.", accountId);
-            return;
-        }
-
         foreach (var candidate in candidates)
         {
             try
             {
                 await push.NotifyNewMailAsync(
                     new NewMailNotification(
-                        ownerId,
-                        candidate.MailId,
                         accountId,
+                        candidate.MailId,
                         folderId,
                         string.IsNullOrWhiteSpace(candidate.FromDisplayName) ? candidate.FromAddress : candidate.FromDisplayName,
                         candidate.Subject),
@@ -275,23 +269,16 @@ public sealed class MailFolderSyncService(
             }
             catch (Exception ex)
             {
-                logger.LogWarning(ex, "Push notification failed for mail {MailId}. Sync state is unaffected.", candidate.MailId);
+                logger.LogWarning(ex, "Push notification failed. Sync state is unaffected.");
             }
         }
     }
 
     private sealed record NewMailCandidate(Guid MailId, string FromAddress, string FromDisplayName, string Subject);
 
-    // Cursor advance without wraparound. The one-past-end sentinel
-    // (uint.MaxValue + 1) is representable because the cursor is a long;
-    // it must not be clamped back to uint.MaxValue, or a fully synced
-    // mailbox would rescan its last UID forever.
     private static long CursorAfter(uint scannedMaxUid) =>
         scannedMaxUid == uint.MaxValue ? (long)uint.MaxValue + 1 : (long)scannedMaxUid + 1;
 
-    // IMAP is the source of truth for \Seen. Reconciliation runs at most every
-    // FlagSyncIntervalSeconds per folder and only stamps LastFlagSyncAt after a
-    // fully successful pass. Failures never touch LastUid or checkpoints.
     private async Task ReconcileFlagsIfDueAsync(
         Guid folderId,
         SyncState state,
@@ -314,7 +301,7 @@ public sealed class MailFolderSyncService(
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "Flag reconciliation failed for folder {FolderId}.", folderId);
+            logger.LogWarning(ex, "Flag reconciliation failed.");
         }
     }
 
@@ -415,9 +402,7 @@ public sealed class MailFolderSyncService(
 
             if (summary.Size > (ulong)options.MaxMessageBytes)
             {
-                logger.LogWarning(
-                    "Skipped oversized message {Uid} ({Size} bytes) for account {AccountId}, folder {FolderId}.",
-                    uid.Id, summary.Size, accountId, folderId);
+                logger.LogWarning("Skipped an oversized message ({Size} bytes).", summary.Size);
                 await SkipAndAdvanceAsync(state, folderId, uid.Id, "oversized", "Message exceeds MaxMessageBytes.",
                     accountId, folderId, cancellationToken);
                 return null;
@@ -431,7 +416,7 @@ public sealed class MailFolderSyncService(
                 accountId,
                 folderId,
                 summary.IsSeen);
-            var mail = new Mail
+            var mail = new MailEntity
             {
                 Id = Guid.NewGuid(),
                 MailAccountId = incoming.MailAccountId,
@@ -456,7 +441,7 @@ public sealed class MailFolderSyncService(
                 var remaining = options.MaxMessageAttachmentBytes - messageAttachmentBytes;
                 if (remaining <= 0)
                 {
-                    logger.LogWarning("Skipped oversized attachment for account {AccountId}, folder {FolderId}.", accountId, folderId);
+                    logger.LogWarning("Skipped an oversized attachment.");
                     continue;
                 }
 
@@ -478,7 +463,7 @@ public sealed class MailFolderSyncService(
                 }
                 catch (AttachmentLimitExceededException)
                 {
-                    logger.LogWarning("Skipped oversized attachment for account {AccountId}, folder {FolderId}.", accountId, folderId);
+                    logger.LogWarning("Skipped an oversized attachment.");
                     continue;
                 }
 
@@ -486,6 +471,7 @@ public sealed class MailFolderSyncService(
                 mail.Attachments.Add(new Attachment
                 {
                     Id = attachmentId,
+                    MailAccountId = accountId,
                     MailId = mail.Id,
                     FileName = attachment.FileName,
                     ContentType = attachment.ContentType,
@@ -524,9 +510,7 @@ public sealed class MailFolderSyncService(
         catch (Exception ex) when (SyncFailurePolicy.Classify(ex) == SyncFailureDisposition.Skip)
         {
             await CleanupCreatedFilesAsync(createdPaths);
-            logger.LogWarning(ex,
-                "Skipping message {Uid} for account {AccountId}, folder {FolderId}: {Error}.",
-                uid.Id, accountId, folderId, ex.GetType().Name);
+            logger.LogWarning(ex, "Skipped a message because it could not be processed.");
             try
             {
                 await SkipAndAdvanceAsync(state, folderId, uid.Id, "failed", ex.GetType().Name,
@@ -544,9 +528,7 @@ public sealed class MailFolderSyncService(
         {
             state.LastUid = checkpointBefore;
             await CleanupCreatedFilesAsync(createdPaths);
-            logger.LogWarning(ex,
-                "Transient sync failure for message {Uid} for account {AccountId}, folder {FolderId}: {Error}. Retrying next poll.",
-                uid.Id, accountId, folderId, ex.GetType().Name);
+            logger.LogWarning(ex, "Transient message sync failure. Retrying on the next poll.");
             throw;
         }
     }
@@ -578,6 +560,7 @@ public sealed class MailFolderSyncService(
             db.SyncSkippedUids.Add(new SyncSkippedUid
             {
                 Id = Guid.NewGuid(),
+                MailAccountId = accountId,
                 MailFolderId = folderId,
                 Uid = uid,
                 Reason = MailFieldNormalizer.Truncate($"{kind}: {detail}", 500),
@@ -588,9 +571,7 @@ public sealed class MailFolderSyncService(
         if (uid > state.LastUid)
             state.LastUid = uid;
         await db.SaveChangesAsync(cancellationToken);
-        logger.LogWarning(
-            "Marked UID {Uid} as skipped ({Kind}) for account {AccountId}, folder {FolderId}.",
-            uid, kind, accountId, logFolderId);
+        logger.LogWarning("Marked a message as skipped ({Kind}).", kind);
     }
 
     private async Task CleanupCreatedFilesAsync(List<string> paths)
@@ -608,7 +589,7 @@ public sealed class MailFolderSyncService(
         }
     }
 
-    private void Detach(Mail mail)
+    private void Detach(MailEntity mail)
     {
         foreach (var attachment in mail.Attachments)
             db.Entry(attachment).State = EntityState.Detached;

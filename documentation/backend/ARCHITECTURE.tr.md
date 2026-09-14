@@ -2,89 +2,70 @@
 
 > English: [ARCHITECTURE.en.md](ARCHITECTURE.en.md)
 
-## Proje bağımlılık yapısı
+## Kimlik
 
-```mermaid
-flowchart LR
-    Api["MailClient.Api\n(Web SDK, minimal API)"] --> App["MailClient.Application\n(arayüzler, seçenekler, record'lar)"]
-    Api --> Infra["MailClient.Infrastructure\n(EF Core, MailKit, Firebase)"]
-    Infra --> App
-    App --> Domain["MailClient.Domain\n(varlıklar, enumlar)"]
-    Infra --> Domain
+`MailAccount` kimliği doğrulanan asıl varlıktır. Yeni backend içinde uygulama User'ı, rol, kayıt, onay, admin yönetimi, parola hash'i veya UserId sahipliği yoktur. Her posta kutusu kendi credential, session, klasör, posta, ek, cihaz kaydı, gönderim işlemi ve audit kayıtlarına sahiptir.
+
+Access JWT içindeki `sub`, `MailAccountId` değeridir. Kalıcı giriş deneyimi kısa ömürlü access JWT ve dönen refresh session ile sağlanır. PostgreSQL yalnız refresh-token hash'ini tutar. Posta sağlayıcı credential'ı ayrı güvenlik kavramıdır ve ASP.NET Core Data Protection ile şifrelenir.
+
+## Katmanlar
+
+```text
+MailClient.Domain          yalnız entity ve enumlar
+        ↑
+MailClient.Application     sözleşmeler, DTO'lar, discovery modeli
+        ↑
+MailClient.Infrastructure  EF Core, PostgreSQL, MailKit, DNS/HTTP, depolama
+        ↑
+MailClient.Api             DI, JWT, middleware, endpoint, OpenAPI
 ```
 
-- `Domain`'in referansı yok: her yerden güvenle referans verilir; yalnızca
-  `Entities/` (9 sınıf) ve `Enums/` (`UserRole`, `UserStatus`,
-  `MailSecurity`, `MailFolderType`, `SendOperationStatus`) içerir.
-- `Application` yalnız `Domain`'e dayanır: tüm dikişler burada:
-  `Interfaces/` (hesap, klasör, okuma, sorgu, gönderim, cihazlar, push, auth,
-  admin, oturum, JWT üretici, sağlık, depolama, parola koruyucu, bağlantı
-  test edici, klasör gezgini, DNS/host doğrulayıcılar), `Sync/`
-  (`MailSyncOptions`, `SendRequestLimits`), `Auth/PasswordPolicy`,
-  `Validation/`, `Network/` (`MailServerEndpoint`, `MailConnectionFailure`,
-  `SmtpDeliveryException`), `ServiceResult` + `ServiceOutcome`.
-- `Infrastructure` dikişleri gerçekler: `Persistence/` (`AppDbContext`,
-  `Configurations/`, `DbUniqueViolation`), `Services/` (hesap, klasör,
-  senkron, okuma, sorgu, gönderim, kilitler, hata politikası, idempotency
-  deposu), `Email/` (MailKit adaptörleri, builder'lar, mapper'lar,
-  sınıflandırıcılar), `Push/` (Firebase zinciri + cihazlar), `Storage/`
-  (`LocalFileStorage`, `BoundedWriteStream`), `Network/` (DNS, SSRF
-  doğrulayıcı), `Identity/` (auth, admin, oturum), `Security/` (Data
-  Protection koruyucu).
-- `Api` yalnızca HTTP'tir: `Program.cs` bağlantıları + uç nokta eşleyiciler
-  (`Auth/`, `Accounts/`, `Mails/`, `Devices/`, `Health/`). İş mantığı yok.
+Domain; EF Core, MailKit, ASP.NET Core veya ağ bağımlılığı taşımaz. Application yalnız Domain'e bağlıdır. Infrastructure dış bağlantıları ve persistence'ı gerçekler. API servisleri birleştirir ve HTTP sözleşmelerini eşler.
 
-## Dependency-injection sınırları
+## Discovery ve bağlantı
 
-`Program.cs` soyutlamaları istek başına scoped gerçeklemelerle kaydeder
-(`IMailAccountService → MailAccountService`, …); singleton'lar durumsuz veya
-doğrulanmış seçeneklerdir (`MailSyncOptions`, `FirebaseOptions`,
-`IJwtTokenIssuer → JwtTokenIssuer`, `IDnsResolver`,
-`IOutboundHostValidator`); senkron işçisi ve push dağıtımı kendi scope'unu
-açar (`IServiceScopeFactory`), arka plan işi istek `DbContext`'ini asla
-paylaşmaz.
+Otomatik keşif sırası:
 
-Temel arayüz → gerçekleme tablosu:
+1. bilinen sağlayıcı kataloğu
+2. DNS SRV
+3. Thunderbird biçimli autoconfiguration
+4. Microsoft Autodiscover
+5. kontrollü güvenli hostname heuristic'leri
 
-| Soyutlama | Gerçekleme | Not |
-|---|---|---|
-| `IAuthenticationService` | `AuthenticationService` | kayıt/giriş, unique-çatışma eşleme |
-| `IUserAdministrationService` | `UserAdministrationService` | listele/oluştur/statü/sıfırla, `TokenVersion` artırır |
-| `IUserSessionValidator` | `UserSessionValidator` | istek başına oturum kontrolü |
-| `IJwtTokenIssuer` | `JwtTokenIssuer` | `sub`/`role`/`tv` claim'leri, 12 sa |
-| `IMailAccountService` / `IMailFolderService` | aynı adlı | hesaplar, keşif, yenileme |
-| `IMailQueryService` / `IMailReadService` | aynı adlı | liste/detay/indir, çift yönlü okundu |
-| `IMailSendService` | `MailSendService` + `SendOperationStore` | MIME + SMTP + idempotency |
-| `IMailTransport` | `MailKitMailTransport` | MailKit ile SMTP |
-| `IMailFolderClient` | `MailFolderClient` | kapsamlı IMAP klasör kullanımı (+ güncelleme kilidi) |
-| `IMailFolderExplorer` / `IMailConnectivityTester` | `MailKit*` | keşif / test |
-| `ICredentialProtector` | `DataProtectionCredentialProtector` | kutu parola şifreleme |
-| `IFileStorage` | `LocalFileStorage` | kaçış korumalı yerel dosyalar |
-| `IPushNotificationService` | `FirebasePushNotificationService` / `NoOp…` | enabled bayrağı seçer |
-| `IFirebaseGateway` | `FirebaseAdminGateway` | sonuç → koru/sil eşleme |
-| `IFirebaseMessageSender` | `FirebaseMessageSender` | 500'lü parça, `SendEachAsync` |
-| `IDeviceTokenService` | `DeviceTokenService` | kaydet/transfer/sil |
-| `IHealthProbe` | `DatabaseHealthProbe` | Postgres kontrolü |
-| `IOutboundHostValidator` / `IDnsResolver` | `OutboundHostValidator` / `SystemDnsResolver` | SSRF katmanı |
+Adaylar yalnız desteklenen güvenli mod ve portları kullanır. MailKit bağlantısından önce hostname ve çözülen tüm adresler outbound-host doğrulamasından geçer. TLS sertifika doğrulaması açıktır. Discovery HTTP istemcileri redirect izlemez. İlk doğrulanan aday kazanır.
 
-## Dış bağımlılıklar
+Başarılı discovery, rastgele ve opaque ID arkasında geçici olarak sunucuda tutulur. Başarısızlık HTTP 422, `code=mail_discovery_failed` ve `manualSetupAvailable=true` döndürür; hesap veya credential yazılmaz.
 
-PostgreSQL (durum), IMAP sunucuları (doğruluk kaynağı), SMTP sunucuları
-(teslim), FCM (push), yerel dosya sistemi (ekler, anahtar halkası). Arka
-plan işi süreç-içi hosted servistir; Redis, kuyruk veya nesne deposu yoktur,
-bu yüzden ölçek genişletme paylaşımlı Postgres (advisory lock'lar koordine
-eder) + paylaşımlı depolama ve paylaşımlı Data Protection halkası gerektirir.
+Manuel kurulum yalnız discovery'yi atlar. Persistence öncesi host sözdizimi, DNS/IP güvenliği, transport modu, TLS, IMAP auth ve SMTP auth aynı şekilde doğrulanır. Otomatik ve manuel yollar aynı MailAccount/MailCredential/MailSession modelinde birleşir.
 
-## Yaşam döngüleri
+## Persistence
 
-HTTP hattı, auth, senkron, gönderim, push ve cihaz akışları
-[BACKEND_GUIDE.tr.md](BACKEND_GUIDE.tr.md) (§3, §6, §8, §9, §12) bölümünde
-diyagramlıdır. Veritabanı ER diyagramı: §11.
+Yeni backend tek temiz Initial migration kullanır ve varsayılan DB adı `mailclient_v2` olur. Legacy migration'lar `legacy-backend/` altında değişmeden kalır.
 
-## Veri yaşam döngüsü özeti
+Temel constraint'ler:
 
-IMAP sunucusu → (senkron işçisi) → Postgres + disk → (HTTP) → Flutter;
-Flutter → (gönderim ucu) → SMTP sunucusu (+ Sent APPEND → yeniden senkron);
-yeni Inbox satırları → (commit sonrası) → FCM → Flutter yeniden çeker.
-Parolalar tek yön akar: istek → Data Protection → DB; yalnızca kısa ömürlü
-posta operasyonlarında çözülür.
+- benzersiz normalize posta adresi
+- hesap başına benzersiz credential auth metodu
+- benzersiz refresh-token hash'i
+- hesap başına benzersiz klasör
+- klasör başına benzersiz UID
+- benzersiz `(MailAccountId, IdempotencyKey)` gönderim işlemi
+- benzersiz `(MailAccountId, Token)` cihaz kaydı
+
+## Posta kapsamı ve arka plan işi
+
+Korumalı endpoint'ler MailAccountId değerini `ICurrentMailAccount` üzerinden alır. Klasör, posta, ek, cihaz ve gönderim sorguları hesap ID'siyle sınırlandırılır. Başka hesaba ait ID, 404 döndürür.
+
+Başarılı bağlantı, posta kutusunun tümünü indirmeyi beklemeden initial sync kuyruğuna istek bırakır. Süreç içi worker bilinçli olarak küçüktür; sağlayıcıya özel OAuth2 ve legacy incremental sync'in tam portu ayrı iştir.
+
+## Güvenlik ve gözlemlenebilirlik
+
+Outbound doğrulama localhost, loopback, private, link-local, multicast ve güvensiz hedefleri engeller. Ek yolları yapılandırılmış storage kökü altında tutulur. SMTP alanlarında CR/LF injection reddedilir. Rate limit JWT MailAccountId veya pre-auth IP ile bölünür.
+
+Serilog JSON kayıtlarını `logs/app-*.json` ve `logs/http-*.json` dosyalarına yazar. Correlation ID, `X-Correlation-ID` ile döner. Audit satırları nullable MailAccountId kullanır. Parola, refresh token, OAuth materyali, client secret, token ve credential alanları recursive biçimde maskelenir.
+
+## Legacy sınıflandırması
+
+- REUSE/ADAPT: Data Protection deseni, MailKit bağlantı yaklaşımı, outbound host kuralları, attachment path confinement, structured logging düzeni.
+- REWRITE: identity, credentials, sessions, discovery, account connection, current-account context, schema, endpointler.
+- REMOVE: User, rol/statü, application register/login, approval/admin yönetimi, token version ve UserId sahipliği.

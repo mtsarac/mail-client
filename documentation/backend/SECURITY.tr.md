@@ -2,154 +2,34 @@
 
 > English: [SECURITY.en.md](SECURITY.en.md)
 
-Aşağıdaki her kontrol kodda mevcuttur. Temenni yok.
+## Kimlik doğrulama
 
-## Kimlik doğrulama ve oturumlar
+MailAccount principal'dır. JWT issuer, audience, imza anahtarı ve süreyi doğrular; `sub`, MailAccountId değeridir. Access süresi yapılandırılabilir. Kalıcı MailSession refresh token'ları kriptografik rastgele üretilir, yalnız SHA-256 hash olarak saklanır, refresh sırasında döndürülür ve logout ile iptal edilir. Provider credential'ı session token'ından ayrıdır ve ASP.NET Core Data Protection ile şifrelenir.
 
-- JWT bearer: issuer, audience, imza anahtarı ve süre doğrulanır; `Jwt:Key`
-  32 karakterden kısaysa başlatma hata verir. Claim'ler: `sub` (kullanıcı
-  id), `role`, `tv` (TokenVersion); 12 saat ömür; HMAC-SHA256.
-- İstek başına oturum doğrulama (`UserSessionValidator`): kullanıcı var
-  olmalı, `Active` olmalı, güncel `TokenVersion` sunmalı. Rol claim'i her
-  istekte DB'den yeniden yazılır; statü/versiyon değişimi oturumları anında
-  öldürür.
-- Parolalar: Identity `PasswordHasher<User>` (PBKDF2), 8-128 karakter.
-  Giriş/kayıt hataları geneldir (hep-`202` kayıt sözleşmesinin ötesinde
-  kullanıcı sayımı yok).
-- Kayıt modları (`Registration:Mode`): `Open` / `ApprovalRequired`
-  (varsayılan) / `Disabled`. Admin onay/kapama/açma + parola sıfırlama
-  `TokenVersion` artırır.
+Password ve AppSpecificPassword uygulanmıştır. OAuth2 storage modeli hazırdır; provider authorization/callback entegrasyonları deferred'dır. Sahte generic OAuth akışı yoktur.
 
-## Yetkilendirme ve sahiplik
+## Hesap izolasyonu
 
-- Roller `User`/`Admin`; admin rotaları `Admin` ister.
-- **Admin posta sahipliğini atlamaz**: her posta/hesap/klasör/cihaz sorgusu
-  çağıran `UserId`'ye filtrelenir. Yabancı id'ler `403` değil `404` döner
-  (varlık sızdırılmaz).
-- Cihaz silme ve token temizliği yazma sırasında sahipliği yeniden kontrol eder.
+Korumalı API'ler MailAccountId değerini `ICurrentMailAccount` üzerinden alır; request account ID'sine güvenmez. Folder, mail, attachment, device ve send kayıtları MailAccountId ile filtrelenir. Başka hesaba ait ID, 404 döndürür.
 
-## Rate limiting
+## Discovery ve SSRF
 
-Sabit pencere, aşımda `429` (`RejectionStatusCode`): `auth` istemci IP başına
-(kayıt/giriş, 20/dk); `mail-operations` giriş yapmış kullanıcı başına
-(test/yenileme/gönderim/okundu/cihaz kayıt+silme, 20/dk). Gerçek istemci IP,
-yalnızca güvenilir proxy yapılandırmasında forwarded header'dan gelir.
+Sıra: bilinen provider, DNS SRV, autoconfig, Microsoft Autodiscover, kontrollü heuristic. Discovery HTTP istemcileri sonlu timeout kullanır ve otomatik redirect izlemez. Aday ve manuel hostlar protokol auth öncesi DNS/adres kontrolünden geçer. Bağlantılar doğrulanmış IP'yi kullanırken TLS sertifika/SNI doğrulaması için özgün hostname'i korur; böylece ikinci DNS sorgusu ve DNS-rebinding TOCTOU önlenir. Localhost, loopback, private IPv4, link-local, multicast, IPv6 unique-local ve güvensiz hedefler reddedilir. Yalnız `SslOnConnect` ve `StartTls` modellenir. MailKit sertifika doğrulaması kapatılmaz.
 
-## SSRF / dış ağ güvenliği
+Manuel kurulum yalnız discovery'yi atlar. Host validation, DNS/IP, TLS, IMAP auth veya SMTP auth kontrollerini atlayamaz.
 
-Kullanıcı denetimli IMAP/SMTP hostları her bağlantıdan önce
-`OutboundHostValidator`'dan geçer (`MailConnectionHelper.ResolveAllowedAsync`):
+## Saklanan veri
 
-1. Literal kontrol: boş, `localhost` veya IP literal → loopback/özel aralıklar
-   anında reddedilir.
-2. Yoksa tüm adresler DNS ile çözülür (`IDnsResolver`); çözülememe ret demektir.
-3. Çözülen her adres kontrol edilir: IPv4'te loopback, özel (10/8,
-   172.16/12, 192.168/16), link-local (169.254/16), CGNAT (100.64/10),
-   multicast, rezerv/broadcast, dokümantasyon/kıyaslama/aktarma aralıkları;
-   IPv6'da multicast, link-local (fe80::/10), unique-local (fc00::/7),
-   dokümantasyon; IPv4-eşlemeli IPv6 önce normalize edilir.
-4. Bağlantıda doğrulanan IP kullanılır (helper yolunda TOCTOU yeniden çözüm
-   boşluğu yok).
+Credential materyali persistence öncesi şifrelenir ve response'a girmez. Refresh token hash saklanır. Attachment yolları canonical hale getirilir ve storage kökü altında kalmak zorundadır. Send alanlarında CR/LF header injection reddedilir. Send idempotency, MailAccountId ve key ile unique; request fingerprint SHA-256'dır.
 
-Neden önemli: kutu host alanı saldırgan denetimli girdidir; bu kontrol
-yoksa sunucu iç ağları yoklamaya zorlanabilir. Doğrulayıcı testlerle kapsanır
-(`OutboundHostValidatorTests`); testlerde GreenMail/yerel sunucular kullanılır.
+## Rate limiting ve hatalar
 
-## Taşıma güvenliği
+Global fixed-window limit, authenticated trafikte MailAccountId; pre-auth trafikte remote IP ile bölünür. Beklenen request, discovery ve provider hataları stabil kodlu ProblemDetails kullanır. Raw MailKit/network exception'ları API sözleşmesi değildir.
 
-`MailSecurity`: `SslOnConnect`, `StartTls`, `None`. `None`, Development/Test
-dışında `security` doğrulama hatasıyla reddedilir: production posta trafiği
-hep şifrelidir. (MailKit varsayılan sertifika doğrulaması geçerlidir; bunu
-gevşeten özel callback yok.)
+## Log ve audit
 
-## Data Protection ve parola saklama
+Serilog JSON kayıtları `logs/app-*.json` ve `logs/http-*.json` dosyalarına yazar. Correlation ID `X-Correlation-ID` ile taşınır; account ID auth sonrası structured scope'a girer. V2 middleware request body loglamaz. Audit satırları nullable MailAccountId kullanır. Recursive redaction; password, appSpecificPassword, accessToken, refreshToken, providerRefreshToken, authorizationCode, codeVerifier, clientSecret, token, credential ve secret alanlarını kapsar.
 
-- Kutu parolaları ASP.NET Core Data Protection ile şifreli
-  (`DataProtectionCredentialProtector`); halka `DataProtection:KeyPath`'te
-  (varsayılan `data/protection-keys`, git'te yok).
-- Anahtarlar yeniden başlatmalarda yaşamalı ve kalıcı paylaşımlı birimde tüm
-  örneklerce paylaşılmalı, sıkı dosya izinleriyle.
-- Production: halka X509 PFX ile şifreli (`CertificatePath` +
-  `CertificatePassword`, env/mount ile, asla commit edilmez); dev dışı
-  başlatma yokluğunda/bozukluğunda/private-key yokluğunda hızlı hata verir.
-  Dev/Test atlayabilir.
-- Parolalar yalnız kısa ömürlü posta operasyonlarında çözülür; API yanıtları
-  asla parola veya depolama yolu içermez.
+## Operasyon gereksinimleri
 
-## Ekler ve istek boyutları
-
-- Disk yolları yalnız GUID parçalarından kurulur; `LocalFileStorage`
-  `GetFullPath` + kök-önek kontrolüyle sabitler (kaçış → hata). Dosya adları
-  dosya sistemine hiç değmez (giden adlar 255/150 karaktere normalize).
-- Gelen üst sınırlar: ek başına 25 MiB, mesaj başına ek toplamı 50 MiB,
-  mesaj 100 MiB (SIZE önden bakış, ölçüm için gövde çekilmez),
-  `MaxMessageBytes ≥ MaxMessageAttachmentBytes ≥ MaxAttachmentBytes` doğrulanır.
-- Gönderim sınırları: gövde ≤ 1M karakter, ≤ 20 ek; Kestrel + multipart
-  limitleri aynı sayılardan türetilir (+1 MiB çerçeve), uç nokta uygulamanın
-  reddedeceğini reddeder. Proxy limitleri eşleşmeli.
-
-## Gönderim idempotency'si (çift gönderim önleme)
-
-`SendOperations` kullanıcı+anahtar başına unique, işlemsel claim
-(`pg_advisory_xact_lock`), SHA-256 içerik parmak izi. Aynı anahtar+aynı
-içerikte kayıtlı sonucu tekrar oynatır; yeniden kullanım çakışmasında `409`;
-`DeliveryUnknown` sondur: SMTP kabul etmiş olabileceğinde uygulama asla
-otomatik yeniden göndermez. Bkz. [BACKEND_GUIDE.tr.md](BACKEND_GUIDE.tr.md) §9.
-
-## Push kimlik bilgisi yönetimi
-
-Fail-fast başlatma doğrulaması (yalnızca yerel, ağ yok): proje kimliği
-zorunlu, servis hesabı JSON'u var/ayrıştırılabilir/`type: service_account`
-olmalı, e-posta + geçerli PEM private key içermeli. Çözüm sırası: açık yol →
-env → bilinen ADC → `GetApplicationDefault()`. Sırlar loglanmaz. Yalnızca
-`Unregistered` token siler. Sunucu JSON'u Flutter'a gömülmemelidir.
-
-## Proxy yönetimi
-
-`X-Forwarded-For/Proto` yalnız `Proxy:KnownProxies/KnownNetworks` doluyken ve
-yalnız o ağlardan dikkate alınır (ayrıştırılmış IP/CIDR; bozuk girdiler
-yoksayılır). Yoksa doğrudan bağlantı değerleri kullanılır; güvenilmez
-ağlardan sahte başlıkların etkisi yoktur.
-
-## Tedarik zinciri ve statik analiz
-
-- CI NuGet denetimi (`dotnet list … --vulnerable --include-transitive`)
-  zafiyetli pakette (geçişliler dahil) derlemeyi düşürür.
-- Backend push/PR'larında + haftalık zamanlamada CodeQL C#.
-- `TreatWarningsAsErrors` (+ CS0618 pragma'sı tek FCM `Token` kullanımına
-  kapsamlı, gerekçe yorumlu: kayıt tokenları FID değildir).
-
-## Hata yönetimi
-
-Yakalanmayan hatalar → önce sunucu tarafında bir kez loglanır (tip, mesaj,
-stack, metot/yol, kullanıcı, korelasyon id) → `UseExceptionHandler` ile
-ProblemDetails (istemciye stack trace yok). Doğrulama/auth/limit/posta/sağlayıcı hataları
-[API_REFERENCE.tr.md](API_REFERENCE.tr.md) uyarınca 400/401/403/429/404/409/502
-eşlenir. Senkron hataları sunucu tarafında loglanır (kullanıcı id + host,
-asla parola); push hataları commit edilmiş duruma dokunmaz.
-
-## Loglama ve audit gizliliği
-
-- HTTP istek/yanıt gövdeleri yapısal JSON'a ayrıştırılır ve özyineli
-  redakte edilir (`password`, `token`, `secret`, `apiKey`, … →
-  `"[REDACTED]"`, büyük/küçük harf duyarsız). Authorization başlıkları ve
-  çerezler asla loglanmaz. Multipart gönderilerde yalnızca alan adları +
-  ek dosya adı/tipi/boyutu; posta gövdeleri ve dosya baytları loga girmez.
-- Audit satırları (`AuditLogs`) yalnızca kimlik/eposta/host/bayrak taşır —
-  asla parola, hash, token veya mesaj içeriği. Başarısız girişler ve
-  salt-okunur GET'ler audit yazmaz.
-- Her istek bir korelasyon id taşır (`X-Correlation-ID`, doğrulamalı, en
-  çok 64 karakter); yanıtta geri döner, loglara + audit satırlarına
-  işlenir. Bkz. [BACKEND_GUIDE.tr.md](BACKEND_GUIDE.tr.md) §13.
-
-## Dev kolaylıkları vs production zorunlulukları
-
-| Development (gemiye alınmaz) | Production (zorunlu) |
-|---|---|
-| Düz HTTP, HTTPS yönlendirme yok | Güvenilir reverse proxy arkasında HTTPS |
-| Serbest CORS (`AllowAnyOrigin/Headers/Methods`) | CORS politikası yok (tarayıcılar varsayılan engelli) |
-| Commit'li config'de dev JWT anahtarı | Env/mount ile güçlü sır |
-| `MailSecurity.None` izinli | Yalnız şifreli posta taşıması |
-| Data Protection sertifikasız | X509 şifreli paylaşımlı halka |
-| Firebase kapalı | Sır-mount servis hesabı |
-| Swagger/OpenAPI map'li | Swagger yüzeyi yok |
+Production development JWT ve DB credential'larını değiştirmeli, Data Protection key'lerini korumalı kalıcı storage'da tutmalı, HTTPS'i doğru sonlandırmalı, CORS/proxy trust sınırlandırmalı ve reverse-proxy body limitlerini eşlemelidir. Yeni migration'lar `mailclient_v2` hedefler; legacy DB ve migration'lar ayrıdır.

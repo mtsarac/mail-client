@@ -1,21 +1,20 @@
-// Constrained audit action names. Use these instead of ad-hoc strings.
 namespace MailClient.Domain;
 
 public static class AuditActions
 {
-    public const string UserRegistered = "user.registered";
-    public const string UserLoggedIn = "user.logged-in";
-    public const string AdminUserCreated = "admin.user-created";
-    public const string AdminUserStatusChanged = "admin.user-status-changed";
-    public const string AdminPasswordReset = "admin.password-reset";
-    public const string MailAccountCreated = "mail-account.created";
-    public const string MailAccountUpdated = "mail-account.updated";
-    public const string MailAccountDeleted = "mail-account.deleted";
-    public const string MailAccountTested = "mail-account.tested";
-    public const string FolderRefreshRequested = "folder.refresh-requested";
-    public const string FolderSyncToggled = "folder.sync-toggled";
-    public const string MailSent = "mail.sent";
+    public const string MailAccountDiscoverySucceeded = "mail-account.discovery-succeeded";
+    public const string MailAccountDiscoveryFailed = "mail-account.discovery-failed";
+    public const string MailAccountManualSetupAttempted = "mail-account.manual-setup-attempted";
+    public const string MailAccountManualSetupSucceeded = "mail-account.manual-setup-succeeded";
+    public const string MailAccountConnected = "mail-account.connected";
+    public const string MailAccountAuthenticationFailed = "mail-account.authentication-failed";
+    public const string MailAccountReauthenticationRequired = "mail-account.reauthentication-required";
+    public const string MailSessionCreated = "mail-session.created";
+    public const string MailSessionRefreshed = "mail-session.refreshed";
+    public const string MailSessionRevoked = "mail-session.revoked";
+    public const string MailSyncRequested = "mail.sync-requested";
     public const string MailReadStateChanged = "mail.read-state-changed";
+    public const string MailSent = "mail.sent";
     public const string DeviceRegistered = "device.registered";
     public const string DeviceRemoved = "device.removed";
 }
