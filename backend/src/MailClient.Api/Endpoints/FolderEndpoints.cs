@@ -28,10 +28,13 @@ public static class FolderEndpoints
         }).WithName("RefreshFolders").WithSummary("Refresh mailbox folders").Produces(202).ProducesProblem(409).ProducesProblem(502);
         api.MapPost("/folders/{id:guid}/sync", async (Guid id, ICurrentMailAccount current, MailOperationsService service, InitialSyncQueue queue, AuditLogger audit, CorrelationContext correlation, CancellationToken ct) =>
         {
-            if (!await service.OwnsFolderAsync(current.MailAccountId, id, ct)) return Results.NotFound();
+            var folder = await service.GetFolderSyncAvailabilityAsync(current.MailAccountId, id, ct);
+            if (folder is null) return Results.NotFound();
+            if (!folder.IsAvailable)
+                return Results.Problem(statusCode: 409, extensions: new Dictionary<string, object?> { ["code"] = "mail_folder_unavailable" });
             await queue.EnqueueAsync(SyncRequest.Folder(current.MailAccountId, id), ct);
             await audit.WriteAsync(current.MailAccountId, AuditActions.MailSyncRequested, "MailFolder", id.ToString(), null, correlation.CorrelationId, ct);
             return Results.Accepted();
-        }).WithName("SyncFolder").WithSummary("Request folder synchronization").Produces(202).Produces(404);
+        }).WithName("SyncFolder").WithSummary("Request folder synchronization").Produces(202).Produces(404).ProducesProblem(409);
     }
 }
