@@ -30,7 +30,7 @@ public sealed class HttpBodyLoggingTests : IDisposable
     {
         var options = new HttpLoggingOptions();
         configure?.Invoke(options);
-        var logger = new LoggerConfiguration().WriteTo.Sink(new CapturingSink(_events)).CreateLogger();
+        var logger = new LoggerConfiguration().Enrich.FromLogContext().WriteTo.Sink(new CapturingSink(_events)).CreateLogger();
         return new HttpBodyLoggingMiddleware(next, Options.Create(options), logger);
     }
 
@@ -223,7 +223,8 @@ public sealed class HttpBodyLoggingTests : IDisposable
         context.User = new ClaimsPrincipal(new ClaimsIdentity(
             [new Claim(JwtRegisteredClaimNames.Sub, accountId.ToString())], "test"));
 
-        await middleware.InvokeAsync(context);
+        using (Serilog.Context.LogContext.PushProperty("MailAccountId", accountId.ToString()))
+            await middleware.InvokeAsync(context);
 
         var evt = SingleEvent();
         Assert.Contains("corr-123", evt.Properties["CorrelationId"].ToString());
