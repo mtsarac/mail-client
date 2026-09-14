@@ -217,8 +217,7 @@ public sealed class MailAccountService(
             catch (Exception ex)
             {
                 logger.LogWarning(ex,
-                    "Attachment cleanup failed after IMAP identity change for account {AccountId}.",
-                    accountId);
+                    "Attachment cleanup failed after IMAP identity change.");
             }
         }
 
@@ -294,8 +293,7 @@ public sealed class MailAccountService(
         catch (Exception ex)
         {
             logger.LogWarning(ex,
-                "Attachment cleanup failed after deleting account {AccountId}. Path retained for later sweep.",
-                accountId);
+                "Attachment cleanup failed after deleting account. Path retained for later sweep.");
         }
 
         return true;
@@ -332,8 +330,8 @@ public sealed class MailAccountService(
         catch (MailConnectionException ex)
         {
             logger.LogWarning(ex,
-                "Mail connection test failed ({Failure}) for account {AccountId} of user {UserId}.",
-                ex.Failure, accountId, userId);
+                "Mail connection test failed ({Failure}).",
+                ex.Failure);
             return new MailAccountTestResponse(false, ex.Message);
         }
     }
