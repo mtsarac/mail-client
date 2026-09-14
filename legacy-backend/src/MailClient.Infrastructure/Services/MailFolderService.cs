@@ -117,8 +117,7 @@ public sealed class MailFolderService(
         catch (Exception ex) when (ex is DbUpdateException or InvalidOperationException)
         {
             logger.LogError(ex,
-                "Failed to store discovered folders for account {AccountId} of user {UserId}.",
-                accountId, userId);
+                "Failed to store discovered folders.");
             return new MailFolderRefreshResponse(false, "Failed to store discovered folders.", []);
         }
     }

@@ -1,8 +1,5 @@
 using System.Diagnostics;
-using System.IdentityModel.Tokens.Jwt;
-using System.Security.Claims;
 using System.Text;
-using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Options;
 
@@ -59,26 +56,10 @@ public sealed class HttpLoggingMiddleware(
         (string? ContentType, JsonNode? Body, bool Truncated) response,
         long elapsedMs)
     {
-        using (logger.BeginScope(new Dictionary<string, object?>
-        {
-            ["CorrelationId"] = context.Items["CorrelationId"],
-            ["Method"] = context.Request.Method,
-            ["Path"] = context.Request.Path.Value,
-            ["Query"] = context.Request.QueryString.Value,
-            ["UserId"] = GetUserId(context.User),
-            ["StatusCode"] = context.Response.StatusCode,
-            ["ElapsedMs"] = elapsedMs,
-            ["RequestContentType"] = request.ContentType,
-            ["ResponseContentType"] = response.ContentType,
-            ["Request"] = request.Meta ?? ToLogValue(request.Body),
-            ["RequestTruncated"] = request.Truncated,
-            ["Response"] = ToLogValue(response.Body),
-            ["ResponseTruncated"] = response.Truncated,
-            ["RemoteIp"] = context.Connection.RemoteIpAddress?.ToString()
-        }))
-        {
-            logger.LogInformation("HTTP {Method} {Path} {StatusCode}", context.Request.Method, context.Request.Path.Value, context.Response.StatusCode);
-        }
+        logger.LogInformation(
+            "HTTP request completed with status {StatusCode} in {ElapsedMs} ms.",
+            context.Response.StatusCode,
+            elapsedMs);
     }
 
     private async Task<(string? ContentType, JsonNode? Body, bool Truncated, object? Meta)> CaptureRequestAsync(HttpRequest request)
@@ -167,10 +148,4 @@ public sealed class HttpLoggingMiddleware(
         _options.ExcludedPaths.Any(excluded =>
             path.StartsWithSegments(excluded, StringComparison.OrdinalIgnoreCase));
 
-    private static string? GetUserId(ClaimsPrincipal user)
-    {
-        var value = user.FindFirstValue(ClaimTypes.NameIdentifier)
-            ?? user.FindFirstValue(JwtRegisteredClaimNames.Sub);
-        return Guid.TryParse(value, out _) ? value : null;
-    }
 }
