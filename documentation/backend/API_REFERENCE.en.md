@@ -77,7 +77,7 @@ All routes below require bearer JWT and infer account from `sub`:
 | GET | `/api/folders` | list folders |
 | POST | `/api/folders/refresh` | enqueue folder refresh |
 | POST | `/api/folders/{id}/sync` | request folder sync |
-| GET | `/api/mails` | list up to 100 current-account messages |
+| GET | `/api/mails` | paged list of current-account messages (`folderId`, `isRead`, `hasAttachments`, `search`, `page`, `pageSize` ≤ 100 → `{ items, page, pageSize, total }`) |
 | GET | `/api/mails/{id}` | message detail |
 | PATCH | `/api/mails/{id}/read` | `{ "isRead": true }` |
 | GET | `/api/mails/{mailId}/attachments/{attachmentId}` | stream owned attachment |

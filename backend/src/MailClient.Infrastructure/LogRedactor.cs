@@ -6,8 +6,8 @@ public static class LogRedactor
 {
     private static readonly HashSet<string> SecretKeys = new(StringComparer.OrdinalIgnoreCase)
     {
-        "password", "appSpecificPassword", "accessToken", "refreshToken", "providerRefreshToken",
-        "authorizationCode", "codeVerifier", "clientSecret", "token", "credential", "secret"
+        "password", "appSpecificPassword", "newPassword", "currentPassword", "accessToken", "refreshToken", "providerRefreshToken",
+        "authorizationCode", "codeVerifier", "clientSecret", "token", "authorization", "credential", "secret", "encryptedMaterial", "apiKey"
     };
 
     public static string Redact(string json)
