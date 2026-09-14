@@ -10,8 +10,10 @@ using MailClient.Api.Auth;
 using MailClient.Api.Accounts;
 using MailClient.Api.Devices;
 using MailClient.Api.Mails;
+using MailClient.Api.Logging;
 using MailClient.Application.Interfaces;
 using MailClient.Application.Sync;
+using MailClient.Infrastructure.Audit;
 using MailClient.Infrastructure.Email;
 using MailClient.Infrastructure.Identity;
 using MailClient.Infrastructure.Network;
@@ -30,6 +32,9 @@ using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.OpenApi;
 
 var builder = WebApplication.CreateBuilder(args);
+SerilogSetup.Configure(builder);
+builder.Services.Configure<MailClient.Api.Logging.HttpLoggingOptions>(
+    builder.Configuration.GetSection("HttpLogging"));
 if (builder.Environment.IsDevelopment())
 {
     builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true, reloadOnChange: true);
@@ -74,6 +79,13 @@ builder.Services.AddRateLimiter(options =>
 });
 builder.Services.AddSwaggerGen(options =>
 {
+    options.SwaggerDoc("v1", new OpenApiInfo
+    {
+        Title = "Mail Client API",
+        Version = "v1",
+        Description = "Flutter mail client backend: JWT auth, mail accounts (IMAP/SMTP), mailbox sync, idempotent sending, attachments, devices, admin user management."
+    });
+    options.OperationFilter<MailClient.Api.Docs.IdempotencyKeyOperationFilter>();
     options.AddSecurityDefinition("bearer", new OpenApiSecurityScheme
     {
         Type = SecuritySchemeType.Http,
@@ -168,6 +180,7 @@ if (mailSyncOptions.Enabled)
     builder.Services.AddHostedService<MailSyncService>();
 builder.Services.AddScoped<IAuthenticationService, AuthenticationService>();
 builder.Services.AddScoped<IUserAdministrationService, UserAdministrationService>();
+builder.Services.AddScoped<IAuditLogger, EfAuditLogger>();
 builder.Services.AddScoped<IUserSessionValidator, UserSessionValidator>();
 builder.Services.AddScoped<IHealthProbe, DatabaseHealthProbe>();
 builder.Services.AddSingleton<IJwtTokenIssuer, JwtTokenIssuer>();
@@ -234,11 +247,23 @@ if (!app.Environment.IsDevelopment() && !app.Environment.IsEnvironment("Test"))
 if (trustedProxy)
     app.UseForwardedHeaders();
 
+app.UseMiddleware<CorrelationIdMiddleware>();
+app.UseMiddleware<ExceptionLoggingMiddleware>();
+
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
     app.UseSwagger();
-    app.UseSwaggerUI();
+    app.UseSwaggerUI(ui =>
+    {
+        ui.DocumentTitle = "Mail Client API";
+        ui.DisplayRequestDuration();
+        ui.EnableDeepLinking();
+        ui.EnableFilter();
+        ui.DocExpansion(Swashbuckle.AspNetCore.SwaggerUI.DocExpansion.List);
+        ui.DefaultModelsExpandDepth(2);
+        ui.EnablePersistAuthorization();
+    });
 }
 
 app.UseExceptionHandler();
@@ -251,6 +276,7 @@ if (app.Environment.IsDevelopment())
     app.UseCors("DevelopmentLan");
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseMiddleware<HttpLoggingMiddleware>();
 app.UseRateLimiter();
 app.MapHealthEndpoints();
 app.MapAuthEndpoints();
