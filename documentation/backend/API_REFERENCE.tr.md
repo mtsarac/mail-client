@@ -81,7 +81,7 @@ Aşağıdaki rotalar bearer JWT ister ve hesabı `sub` üzerinden belirler:
 | GET | `/api/mails/{id}` | posta detayı |
 | PATCH | `/api/mails/{id}/read` | `{ "isRead": true }` |
 | GET | `/api/mails/{mailId}/attachments/{attachmentId}` | hesaba ait eki indir |
-| POST | `/api/mails/send` | idempotent gönderim işlemi al |
+| POST | `/api/mails/send` | multipart gönderim (to, subject, bodyHtml/bodyText, ≤20 ek, Idempotency-Key başlığı) → 200 `{ sent, sentCopySaved, warning }` |
 | POST | `/api/devices` | cihaz token'ını hesaba kaydet |
 | DELETE | `/api/devices/{id}` | hesaba ait cihaz token'ını sil |
 | GET | `/health` | sağlık yanıtı |

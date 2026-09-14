@@ -81,7 +81,7 @@ All routes below require bearer JWT and infer account from `sub`:
 | GET | `/api/mails/{id}` | message detail |
 | PATCH | `/api/mails/{id}/read` | `{ "isRead": true }` |
 | GET | `/api/mails/{mailId}/attachments/{attachmentId}` | stream owned attachment |
-| POST | `/api/mails/send` | claim idempotent send operation |
+| POST | `/api/mails/send` | multipart send (to, subject, bodyHtml/bodyText, ≤20 attachments, Idempotency-Key header) → 200 `{ sent, sentCopySaved, warning }` |
 | POST | `/api/devices` | register device token for this account |
 | DELETE | `/api/devices/{id}` | remove owned device token |
 | GET | `/health` | health response |

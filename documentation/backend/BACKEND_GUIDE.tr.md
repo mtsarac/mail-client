@@ -28,7 +28,7 @@ Yeni backend tek temiz Initial EF Core migration kullanır ve varsayılan DB `ma
 
 Korumalı endpoint'ler hesabı JWT üzerinden `ICurrentMailAccount` ile belirler. Caller-supplied account ID'ye güvenilmez. Başka hesaba ait mail/folder/attachment/device ID, 404 döndürür. Send idempotency MailAccountId ve key ile scope edilir. Attachment yolu storage kökünden çıkamaz.
 
-Başarılı bağlantı initial sync'i async kuyruğa alır. Cache posta account-scoped kalır. Legacy incremental sync, Sent-folder append, Firebase delivery ve provider-specific OAuth2'nin tam production portu deferred'dır; tamamlanmış gösterilmemelidir.
+Başarılı bağlantı önce keşfedilen klasörleri yazar, sonra initial sync'i yanıtı bekletmeden async kuyruğa alır. Arka plan senkronu UIDVALIDITY reset, skipped UID, scan cursor, flag reconciliation, oversized mesaj yönetimi ve NeedsReauthentication geçişleriyle incremental UID import yapar. Gönderim MailAccountId başına idempotenttır; SMTP teslimi, Sent kopyası ve audit içerir. Yeni-posta push, Firebase etkinse hesap başına dağıtılır (değilse NoOp), geçersiz token budamasıyla. Provider-specific OAuth2 deferred'dır: credential modeli hazırdır, provider authorization akışı yoktur.
 
 ## Hatalar ve gözlemlenebilirlik
 

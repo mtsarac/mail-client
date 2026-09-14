@@ -28,7 +28,7 @@ New backend has one clean Initial EF Core migration and uses `mailclient_v2` by 
 
 Protected endpoints derive account from JWT through `ICurrentMailAccount`. Caller-supplied account IDs are not trusted. Foreign mail/folder/attachment/device IDs return 404. Send idempotency is scoped by MailAccountId and key. Attachment paths cannot escape storage root.
 
-Successful connection queues initial sync asynchronously. Cached mail remains account-scoped. Full production port of legacy incremental synchronization, Sent-folder append, Firebase delivery, and provider-specific OAuth2 remains deferred and must not be represented as complete.
+Successful connection persists discovered folders, then queues initial sync asynchronously without blocking the response. Background sync covers incremental UID import with UIDVALIDITY reset, skipped UIDs, scan cursors, flag reconciliation, oversized-message handling, and NeedsReauthentication transitions. Sending is idempotent per MailAccountId with SMTP delivery, Sent-folder copy, and audit. New-mail push fans out per account through Firebase when enabled (NoOp otherwise) with invalid-token pruning. Provider-specific OAuth2 remains deferred: the credential model is ready, but no provider authorization flows are implemented.
 
 ## Errors and observability
 
