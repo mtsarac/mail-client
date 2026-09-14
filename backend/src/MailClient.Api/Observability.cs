@@ -17,7 +17,7 @@ public sealed class CorrelationMiddleware(RequestDelegate next, ILogger<Correlat
         using (LogContext.PushProperty("MailAccountId", context.User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value))
         {
             await next(context);
-            logger.LogInformation("HTTP {Method} {Path} responded {StatusCode} in {ElapsedMs} ms", context.Request.Method, context.Request.Path.Value, context.Response.StatusCode, stopwatch.ElapsedMilliseconds);
+            logger.LogInformation("HTTP request responded {StatusCode} in {ElapsedMs} ms.", context.Response.StatusCode, stopwatch.ElapsedMilliseconds);
         }
     }
 }
