@@ -46,10 +46,9 @@ public sealed class HttpBodyLoggingMiddleware(
         finally
         {
             context.Response.Body = capture.Inner;
+            stopwatch.Stop();
+            LogCompletion(context, requestBody, capture, stopwatch.ElapsedMilliseconds);
         }
-
-        stopwatch.Stop();
-        LogCompletion(context, requestBody, capture, stopwatch.ElapsedMilliseconds);
     }
 
     private static bool IsExcluded(string? path, string[] excluded) =>
@@ -107,10 +106,7 @@ public sealed class HttpBodyLoggingMiddleware(
     private void LogCompletion(HttpContext context, CapturedBody requestBody, CappedTeeStream capture, long elapsedMs)
     {
         var responseBody = BuildResponseBody(context.Response.ContentType, capture);
-        var correlationId = context.Items["CorrelationId"] as string
-            ?? context.Response.Headers["X-Correlation-ID"].ToString();
-        if (string.IsNullOrEmpty(correlationId))
-            correlationId = context.TraceIdentifier;
+        var correlationId = context.Response.Headers[CorrelationMiddleware.HeaderName].ToString();
         var path = Sanitize(context.Request.Path.Value ?? "/");
         var method = Sanitize(context.Request.Method);
         var query = context.Request.QueryString.Value;
