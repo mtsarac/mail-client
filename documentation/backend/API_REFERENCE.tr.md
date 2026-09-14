@@ -2,137 +2,94 @@
 
 > English: [API_REFERENCE.en.md](API_REFERENCE.en.md)
 
-Temel URL (dev): `http://localhost:5223`. İnteraktif doküman (yalnızca dev):
-`/swagger`. `POST /api/auth/register` ve `POST /api/auth/login` hariç her
-yerde `Authorization: Bearer <JWT>`. Alan adları birebir DTO adlarıdır. Hata
-gövdesi: RFC 9457 problem details (`errors: { alan: [mesajlar] }`).
+Temel URL deployment yapılandırmasından gelir. Development Swagger: `/swagger`.
 
-## Kimlik doğrulama
+## Onboarding
 
-### `POST /api/auth/register` (anonim, `auth` limiti)
+### Otomatik discovery
 
-```json
-{ "email": "kullanici@ornek.com", "password": "gizli123", "displayName": "Ada" }
-```
-
-- Geçerli sözdiziminde hep `202 Accepted`: `{ "message": "If the registration request can be accepted, it has been received." }`: yeni/kayıtlı adres ayırt edilmez.
-- `400`: bozuk e-posta, 8-128 dışı parola, eksik görünen ad (>250) veya `Registration:Mode=Disabled`.
-
-### `POST /api/auth/login` (anonim, `auth` limiti)
+`POST /api/accounts/discover`
 
 ```json
-{ "email": "kullanici@ornek.com", "password": "gizli123" }
+{ "email": "kisi@ornek.com" }
 ```
 
-- `200`: `{ "accessToken": "...", "userId": "...", "email": "...", "role": "User|Admin" }` (12 saatlik token).
-- `401` yanlış kimlik; `403` aktif olmayan kullanıcı; `400` bozuk gövde.
+Başarıda `discoveryId`, e-posta, sağlayıcı, auth metotları ve `manualSetupAvailable` döner. İç IMAP/SMTP ayarları sunucuda kalır.
 
-## Kullanıcılar / Admin (`Admin` rolü gerekli)
-
-| Metot ve Yol | İstek | Yanıt | Kodlar |
-|---|---|---|---|
-| `GET /api/admin/users` | - | `[{ id, email, displayName, role, status, ... }]` | 200, 401, 403 |
-| `POST /api/admin/users` | `{ email, password, displayName, role, status }` | `201` + kullanıcı, `Location: /api/admin/users/{id}` | 201, 400, 409 (yinelenen), 401, 403 |
-| `PATCH /api/admin/users/{id}/approve` | - | `204` (statü→Active, tokenlar ölür) | 204, 404, 401, 403 |
-| `PATCH /api/admin/users/{id}/disable` | - | `204` (statü→Disabled, tokenlar ölür) | 204, 404, 401, 403 |
-| `PATCH /api/admin/users/{id}/enable` | - | `204` (statü→Active, tokenlar ölür) | 204, 404, 401, 403 |
-| `POST /api/admin/users/{id}/reset-password` | `{ password }` | `204` (tokenlar ölür) | 204, 400, 404, 401, 403 |
-
-## Posta hesapları (JWT, sahip kapsamlı)
-
-Hesap gövdesi (oluşturma; güncelleme aynı alanlar, `password` opsiyonel):
+Tüm stratejiler başarısız olursa HTTP 422 ProblemDetails döner:
 
 ```json
 {
-  "emailAddress": "kullanici@ornek.com", "displayName": "İş",
-  "username": "kullanici@ornek.com", "password": "kutu-parolası",
-  "imapHost": "imap.ornek.com", "imapPort": 993, "imapSecurity": "SslOnConnect",
-  "smtpHost": "smtp.ornek.com", "smtpPort": 587, "smtpSecurity": "StartTls",
-  "saveSentCopy": true
+  "title": "Mail server discovery failed.",
+  "status": 422,
+  "code": "mail_discovery_failed",
+  "manualSetupAvailable": true
 }
 ```
 
-Sınırlar: e-posta/kullanıcı adı ≤ 320, görünen ad ≤ 250, kutu parolası ≤ 1024,
-port 1-65535, geçerli DNS hostları (loopback/özel/rezerv reddedilir),
-`imapSecurity/smtpSecurity` ∈ `SslOnConnect|StartTls` (`None` yalnız dev/test).
+Başarısızlıkta hiçbir kayıt yazılmaz. Discovery başarısızlığı sağlayıcının desteklenmediği anlamına gelmez; istemci manuel fallback sunmalıdır.
 
-| Metot ve Yol | Yanıt | Kodlar / Notlar |
+### Keşfedilen posta kutusunu bağlama
+
+`POST /api/accounts/connect`
+
+```json
+{
+  "discoveryId": "opaque-temporary-id",
+  "authentication": { "type": "Password", "password": "ExamplePassword123!" },
+  "deviceIdentifier": "optional-device-id"
+}
+```
+
+Discovery ID tek kullanımlık ve sürelidir. Backend IMAP ve SMTP credential'larını doğrular, normalize MailAccount oluşturur veya mevcut hesabı kullanır, credential materyalini şifreler, MailSession oluşturur, access/refresh token döndürür.
+
+### Manuel fallback
+
+`POST /api/accounts/connect-manual`
+
+```json
+{
+  "email": "kisi@ornek.com",
+  "username": "kisi@ornek.com",
+  "authentication": { "type": "Password", "password": "ExamplePassword123!" },
+  "imap": { "host": "imap.ornek.com", "port": 993, "security": "SslOnConnect" },
+  "smtp": { "host": "smtp.ornek.com", "port": 465, "security": "SslOnConnect" }
+}
+```
+
+Manuel mod yalnız fallback'tir. SSRF korumasını, güvenli DNS/IP kontrollerini, TLS sertifika doğrulamasını, protokol kontrolünü, IMAP auth'u veya SMTP auth'u kapatmaz. Password ve AppSpecificPassword çalışır. OAuth2 modelde vardır; sağlayıcı akışları deferred'dır.
+
+## Session'lar
+
+- `POST /api/auth/refresh`, `{ "refreshToken": "..." }`: session ve token döndürür. Access JWT gerekmez.
+- `POST /api/auth/logout`, `{ "refreshToken": "..." }`: bu istemci session'ını iptal eder.
+
+Refresh token raw saklanmaz. JWT `sub`, MailAccountId değeridir.
+
+## Hesap kapsamlı API
+
+Aşağıdaki rotalar bearer JWT ister ve hesabı `sub` üzerinden belirler:
+
+| Metot | Yol | Amaç |
 |---|---|---|
-| `GET /api/mail-accounts` | `[MailAccountResponse{ id, emailAddress, displayName, username, imapHost, imapPort, imapSecurity, smtpHost, smtpPort, smtpSecurity, saveSentCopy, isActive }]` | 200 |
-| `GET /api/mail-accounts/{id}` | `MailAccountResponse` | 200, 404 |
-| `POST /api/mail-accounts` | `201` + hesap, `Location` başlığı | 201, 400, 409 yinelenen |
-| `PUT /api/mail-accounts/{id}` | `200` + hesap | 200, 400, 404, 409. IMAP kimlik değişimi önbelleği siler |
-| `DELETE /api/mail-accounts/{id}` | `204`, önbellek posta + dosyaları siler | 204, 404 |
-| `POST /api/mail-accounts/{id}/test` (`mail-operations` limiti) | `MailAccountTestResponse{ succeeded, message }`; başarıda klasörleri de yeniler | 200, 404 |
-| `GET /api/mail-accounts/{id}/folders` | `[MailFolderResponse{ id, name, fullName, folderType, uidValidity, isSyncEnabled, isAvailable }]` | 200, 404 |
-| `POST /api/mail-accounts/{id}/folders/refresh` (`mail-operations` limiti) | `MailFolderRefreshResponse{ succeeded, message, folders }` | 200, 404 |
-| `PATCH /api/mail-accounts/{id}/folders/{folderId}/sync` | `{ "isSyncEnabled": true }` → `MailFolderResponse` | 200, 400, 404 |
+| GET | `/api/account` | mevcut hesap |
+| DELETE | `/api/account` | posta kutusu ve cache verisini sil |
+| GET | `/api/folders` | klasörleri listele |
+| POST | `/api/folders/refresh` | klasör yenilemeyi kuyruğa al |
+| POST | `/api/folders/{id}/sync` | klasör sync isteği |
+| GET | `/api/mails` | mevcut hesabın en fazla 100 postası |
+| GET | `/api/mails/{id}` | posta detayı |
+| PATCH | `/api/mails/{id}/read` | `{ "isRead": true }` |
+| GET | `/api/mails/{mailId}/attachments/{attachmentId}` | hesaba ait eki indir |
+| POST | `/api/mails/send` | idempotent gönderim işlemi al |
+| POST | `/api/devices` | cihaz token'ını hesaba kaydet |
+| DELETE | `/api/devices/{id}` | hesaba ait cihaz token'ını sil |
+| GET | `/health` | sağlık yanıtı |
 
-## Posta (JWT, sahip kapsamlı)
+Başka hesaba ait mail, attachment, folder veya device ID değerleri 404 döndürür.
 
-- `GET /api/mails?folderType=Inbox&page=1&pageSize=30`: ayrıca `accountId`,
-  `folderId` filtreleri. `200 MailPageDto{ items: [MailSummaryDto{ id,
-  mailAccountId, mailAccountEmail, folderId, folderType, fromDisplayName,
-  fromAddress, subject, receivedAt, isRead, hasAttachments }], totalCount,
-  page, pageSize }`. `400` hatalı `folderType`/sayfalama (`page ≥ 1`,
-  `1 ≤ pageSize ≤ 100`), `404` bilinmeyen hesap/klasör. Sıra
-  `ReceivedAt DESC, Id DESC`. Gövde ve yol yok.
-- `GET /api/mails/{id}`: `200 MailDetailDto` (özet + `messageId`,
-  `toAddress`, `bodyHtml`, `bodyText`, `attachments: [AttachmentDto{ id,
-  fileName, contentType, sizeBytes, isInline, contentId }]`). Değilse `404`.
-- `GET /api/mails/{mailId}/attachments/{attachmentId}`: dosya bayt akışı
-  (`Results.File`). Herhangi bir uyumsuzluk/kayıp dosyada `404`.
-- `PATCH /api/mails/{id}/read` (`mail-operations` limiti),
-  `{ "isRead": true }` → `200 MailReadDto{ id, isRead }`. `404` bilinmeyen,
-  `409` klasör sunucuda değişmiş (yenile + tekrar dene), `502` posta sunucusu
-  hatası, `400` doğrulama.
+## Stabil hatalar
 
-## Gönderim (JWT, `mail-operations` limiti)
+ProblemDetails; `mail_discovery_failed`, `discovery_expired`, `mail_server_unsafe`, `mail_authentication_failed`, `unsupported_authentication_method`, `invalid_refresh_token`, `session_revoked`, `idempotency_key_required`, `idempotency_conflict` ve `invalid_mail_header` gibi stabil kodlar kullanır.
 
-`POST /api/mail-accounts/{accountId}/send`: `multipart/form-data` alanları:
-`toAddress`, `subject`, `bodyHtml` ve/veya `bodyText`, en fazla 20
-`attachments`. **`Idempotency-Key: <uuid>` başlığı zorunlu**
-(eksik/boş/200+ karakter → 400).
-
-- `sent=true` iken `200 { sent, sentCopySaved, warning }`.
-  `sentCopySaved=false` + uyarı = gönderildi ama Sent kopyası başarısız;
-  yeniden gönderme.
-- `502` SMTP/taşıma hatası (gönderim kanıtı yoksa aynı anahtarla retry olabilir).
-- `404` bilinmeyen hesap; `409` anahtar kullanımda / belirsiz / içerik
-  uyumsuzluğu; `400` doğrulama; `429` limit.
-
-## Cihazlar (JWT, sahip kapsamlı, `mail-operations` limiti)
-
-- `POST /api/devices/register` `{ "pushToken": "...", "platform": "android" }`
-  → `200 DeviceTokenResponse{ id, platform, registeredAt, lastSeenAt }`.
-  `400` boş/500+ karakter token veya platform ∉ {android, ios}.
-- `DELETE /api/devices/{id}` → `204`; yabancı/bilinmeyen id'de `404`.
-
-## Sağlık (anonim)
-
-- `GET /health` → `200 { "status": "ok" }`.
-- `GET /health/db` → `200 { status: "Healthy", checks: [{ name: "postgres",
-  status: "Healthy", error: null }] }` veya `503 Unhealthy`.
-
-## HTTP hata hızlı referansı
-
-| Kod | Buradaki anlamı |
-|---|---|
-| 400 | doğrulama (`errors` içeren problem details) |
-| 401 | eksik/geçersiz/süresi dolmuş JWT, öldürülmüş oturum |
-| 403 | kimlik var ama yasak (aktif olmayan kullanıcı, admin rotasında admin olmayan) |
-| 404 | bulunamadı **veya** başkasının posta verisi (varlık sızdırılmaz) |
-| 409 | yinelenen hesap, UIDVALIDITY değişimi, idempotency çakışması/belirsizliği |
-| 429 | limit (`auth` IP başına / `mail-operations` kullanıcı başına, 20/dk) |
-| 502 | posta sunucusu işlemi başarısız (IMAP/SMTP/sağlayıcı) |
-| 503 | `/health/db` sağlıksız |
-
-## Swagger / OpenAPI (yalnızca dev)
-
-Tüm uçlar `WithName`/`WithSummary`/`WithDescription` ve doğru
-`Accepts`/`Produces` metadatası taşır — auth, rota/sorgu parametreleri,
-gövde tipi, başarı ve hata kodları `/swagger` içinde tahminsiz görünür.
-`POST /api/mail-accounts/{id}/send` multipart alanları ve zorunlu
-`Idempotency-Key` başlığını belgelemektedir. Örnek yükler sahte değer
-kullanır (parolalarda `ExamplePassword123!`). Swagger UI oturumda
-yetkilendirmeyi saklar ve istek süresini gösterir.
+Beklenen provider/discovery hataları 400/401/409/422/429/502/503 olur. Raw MailKit ve network exception'ları API sözleşmesi değildir.

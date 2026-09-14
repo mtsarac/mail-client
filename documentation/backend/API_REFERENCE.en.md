@@ -2,135 +2,94 @@
 
 > Türkçe: [API_REFERENCE.tr.md](API_REFERENCE.tr.md)
 
-Base URL (dev): `http://localhost:5223`. Interactive docs (dev only): `/swagger`.
-Auth: `Authorization: Bearer <JWT>` everywhere except `POST /api/auth/register`
-and `POST /api/auth/login`. Field names below are the exact DTO names.
-Error shape: RFC 9457 problem details (`errors: { field: [messages] }`).
+Base URL: configured deployment URL. Development Swagger: `/swagger`.
 
-## Authentication
+## Onboarding
 
-### `POST /api/auth/register` (anonymous, `auth` rate limit)
+### Automatic discovery
 
-```json
-{ "email": "user@example.com", "password": "secret123", "displayName": "Ada" }
-```
-
-- `202 Accepted` always (valid syntax): `{ "message": "If the registration request can be accepted, it has been received." }`: identical for new/existing addresses.
-- `400` validation: bad email, password not 8-128 chars, missing display name (>250), or `Registration:Mode=Disabled`.
-
-### `POST /api/auth/login` (anonymous, `auth` rate limit)
+`POST /api/accounts/discover`
 
 ```json
-{ "email": "user@example.com", "password": "secret123" }
+{ "email": "person@example.com" }
 ```
 
-- `200`: `{ "accessToken": "...", "userId": "...", "email": "...", "role": "User|Admin" }` (12-hour token).
-- `401` wrong credentials; `403` non-active user; `400` malformed body.
+Success returns `discoveryId`, email, provider, authentication methods, and `manualSetupAvailable`. Internal IMAP/SMTP settings remain server-side.
 
-## Users / Admin (`Admin` role required)
-
-| Method & Path | Request | Response | Codes |
-|---|---|---|---|
-| `GET /api/admin/users` | - | `[{ id, email, displayName, role, status, ... }]` | 200, 401, 403 |
-| `POST /api/admin/users` | `{ email, password, displayName, role, status }` | `201` + created user, `Location: /api/admin/users/{id}` | 201, 400, 409 (duplicate), 401, 403 |
-| `PATCH /api/admin/users/{id}/approve` | - | `204` (status→Active, tokens invalidated) | 204, 404, 401, 403 |
-| `PATCH /api/admin/users/{id}/disable` | - | `204` (status→Disabled, tokens invalidated) | 204, 404, 401, 403 |
-| `PATCH /api/admin/users/{id}/enable` | - | `204` (status→Active, tokens invalidated) | 204, 404, 401, 403 |
-| `POST /api/admin/users/{id}/reset-password` | `{ password }` | `204` (tokens invalidated) | 204, 400, 404, 401, 403 |
-
-## Mail accounts (JWT, owner-scoped)
-
-Account body (create; update same fields, `password` optional):
+When all strategies fail, response is HTTP 422 ProblemDetails:
 
 ```json
 {
-  "emailAddress": "user@example.com", "displayName": "Work",
-  "username": "user@example.com", "password": "mailbox-password",
-  "imapHost": "imap.example.com", "imapPort": 993, "imapSecurity": "SslOnConnect",
-  "smtpHost": "smtp.example.com", "smtpPort": 587, "smtpSecurity": "StartTls",
-  "saveSentCopy": true
+  "title": "Mail server discovery failed.",
+  "status": 422,
+  "code": "mail_discovery_failed",
+  "manualSetupAvailable": true
 }
 ```
 
-Limits: email/username ≤ 320, display ≤ 250, mailbox password ≤ 1024,
-ports 1-65535, valid DNS hosts (loopback/private/reserved rejected),
-`imapSecurity/smtpSecurity` ∈ `SslOnConnect|StartTls` (`None` dev/test only).
+Nothing is persisted on failure. Discovery failure does not mean provider unsupported; client should offer manual fallback.
 
-| Method & Path | Response | Codes / Notes |
+### Connect discovered mailbox
+
+`POST /api/accounts/connect`
+
+```json
+{
+  "discoveryId": "opaque-temporary-id",
+  "authentication": { "type": "Password", "password": "ExamplePassword123!" },
+  "deviceIdentifier": "optional-device-id"
+}
+```
+
+The discovery ID is one-time and expires. Backend validates IMAP and SMTP credentials, creates or reuses normalized MailAccount, encrypts credential material, creates MailSession, and returns access/refresh tokens.
+
+### Manual fallback
+
+`POST /api/accounts/connect-manual`
+
+```json
+{
+  "email": "person@example.com",
+  "username": "person@example.com",
+  "authentication": { "type": "Password", "password": "ExamplePassword123!" },
+  "imap": { "host": "imap.example.com", "port": 993, "security": "SslOnConnect" },
+  "smtp": { "host": "smtp.example.com", "port": 465, "security": "SslOnConnect" }
+}
+```
+
+Manual mode is fallback only. It does not disable SSRF protection, safe DNS/IP checks, TLS certificate validation, protocol validation, IMAP auth, or SMTP auth. Password and AppSpecificPassword are implemented. OAuth2 is modeled but provider flows are deferred.
+
+## Sessions
+
+- `POST /api/auth/refresh` with `{ "refreshToken": "..." }`: rotates session and token. No access JWT required.
+- `POST /api/auth/logout` with `{ "refreshToken": "..." }`: revokes this client session.
+
+Refresh tokens are never stored raw. JWT `sub` equals MailAccountId.
+
+## Account-scoped API
+
+All routes below require bearer JWT and infer account from `sub`:
+
+| Method | Path | Purpose |
 |---|---|---|
-| `GET /api/mail-accounts` | `[MailAccountResponse{ id, emailAddress, displayName, username, imapHost, imapPort, imapSecurity, smtpHost, smtpPort, smtpSecurity, saveSentCopy, isActive }]` | 200 |
-| `GET /api/mail-accounts/{id}` | `MailAccountResponse` | 200, 404 |
-| `POST /api/mail-accounts` | `201` + account, `Location` header | 201, 400, 409 duplicate |
-| `PUT /api/mail-accounts/{id}` | `200` + account | 200, 400, 404, 409. IMAP-identity change wipes cache |
-| `DELETE /api/mail-accounts/{id}` | `204`, wipes cached mail + files | 204, 404 |
-| `POST /api/mail-accounts/{id}/test` (`mail-operations` limit) | `MailAccountTestResponse{ succeeded, message }`; on success also refreshes folders | 200, 404 |
-| `GET /api/mail-accounts/{id}/folders` | `[MailFolderResponse{ id, name, fullName, folderType, uidValidity, isSyncEnabled, isAvailable }]` | 200, 404 |
-| `POST /api/mail-accounts/{id}/folders/refresh` (`mail-operations` limit) | `MailFolderRefreshResponse{ succeeded, message, folders }` | 200, 404 |
-| `PATCH /api/mail-accounts/{id}/folders/{folderId}/sync` | `{ "isSyncEnabled": true }` → `MailFolderResponse` | 200, 400, 404 |
+| GET | `/api/account` | current account |
+| DELETE | `/api/account` | delete mailbox and cached data |
+| GET | `/api/folders` | list folders |
+| POST | `/api/folders/refresh` | enqueue folder refresh |
+| POST | `/api/folders/{id}/sync` | request folder sync |
+| GET | `/api/mails` | list up to 100 current-account messages |
+| GET | `/api/mails/{id}` | message detail |
+| PATCH | `/api/mails/{id}/read` | `{ "isRead": true }` |
+| GET | `/api/mails/{mailId}/attachments/{attachmentId}` | stream owned attachment |
+| POST | `/api/mails/send` | claim idempotent send operation |
+| POST | `/api/devices` | register device token for this account |
+| DELETE | `/api/devices/{id}` | remove owned device token |
+| GET | `/health` | health response |
 
-## Mail (JWT, owner-scoped)
+Foreign mail, attachment, folder, or device IDs return 404.
 
-- `GET /api/mails?folderType=Inbox&page=1&pageSize=30`: also
-  `accountId`, `folderId` filters. `200 MailPageDto{ items: [MailSummaryDto{
-  id, mailAccountId, mailAccountEmail, folderId, folderType,
-  fromDisplayName, fromAddress, subject, receivedAt, isRead, hasAttachments
-  }], totalCount, page, pageSize }`. `400` bad `folderType`/paging
-  (`page ≥ 1`, `1 ≤ pageSize ≤ 100`), `404` unknown account/folder. Ordered
-  `ReceivedAt DESC, Id DESC`. No bodies, no paths.
-- `GET /api/mails/{id}`: `200 MailDetailDto` (summary + `messageId`,
-  `toAddress`, `bodyHtml`, `bodyText`, `attachments: [AttachmentDto{ id,
-  fileName, contentType, sizeBytes, isInline, contentId }]`). Else `404`.
-- `GET /api/mails/{mailId}/attachments/{attachmentId}`: streams file bytes
-  (`Results.File`). `404` on any mismatch or missing file.
-- `PATCH /api/mails/{id}/read` (`mail-operations` limit),
-  `{ "isRead": true }` → `200 MailReadDto{ id, isRead }`. `404` unknown,
-  `409` folder changed server-side (refresh + retry), `502` mail-server
-  failure, `400` validation.
+## Stable errors
 
-## Sending (JWT, `mail-operations` limit)
+ProblemDetails uses stable codes including `mail_discovery_failed`, `discovery_expired`, `mail_server_unsafe`, `mail_authentication_failed`, `unsupported_authentication_method`, `invalid_refresh_token`, `session_revoked`, `idempotency_key_required`, `idempotency_conflict`, and `invalid_mail_header`.
 
-`POST /api/mail-accounts/{accountId}/send`: `multipart/form-data` fields:
-`toAddress`, `subject`, `bodyHtml` and/or `bodyText`, up to 20 `attachments`.
-Header **`Idempotency-Key: <uuid>` mandatory** (missing/blank/>200 chars → 400).
-
-- `200 { sent, sentCopySaved, warning }` when `sent=true`. `sentCopySaved=false`
-  + warning = sent, Sent-folder copy failed; do not resend.
-- `502` SMTP/transport failure (before any delivery proof may retry with same key).
-- `404` unknown account; `409` key in use / uncertain / content mismatch;
-  `400` validation; `429` rate limit.
-
-## Devices (JWT, owner-scoped, `mail-operations` limit)
-
-- `POST /api/devices/register` `{ "pushToken": "...", "platform": "android" }`
-  → `200 DeviceTokenResponse{ id, platform, registeredAt, lastSeenAt }`.
-  `400` blank/>500-char token or platform ∉ {android, ios}.
-- `DELETE /api/devices/{id}` → `204`; `404` for foreign/unknown ids.
-
-## Health (anonymous)
-
-- `GET /health` → `200 { "status": "ok" }`.
-- `GET /health/db` → `200 { status: "Healthy", checks: [{ name: "postgres",
-  status: "Healthy", error: null }] }` or `503 Unhealthy`.
-
-## HTTP error quick reference
-
-| Code | Meaning here |
-|---|---|
-| 400 | validation (problem details with `errors`) |
-| 401 | missing/invalid/expired JWT, invalidated session |
-| 403 | authenticated but forbidden (non-active user, non-admin on admin routes) |
-| 404 | not found **or** foreign-owned mail data (existence never leaked) |
-| 409 | duplicate account, UIDVALIDITY change, idempotency conflict/uncertainty |
-| 429 | rate limit (`auth` per IP / `mail-operations` per user, 20/min) |
-| 502 | mail-server operation failed (IMAP/SMTP/provider) |
-| 503 | `/health/db` unhealthy |
-
-## Swagger / OpenAPI (dev only)
-
-Every endpoint carries `WithName`/`WithSummary`/`WithDescription` plus
-accurate `Accepts`/`Produces` metadata — auth, route/query params, body
-type, success and error codes render in `/swagger` without guessing.
-`POST /api/mail-accounts/{id}/send` documents multipart form fields and
-the required `Idempotency-Key` header. Example payloads use fake values
-(`ExamplePassword123!` for passwords). Swagger UI persists authorization
-per session and shows request duration.
+Expected provider/discovery failures map to 400/401/409/422/429/502/503. Raw MailKit and network exceptions are not API contracts.
