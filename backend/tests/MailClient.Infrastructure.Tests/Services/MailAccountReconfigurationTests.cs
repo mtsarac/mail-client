@@ -260,7 +260,7 @@ public sealed class MailAccountReconfigurationTests
     private static MailAccountService CreateService(AppDbContext db, TrackingFileStorage storage, ICredentialProtector? protector = null) =>
         new(db, protector ?? CreateProtector(), new TestEnvironment(),
             new AllowConnectivityTester(), new AllowHostValidator(), storage,
-            Microsoft.Extensions.Logging.Abstractions.NullLogger<MailAccountService>.Instance);
+            NullAuditLogger.Instance, NullLogger<MailAccountService>.Instance);
 
     private static AppDbContext CreateDb() => new(new DbContextOptionsBuilder<AppDbContext>()
         .UseInMemoryDatabase(Guid.NewGuid().ToString("N")).Options);

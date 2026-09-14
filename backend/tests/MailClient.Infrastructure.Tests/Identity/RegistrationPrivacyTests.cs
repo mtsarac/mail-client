@@ -74,7 +74,7 @@ public sealed class RegistrationPrivacyTests
     {
         await using var db = CreateDb();
         var admin = new UserAdministrationService(
-            db, new PasswordHasher<User>(), NullLogger<UserAdministrationService>.Instance);
+            db, new PasswordHasher<User>(), NullAuditLogger.Instance, NullLogger<UserAdministrationService>.Instance);
         var created = await admin.CreateAsync(
             new AdminCreateUserRequest("admin-dup@example.com", "long-enough", "Admin", UserRole.User, UserStatus.Active),
             CancellationToken.None);
@@ -88,7 +88,7 @@ public sealed class RegistrationPrivacyTests
     }
 
     private static AuthenticationService CreateService(AppDbContext db) => new(
-        db, new PasswordHasher<User>(), NullLogger<AuthenticationService>.Instance);
+        db, new PasswordHasher<User>(), NullAuditLogger.Instance, NullLogger<AuthenticationService>.Instance);
 
     private static AppDbContext CreateDb() => new(new DbContextOptionsBuilder<AppDbContext>()
         .UseInMemoryDatabase(Guid.NewGuid().ToString())

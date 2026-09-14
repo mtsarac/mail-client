@@ -140,7 +140,7 @@ public class MailFolderDiscoveryTests
         db.MailAccounts.Add(account);
         await db.SaveChangesAsync();
         var explorer = new FailingFolderExplorer();
-        var service = new MailFolderService(db, protector, explorer, NullLogger<MailFolderService>.Instance);
+        var service = new MailFolderService(db, protector, explorer, NullAuditLogger.Instance, NullLogger<MailFolderService>.Instance);
 
         var result = await service.RefreshAsync(userId, account.Id, CancellationToken.None);
 
@@ -150,7 +150,7 @@ public class MailFolderDiscoveryTests
     }
 
     private static MailFolderService CreateService(AppDbContext db) => new(
-        db, CreateProtector(), new FailingFolderExplorer(), NullLogger<MailFolderService>.Instance);
+        db, CreateProtector(), new FailingFolderExplorer(), NullAuditLogger.Instance, NullLogger<MailFolderService>.Instance);
 
     private static ICredentialProtector CreateProtector() => new DataProtectionCredentialProtector(
         DataProtectionProvider.Create(new DirectoryInfo(Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString()))));

@@ -155,7 +155,7 @@ public sealed class GreenMailMailTests(GreenMailFixture greenmail)
         var folders = new MailFolderClient(
             new PassthroughProtector(),
             new MailConnectionHelper(new AllowLoopbackHosts(), NullLogger<MailConnectionHelper>.Instance));
-        var service = new MailReadService(db, folders, NullLogger<MailReadService>.Instance);
+        var service = new MailReadService(db, folders, NullAuditLogger.Instance, NullLogger<MailReadService>.Instance);
 
         var read = await service.SetReadAsync(userId, mailId, true, CancellationToken.None);
         Assert.Equal(MailClient.Application.ServiceOutcome.Ok, read.Outcome);

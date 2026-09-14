@@ -135,7 +135,7 @@ public class MailAccountServiceTests
     {
         await using var db = CreateDb();
         var service = new MailAccountService(db, CreateProtector(), new TestEnvironment("Production"),
-            new FakeConnectivityTester(), new AllowHostValidator(), new NoOpFileStorage(), NullLogger<MailAccountService>.Instance);
+            new FakeConnectivityTester(), new AllowHostValidator(), new NoOpFileStorage(), NullAuditLogger.Instance, NullLogger<MailAccountService>.Instance);
         var request = Request("password") with
         {
             ImapHost = "imap.example.com",
@@ -174,7 +174,7 @@ public class MailAccountServiceTests
         IFileStorage? storage = null) =>
         new(db, protector, new TestEnvironment("Development"),
             tester ?? new FakeConnectivityTester(), hosts ?? new AllowHostValidator(),
-            storage ?? new NoOpFileStorage(), NullLogger<MailAccountService>.Instance);
+            storage ?? new NoOpFileStorage(), NullAuditLogger.Instance, NullLogger<MailAccountService>.Instance);
 
     private static AppDbContext CreateDb() => new(new DbContextOptionsBuilder<AppDbContext>()
         .UseInMemoryDatabase(Guid.NewGuid().ToString())
