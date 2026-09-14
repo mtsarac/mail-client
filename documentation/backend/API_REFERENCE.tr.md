@@ -126,3 +126,13 @@ port 1-65535, geçerli DNS hostları (loopback/özel/rezerv reddedilir),
 | 429 | limit (`auth` IP başına / `mail-operations` kullanıcı başına, 20/dk) |
 | 502 | posta sunucusu işlemi başarısız (IMAP/SMTP/sağlayıcı) |
 | 503 | `/health/db` sağlıksız |
+
+## Swagger / OpenAPI (yalnızca dev)
+
+Tüm uçlar `WithName`/`WithSummary`/`WithDescription` ve doğru
+`Accepts`/`Produces` metadatası taşır — auth, rota/sorgu parametreleri,
+gövde tipi, başarı ve hata kodları `/swagger` içinde tahminsiz görünür.
+`POST /api/mail-accounts/{id}/send` multipart alanları ve zorunlu
+`Idempotency-Key` başlığını belgelemektedir. Örnek yükler sahte değer
+kullanır (parolalarda `ExamplePassword123!`). Swagger UI oturumda
+yetkilendirmeyi saklar ve istek süresini gösterir.

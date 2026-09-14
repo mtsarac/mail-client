@@ -74,7 +74,7 @@ public class AuthenticationServiceTests
     }
 
     private static AuthenticationService CreateService(AppDbContext db) => new(
-        db, new PasswordHasher<User>(), NullLogger<AuthenticationService>.Instance);
+        db, new PasswordHasher<User>(), NullAuditLogger.Instance, NullLogger<AuthenticationService>.Instance);
 
     private static AppDbContext CreateDb() => new(new DbContextOptionsBuilder<AppDbContext>()
         .UseInMemoryDatabase(Guid.NewGuid().ToString())

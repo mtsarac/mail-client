@@ -1,3 +1,4 @@
+using MailClient.Api.Docs;
 using MailClient.Application;
 using MailClient.Application.Interfaces;
 using MailClient.Domain.Enums;
@@ -23,13 +24,19 @@ public static class AuthEndpoints
 
             return result.Outcome switch
             {
-                // Security: identical response whether or not the address exists.
                 ServiceOutcome.Ok or ServiceOutcome.Conflict => Results.Accepted(
                     "/api/auth/register",
-                    new { message = "If the registration request can be accepted, it has been received." }),
+                    new RegisterResponse("If the registration request can be accepted, it has been received.")),
                 _ => Results.ValidationProblem(result.Errors.ToDictionary(entry => entry.Key, entry => entry.Value))
             };
-        }).AllowAnonymous();
+        })
+        .AllowAnonymous()
+        .WithName("Register")
+        .WithSummary("Request a new user account")
+        .WithDescription("Registers a user. Returns 202 whether or not the address exists to prevent account enumeration. Example: { \"email\": \"user@example.com\", \"password\": \"ExamplePassword123!\", \"displayName\": \"Example User\" }.")
+        .Accepts<RegisterRequest>("application/json")
+        .Produces<RegisterResponse>(StatusCodes.Status202Accepted)
+        .ProducesValidationProblem();
 
         group.MapPost("/login", async (LoginRequest? request, IAuthenticationService auth, IJwtTokenIssuer tokens, CancellationToken ct) =>
         {
@@ -50,7 +57,16 @@ public static class AuthEndpoints
             var user = result.Value!;
             var token = tokens.IssueToken(user.Id, user.Role, user.TokenVersion);
             return Results.Ok(new LoginResponse(token, user.Id, user.Email, user.Role));
-        }).AllowAnonymous();
+        })
+        .AllowAnonymous()
+        .WithName("Login")
+        .WithSummary("Log in and receive a JWT")
+        .WithDescription("Validates credentials and returns a bearer token. Inactive or pending users get 403; bad credentials get 401. Example: { \"email\": \"user@example.com\", \"password\": \"ExamplePassword123!\" }.")
+        .Accepts<LoginRequest>("application/json")
+        .Produces<LoginResponse>(StatusCodes.Status200OK)
+        .ProducesValidationProblem()
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden);
 
         return app;
     }

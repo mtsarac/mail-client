@@ -15,13 +15,24 @@ public static class MailAccountEndpoints
         var group = app.MapGroup("/api/mail-accounts").RequireAuthorization().WithTags("Mail Accounts");
 
         group.MapGet("/", async (ClaimsPrincipal user, IMailAccountService service, CancellationToken ct) =>
-            Results.Ok(await service.ListAsync(GetUserId(user), ct)));
+            Results.Ok(await service.ListAsync(GetUserId(user), ct)))
+            .WithName("ListMailAccounts")
+            .WithSummary("List my mail accounts")
+            .WithDescription("Returns the caller's mail accounts without passwords.")
+            .Produces<IReadOnlyList<MailAccountResponse>>(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status401Unauthorized);
 
         group.MapGet("/{id:guid}", async (Guid id, ClaimsPrincipal user, IMailAccountService service, CancellationToken ct) =>
         {
             var account = await service.GetAsync(GetUserId(user), id, ct);
             return account is null ? Results.NotFound() : Results.Ok(account);
-        });
+        })
+        .WithName("GetMailAccount")
+        .WithSummary("Get one mail account")
+        .WithDescription("Returns a single owned mail account without its password.")
+        .Produces<MailAccountResponse>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status404NotFound);
 
         group.MapPost("/", async (MailAccountRequest? request, ClaimsPrincipal user, IMailAccountService service, CancellationToken ct) =>
         {
@@ -40,7 +51,15 @@ public static class MailAccountEndpoints
             {
                 return Results.Conflict(ex.Errors.ToDictionary(entry => entry.Key, entry => entry.Value));
             }
-        });
+        })
+        .WithName("CreateMailAccount")
+        .WithSummary("Add a mail account")
+        .WithDescription("Stores IMAP/SMTP settings with an encrypted password. Duplicate addresses per user conflict. Example: { \"emailAddress\": \"user@example.com\", \"displayName\": \"Work Mail\", \"username\": \"user@example.com\", \"password\": \"ExamplePassword123!\", \"imapHost\": \"imap.example.com\", \"imapPort\": 993, \"imapSecurity\": \"SslOnConnect\", \"smtpHost\": \"smtp.example.com\", \"smtpPort\": 587, \"smtpSecurity\": \"StartTls\", \"saveSentCopy\": true }.")
+        .Accepts<MailAccountRequest>("application/json")
+        .Produces<MailAccountResponse>(StatusCodes.Status201Created)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status409Conflict)
+        .ProducesValidationProblem();
 
         group.MapPut("/{id:guid}", async (Guid id, UpdateMailAccountRequest? request, ClaimsPrincipal user, IMailAccountService service, CancellationToken ct) =>
         {
@@ -59,10 +78,25 @@ public static class MailAccountEndpoints
             {
                 return Results.Conflict(ex.Errors.ToDictionary(entry => entry.Key, entry => entry.Value));
             }
-        });
+        })
+        .WithName("UpdateMailAccount")
+        .WithSummary("Update a mail account")
+        .WithDescription("Updates settings. Omitting the password keeps the stored one. Changing the IMAP identity resets cached mailbox state.")
+        .Accepts<UpdateMailAccountRequest>("application/json")
+        .Produces<MailAccountResponse>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status404NotFound)
+        .Produces(StatusCodes.Status409Conflict)
+        .ProducesValidationProblem();
 
         group.MapDelete("/{id:guid}", async (Guid id, ClaimsPrincipal user, IMailAccountService service, CancellationToken ct) =>
-            await service.DeleteAsync(GetUserId(user), id, ct) ? Results.NoContent() : Results.NotFound());
+            await service.DeleteAsync(GetUserId(user), id, ct) ? Results.NoContent() : Results.NotFound())
+            .WithName("DeleteMailAccount")
+            .WithSummary("Delete a mail account")
+            .WithDescription("Removes the account with its cached mails, folders, and stored attachments.")
+            .Produces(StatusCodes.Status204NoContent)
+            .Produces(StatusCodes.Status401Unauthorized)
+            .Produces(StatusCodes.Status404NotFound);
 
         group.MapPost("/{id:guid}/test", async (Guid id, ClaimsPrincipal user, IMailAccountService service, IMailFolderService folders, CancellationToken ct) =>
         {
@@ -71,19 +105,41 @@ public static class MailAccountEndpoints
             if (result.Succeeded)
                 await folders.RefreshAsync(GetUserId(user), id, ct);
             return Results.Ok(result);
-        }).RequireRateLimiting("mail-operations");
+        })
+        .RequireRateLimiting("mail-operations")
+        .WithName("TestMailAccount")
+        .WithSummary("Test IMAP and SMTP connections")
+        .WithDescription("Checks connectivity with stored credentials. On success also refreshes folder discovery. Rate limited to 20/min per user.")
+        .Produces<MailAccountTestResponse>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status404NotFound)
+        .Produces(StatusCodes.Status429TooManyRequests);
 
         group.MapGet("/{id:guid}/folders", async (Guid id, ClaimsPrincipal user, IMailFolderService service, CancellationToken ct) =>
         {
             var folders = await service.ListAsync(GetUserId(user), id, ct);
             return folders is null ? Results.NotFound() : Results.Ok(folders);
-        });
+        })
+        .WithName("ListMailFolders")
+        .WithSummary("List folders of an account")
+        .WithDescription("Returns cached folder discovery state for one owned account.")
+        .Produces<IReadOnlyList<MailFolderResponse>>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status404NotFound);
 
         group.MapPost("/{id:guid}/folders/refresh", async (Guid id, ClaimsPrincipal user, IMailFolderService service, CancellationToken ct) =>
         {
             var result = await service.RefreshAsync(GetUserId(user), id, ct);
             return result is null ? Results.NotFound() : Results.Ok(result);
-        }).RequireRateLimiting("mail-operations");
+        })
+        .RequireRateLimiting("mail-operations")
+        .WithName("RefreshMailFolders")
+        .WithSummary("Refresh folder discovery")
+        .WithDescription("Rediscovers folders over IMAP and stores them. Returns success flag with a message. Rate limited to 20/min per user.")
+        .Produces<MailFolderRefreshResponse>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status404NotFound)
+        .Produces(StatusCodes.Status429TooManyRequests);
 
         group.MapPatch("/{id:guid}/folders/{folderId:guid}/sync", async (Guid id, Guid folderId, MailFolderSyncRequest? request, ClaimsPrincipal user, IMailFolderService service, CancellationToken ct) =>
         {
@@ -91,7 +147,15 @@ public static class MailAccountEndpoints
                 return Results.ValidationProblem(new Dictionary<string, string[]> { ["request"] = ["Request body is required."] });
             var folder = await service.SetSyncEnabledAsync(GetUserId(user), id, folderId, request.IsSyncEnabled, ct);
             return folder is null ? Results.NotFound() : Results.Ok(folder);
-        });
+        })
+        .WithName("SetFolderSync")
+        .WithSummary("Enable or disable folder sync")
+        .WithDescription("Toggles background synchronization for one folder. Example: { \"isSyncEnabled\": true }.")
+        .Accepts<MailFolderSyncRequest>("application/json")
+        .Produces<MailFolderResponse>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status404NotFound)
+        .ProducesValidationProblem();
 
         group.MapPost("/{id:guid}/send", async (
             Guid id,
@@ -136,7 +200,20 @@ public static class MailAccountEndpoints
                     result.Errors.ToDictionary(entry => entry.Key, entry => entry.Value)),
                 _ => Results.ValidationProblem(result.Errors.ToDictionary(entry => entry.Key, entry => entry.Value))
             };
-        }).RequireRateLimiting("mail-operations");
+        })
+        .RequireRateLimiting("mail-operations")
+        .DisableAntiforgery()
+        .WithName("SendMail")
+        .WithSummary("Send mail with idempotency")
+        .WithDescription("Multipart form: toAddress, subject, bodyHtml and/or bodyText, optional attachment files (max 20). Requires the Idempotency-Key header; replaying it returns the original result. Delivery failures surface as 502; uncertain delivery as 409. Rate limited to 20/min per user.")
+        .Accepts<IFormFile>("multipart/form-data")
+        .Produces<SendMailResult>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status404NotFound)
+        .Produces(StatusCodes.Status409Conflict)
+        .Produces(StatusCodes.Status429TooManyRequests)
+        .ProducesProblem(StatusCodes.Status502BadGateway)
+        .ProducesValidationProblem();
 
         return app;
     }

@@ -1,6 +1,7 @@
 using MailClient.Application;
 using MailClient.Application.Interfaces;
 using MailClient.Application.Validation;
+using MailClient.Domain;
 using MailClient.Domain.Entities;
 using MailClient.Domain.Enums;
 using MailClient.Infrastructure.Persistence;
@@ -14,6 +15,7 @@ namespace MailClient.Infrastructure.Identity;
 public sealed class AuthenticationService(
     AppDbContext db,
     IPasswordHasher<User> passwords,
+    IAuditLogger audit,
     ILogger<AuthenticationService> logger) : IAuthenticationService
 {
     public async Task<ServiceResult<RegisteredUser>> RegisterAsync(
@@ -56,6 +58,13 @@ public sealed class AuthenticationService(
         }
 
         logger.LogInformation("User {UserId} registered with status {Status}.", user.Id, user.Status);
+        await audit.LogAsync(
+            user.Id,
+            AuditActions.UserRegistered,
+            AuditEntities.User,
+            user.Id.ToString(),
+            new Dictionary<string, string?> { ["status"] = user.Status.ToString() },
+            cancellationToken);
         return ServiceResult<RegisteredUser>.Success(new RegisteredUser(user.Id, user.Email, user.DisplayName, user.Status));
     }
 
@@ -83,6 +92,13 @@ public sealed class AuthenticationService(
         user.LastLoginAt = DateTime.UtcNow;
         await db.SaveChangesAsync(cancellationToken);
 
+        await audit.LogAsync(
+            user.Id,
+            AuditActions.UserLoggedIn,
+            AuditEntities.User,
+            user.Id.ToString(),
+            null,
+            cancellationToken);
         return ServiceResult<AuthenticatedUser>.Success(new AuthenticatedUser(user.Id, user.Email, user.Role, user.TokenVersion));
     }
 }

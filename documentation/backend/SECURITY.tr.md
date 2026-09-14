@@ -121,11 +121,26 @@ ağlardan sahte başlıkların etkisi yoktur.
 
 ## Hata yönetimi
 
-Yakalanmayan hatalar → `UseExceptionHandler` ile ProblemDetails (istemciye
-stack trace yok). Doğrulama/auth/limit/posta/sağlayıcı hataları
+Yakalanmayan hatalar → önce sunucu tarafında bir kez loglanır (tip, mesaj,
+stack, metot/yol, kullanıcı, korelasyon id) → `UseExceptionHandler` ile
+ProblemDetails (istemciye stack trace yok). Doğrulama/auth/limit/posta/sağlayıcı hataları
 [API_REFERENCE.tr.md](API_REFERENCE.tr.md) uyarınca 400/401/403/429/404/409/502
 eşlenir. Senkron hataları sunucu tarafında loglanır (kullanıcı id + host,
 asla parola); push hataları commit edilmiş duruma dokunmaz.
+
+## Loglama ve audit gizliliği
+
+- HTTP istek/yanıt gövdeleri yapısal JSON'a ayrıştırılır ve özyineli
+  redakte edilir (`password`, `token`, `secret`, `apiKey`, … →
+  `"[REDACTED]"`, büyük/küçük harf duyarsız). Authorization başlıkları ve
+  çerezler asla loglanmaz. Multipart gönderilerde yalnızca alan adları +
+  ek dosya adı/tipi/boyutu; posta gövdeleri ve dosya baytları loga girmez.
+- Audit satırları (`AuditLogs`) yalnızca kimlik/eposta/host/bayrak taşır —
+  asla parola, hash, token veya mesaj içeriği. Başarısız girişler ve
+  salt-okunur GET'ler audit yazmaz.
+- Her istek bir korelasyon id taşır (`X-Correlation-ID`, doğrulamalı, en
+  çok 64 karakter); yanıtta geri döner, loglara + audit satırlarına
+  işlenir. Bkz. [BACKEND_GUIDE.tr.md](BACKEND_GUIDE.tr.md) §13.
 
 ## Dev kolaylıkları vs production zorunlulukları
 

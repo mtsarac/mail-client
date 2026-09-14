@@ -1,5 +1,6 @@
 using MailClient.Application.Interfaces;
 using MailClient.Application.Validation;
+using MailClient.Domain;
 using MailClient.Domain.Entities;
 using MailClient.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -10,6 +11,7 @@ namespace MailClient.Infrastructure.Push;
 
 public sealed class DeviceTokenService(
     AppDbContext db,
+    IAuditLogger audit,
     ILogger<DeviceTokenService> logger) : IDeviceTokenService
 {
     private static readonly HashSet<string> AllowedPlatforms = new(StringComparer.OrdinalIgnoreCase) { "android", "ios" };
@@ -52,11 +54,26 @@ public sealed class DeviceTokenService(
             catch (DbUpdateException ex) when (DbUniqueViolation.IsUniqueViolationFor(ex, "IX_DeviceTokens"))
             {
                 db.ChangeTracker.Clear();
-                return await ReassignAsync(userId, token, normalizedPlatform, now, cancellationToken);
+                var reassigned = await ReassignAsync(userId, token, normalizedPlatform, now, cancellationToken);
+                await audit.LogAsync(
+                    userId,
+                    AuditActions.DeviceRegistered,
+                    AuditEntities.Device,
+                    reassigned.Id.ToString(),
+                    new Dictionary<string, string?> { ["platform"] = normalizedPlatform },
+                    cancellationToken);
+                return reassigned;
             }
 
             logger.LogInformation(
                 "Device registered for user {UserId} on {Platform}.", userId, normalizedPlatform);
+            await audit.LogAsync(
+                userId,
+                AuditActions.DeviceRegistered,
+                AuditEntities.Device,
+                device.Id.ToString(),
+                new Dictionary<string, string?> { ["platform"] = normalizedPlatform },
+                cancellationToken);
             return ToResponse(device);
         }
 
@@ -66,6 +83,13 @@ public sealed class DeviceTokenService(
         existing.Platform = normalizedPlatform;
         existing.LastSeenAt = now;
         await db.SaveChangesAsync(cancellationToken);
+        await audit.LogAsync(
+            userId,
+            AuditActions.DeviceRegistered,
+            AuditEntities.Device,
+            existing.Id.ToString(),
+            new Dictionary<string, string?> { ["platform"] = normalizedPlatform },
+            cancellationToken);
         return ToResponse(existing);
     }
 
@@ -78,6 +102,13 @@ public sealed class DeviceTokenService(
         db.DeviceTokens.Remove(device);
         await db.SaveChangesAsync(cancellationToken);
         logger.LogInformation("Device {DeviceId} unregistered for user {UserId}.", deviceId, userId);
+        await audit.LogAsync(
+            userId,
+            AuditActions.DeviceRemoved,
+            AuditEntities.Device,
+            deviceId.ToString(),
+            null,
+            cancellationToken);
         return true;
     }
 

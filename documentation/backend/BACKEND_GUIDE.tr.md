@@ -443,7 +443,50 @@ Tekillikler: `User.Email`; `(MailAccount.UserId, EmailAddress)`;
 
 ---
 
-## 13. Production notları
+## 13. Audit loglama, yapısal loglar, korelasyon
+
+- **Audit** (`AuditLogs` tablosu, `IAuditLogger` → `EfAuditLogger`):
+  başarılı anlamsal işlem başına bir satır — kayıt, giriş, posta hesabı
+  oluşturma/güncelleme/silme/test, klasör yenileme/senkron anahtarı,
+  posta gönderimi (yalnızca `Sent=true` ise; idempotent tekrarlar yazmaz),
+  okundu değişimleri (yalnızca gerçek değişim; no-op yazmaz), cihaz
+  kaydı/silme, admin oluşturma/durum-değişimi/parola-sıfırlama. Başarısız
+  girişler ve salt-okunur GET'ler yazmaz. Kolonlar: `UserId`, `Action`
+  (`AuditActions.*` sabitleri), `EntityType`, `EntityId`,
+  `TimestampUtc`, `Metadata` (jsonb), `CorrelationId`. Metadata yalnızca
+  kimlik/eposta/host/bayrak taşır — asla parola, token, hash veya gövde.
+- **Loglar** (Serilog, `ILogger<T>` aynen): uygulama/hatalar için
+  `logs/app-YYYYMMDD.json` (günlük döner, 14 dosya), HTTP trafiği için
+  `logs/http-YYYYMMDD.json` (günlük döner, 7 dosya). NDJSON, satır başına
+  bir yapısal olay; konsol dev'de insan-okunur kalır. Ayarlar
+  `Logging:File` (`Directory`, `RetainedFileCount`) ve `HttpLogging`
+  (`Enabled`, `MaxRequestBodyBytes` 32 KB, `MaxResponseBodyBytes` 64 KB,
+  `ExcludedPaths`: `/health*`, `/swagger`, `/openapi`).
+- **HTTP log yapısı**: metot, yol, sorgu, kullanıcı, durum, süre ms,
+  içerik tipleri, istemci IP, korelasyon, artı `request`/`response`
+  JSON gövdeleri ayrıştırılmış nesne olarak (kaçışlı string değil) —
+  boyut aşımında `bodyTruncated: true`. Multipart gönderilerde yalnızca
+  alan adları + ek dosya adı/tipi/boyutu; dosya baytı veya
+  `bodyHtml`/`bodyText` asla yok. İkili indirmelerde yalnızca metadata.
+- **Redaksiyon** (özyineli, büyük/küçük harf duyarsız): `password`,
+  `newPassword`, `currentPassword`, `accessToken`, `refreshToken`,
+  `token`, `pushToken`, `authorization`, `secret`, `clientSecret`,
+  `apiKey`, `encryptedPassword`, `credential(s)`, `certificatePassword`,
+  `privateKey` → `"[REDACTED]"`. Authorization başlıkları ve çerezler
+  asla loglanmaz.
+- **Korelasyon**: `X-Correlation-ID` gönderin (harf/rakam/`-`/`_`, en çok
+  64 karakter) veya üretilir; yanıtta geri döner, HTTP loglarına, Serilog
+  kapsamına ve audit satırlarına işlenir.
+- **Hatalar**: `ExceptionLoggingMiddleware` yakalanamayan istisnaları bir
+  kez loglar (tip, mesaj, stack, metot/yol, kullanıcı, korelasyon);
+  `UseExceptionHandler` iç detay vermeden `ProblemDetails` üretmeye devam
+  eder. Doğrulama/404/409 hata olarak loglanmaz.
+- **İnceleme**: `cat logs/http-*.json | jq 'select(.Path=="/api/auth/login")'`,
+  `jq '.Request.email'`, `jq 'select(.StatusCode>=500)'`.
+
+---
+
+## 14. Production notları
 
 Zorunlu (kodda) vs önerilen (operasyonel):
 
@@ -457,7 +500,7 @@ Zorunlu (kodda) vs önerilen (operasyonel):
 
 ---
 
-## 14. Sorun giderme
+## 15. Sorun giderme
 
 | Belirti | Olası neden / çözüm |
 |---|---|
@@ -478,7 +521,7 @@ Zorunlu (kodda) vs önerilen (operasyonel):
 
 ---
 
-## 15. Sözlük
+## 16. Sözlük
 
 **IMAP**: kutu okuma protokolü; **SMTP**: posta gönderme protokolü;
 **UID**: klasör içi değişmez mesaj kimliği; **UIDVALIDITY**: klasör nesil

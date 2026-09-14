@@ -93,7 +93,8 @@ LAN CORS/cleartext kuralları ve güvenlik duvarı sorun giderme özeti:
 
 | Proje | Tür | Nasıl |
 |---|---|---|
-| `MailClient.Api.Tests` | uçtan uca entegrasyon | `WebApplicationFactory` + Testcontainers Postgres (+ posta akışları için GreenMail): auth, izolasyon, token geçersizleme, posta uçları, gönderim, limitler, LAN/yapılandırma, kalıcılık |
+| `MailClient.Api.Tests` | uçtan uca entegrasyon | `WebApplicationFactory` + Testcontainers Postgres (+ posta akışları için GreenMail): auth, izolasyon, token geçersizleme, posta uçları, gönderim, limitler, LAN/yapılandırma, kalıcılık, audit + korelasyon |
+| `MailClient.Api.Tests` | birim | redaksiyon, HTTP middleware (akış geçişi, kırpma, hariç yollar), OpenAPI uç adları |
 | `MailClient.Infrastructure.Tests` | birim | EF InMemory + fake'ler: doğrulama, parola politikası, idempotent gönderim, yeniden yapılandırma, cihaz + push (fake gateway, ağ yok), keşif, eşleme, limitler, depolama, sınıflandırıcı, doğrulayıcı |
 | `MailClient.Infrastructure.Tests` | Postgres davranışları | Testcontainers: senkron backlog/bayrak/kullanılabilirlik, Postgres idempotency, migration yükseltme, yarış testleri |
 
