@@ -14,7 +14,7 @@ Korumalı API'ler MailAccountId değerini `ICurrentMailAccount` üzerinden alır
 
 ## Discovery ve SSRF
 
-Sıra: bilinen provider, DNS SRV, autoconfig, Microsoft Autodiscover, kontrollü heuristic. Discovery HTTP istemcileri sonlu timeout kullanır ve otomatik redirect izlemez. Aday ve manuel hostlar protokol auth öncesi DNS/adres kontrolünden geçer. Localhost, loopback, private IPv4, link-local, multicast, IPv6 unique-local ve güvensiz hedefler reddedilir. Yalnız `SslOnConnect` ve `StartTls` modellenir. MailKit sertifika doğrulaması kapatılmaz.
+Sıra: bilinen provider, DNS SRV, autoconfig, Microsoft Autodiscover, kontrollü heuristic. Discovery HTTP istemcileri sonlu timeout kullanır ve otomatik redirect izlemez. Aday ve manuel hostlar protokol auth öncesi DNS/adres kontrolünden geçer. Bağlantılar doğrulanmış IP'yi kullanırken TLS sertifika/SNI doğrulaması için özgün hostname'i korur; böylece ikinci DNS sorgusu ve DNS-rebinding TOCTOU önlenir. Localhost, loopback, private IPv4, link-local, multicast, IPv6 unique-local ve güvensiz hedefler reddedilir. Yalnız `SslOnConnect` ve `StartTls` modellenir. MailKit sertifika doğrulaması kapatılmaz.
 
 Manuel kurulum yalnız discovery'yi atlar. Host validation, DNS/IP, TLS, IMAP auth veya SMTP auth kontrollerini atlayamaz.
 

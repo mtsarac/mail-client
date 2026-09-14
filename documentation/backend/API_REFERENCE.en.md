@@ -90,6 +90,6 @@ Foreign mail, attachment, folder, or device IDs return 404.
 
 ## Stable errors
 
-ProblemDetails uses stable codes including `mail_discovery_failed`, `discovery_expired`, `mail_server_unsafe`, `mail_authentication_failed`, `unsupported_authentication_method`, `invalid_refresh_token`, `session_revoked`, `idempotency_key_required`, `idempotency_conflict`, and `invalid_mail_header`.
+ProblemDetails uses stable codes including `mail_discovery_failed`, `discovery_expired`, `mail_server_unsafe`, `mail_server_unreachable`, `mail_tls_failed`, `mail_authentication_failed`, `mail_smtp_authentication_failed`, `mail_provider_unavailable`, `unsupported_authentication_method`, `invalid_refresh_token`, `session_revoked`, `idempotency_key_required`, `idempotency_conflict`, and `invalid_mail_header`.
 
 Expected provider/discovery failures map to 400/401/409/422/429/502/503. Raw MailKit and network exceptions are not API contracts.

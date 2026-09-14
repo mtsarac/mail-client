@@ -14,7 +14,7 @@ Protected APIs derive MailAccountId from `ICurrentMailAccount`, never request ac
 
 ## Discovery and SSRF
 
-Discovery order is known provider, DNS SRV, autoconfig, Microsoft Autodiscover, then controlled heuristics. HTTP discovery clients have finite timeouts and automatic redirects disabled. Candidate and manual hosts pass DNS and address validation before protocol authentication. Localhost, loopback, private IPv4, link-local, multicast, IPv6 unique-local, and unsafe destinations are rejected. Only `SslOnConnect` and `StartTls` are modeled. MailKit certificate validation is not disabled.
+Discovery order is known provider, DNS SRV, autoconfig, Microsoft Autodiscover, then controlled heuristics. HTTP discovery clients have finite timeouts and automatic redirects disabled. Candidate and manual hosts pass DNS and address validation before protocol authentication. Connections use the validated IP with the original hostname retained for TLS certificate/SNI validation, preventing a second DNS lookup and DNS-rebinding TOCTOU. Localhost, loopback, private IPv4, link-local, multicast, IPv6 unique-local, and unsafe destinations are rejected. Only `SslOnConnect` and `StartTls` are modeled. MailKit certificate validation is not disabled.
 
 Manual setup bypasses discovery only. It cannot bypass host validation, DNS/IP checks, TLS, IMAP auth, or SMTP auth.
 

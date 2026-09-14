@@ -90,6 +90,6 @@ Başka hesaba ait mail, attachment, folder veya device ID değerleri 404 döndü
 
 ## Stabil hatalar
 
-ProblemDetails; `mail_discovery_failed`, `discovery_expired`, `mail_server_unsafe`, `mail_authentication_failed`, `unsupported_authentication_method`, `invalid_refresh_token`, `session_revoked`, `idempotency_key_required`, `idempotency_conflict` ve `invalid_mail_header` gibi stabil kodlar kullanır.
+ProblemDetails; `mail_discovery_failed`, `discovery_expired`, `mail_server_unsafe`, `mail_server_unreachable`, `mail_tls_failed`, `mail_authentication_failed`, `mail_smtp_authentication_failed`, `mail_provider_unavailable`, `unsupported_authentication_method`, `invalid_refresh_token`, `session_revoked`, `idempotency_key_required`, `idempotency_conflict` ve `invalid_mail_header` gibi stabil kodlar kullanır.
 
 Beklenen provider/discovery hataları 400/401/409/422/429/502/503 olur. Raw MailKit ve network exception'ları API sözleşmesi değildir.
