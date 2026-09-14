@@ -76,7 +76,7 @@ Aşağıdaki rotalar bearer JWT ister ve hesabı `sub` üzerinden belirler:
 | DELETE | `/api/account` | posta kutusu ve cache verisini sil |
 | GET | `/api/folders` | klasörleri listele |
 | POST | `/api/folders/refresh` | klasör yenilemeyi kuyruğa al |
-| POST | `/api/folders/{id}/sync` | klasör sync isteği |
+| POST | `/api/folders/{id}/sync` | klasör sync isteği; açık istekler `IsSyncEnabled` değerini yok sayar, kullanılamayan klasörler `409 mail_folder_unavailable` döndürür |
 | GET | `/api/mails` | mevcut hesabın sayfalı postaları (`folderId`, `isRead`, `hasAttachments`, `search`, `page`, `pageSize` ≤ 100 → `{ items, page, pageSize, total }`) |
 | GET | `/api/mails/{id}` | posta detayı |
 | PATCH | `/api/mails/{id}/read` | `{ "isRead": true }` |
