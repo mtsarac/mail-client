@@ -104,7 +104,6 @@ var sessionOptions = builder.Configuration.GetSection("Session").Get<MailClient.
 sessionOptions.Validate();
 builder.Services.AddSingleton(sessionOptions);
 builder.Services.AddSingleton<MailConnectionHelper>();
-builder.Services.AddSingleton<MailKitConnectivityTester>();
 builder.Services.AddScoped<MailKitFolderExplorer>();
 builder.Services.AddScoped<MailCredentialResolver>();
 builder.Services.AddSingleton<IMailConnectionValidator, MailKitConnectionValidator>();
@@ -229,8 +228,6 @@ app.MapFolderEndpoints();
 app.MapMailEndpoints();
 app.MapDeviceEndpoints();
 app.MapHealthEndpoints();
-if (app.Environment.IsEnvironment("Test"))
-    app.MapPost("/test/throw", (HttpContext _) => throw new InvalidOperationException("test_failure"));
 
 app.Run();
 
