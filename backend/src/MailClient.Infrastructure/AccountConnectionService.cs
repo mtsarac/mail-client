@@ -10,7 +10,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace MailClient.Infrastructure.Accounts;
 
-public sealed class AccountConnectionService(AppDbContext db, IMailConnectionValidator connections, ICredentialProtector protector, MailSessionService sessions, IJwtTokenIssuer jwt)
+public sealed class AccountConnectionService(AppDbContext db, IMailConnectionValidator connections, ICredentialProtector protector, MailSessionService sessions, IJwtTokenIssuer jwt, InitialSyncQueue syncQueue)
 {
     public async Task<TokenResponse> ConnectAsync(DiscoveryState state, AuthenticationInput authentication, string? deviceIdentifier, CancellationToken cancellationToken) =>
         await ConnectCoreAsync(state.Email, state.Email, null, state.Candidate, authentication, deviceIdentifier, cancellationToken);
@@ -30,8 +30,16 @@ public sealed class AccountConnectionService(AppDbContext db, IMailConnectionVal
         string? working = null;
         foreach (var candidateUsername in usernames)
         {
-            try { await connections.ValidateCredentialsAsync(candidate, candidateUsername, authentication.Password, cancellationToken); working = candidateUsername; break; }
-            catch (MailKit.Security.AuthenticationException) { }
+            try
+            {
+                await connections.ValidateCredentialsAsync(candidate, candidateUsername, authentication.Password, cancellationToken);
+                working = candidateUsername;
+                break;
+            }
+            catch (MailKit.Security.AuthenticationException) when (candidateUsername != usernames.Last())
+            {
+                continue;
+            }
         }
         if (working is null) throw new InvalidOperationException("mail_authentication_failed");
         var normalized = email.Trim().ToUpperInvariant();
@@ -54,6 +62,7 @@ public sealed class AccountConnectionService(AppDbContext db, IMailConnectionVal
         credential.EncryptedMaterial = protector.Protect(authentication.Password); credential.UpdatedAt = now;
         await db.SaveChangesAsync(cancellationToken);
         var session = await sessions.CreateAsync(account.Id, deviceIdentifier, TimeSpan.FromDays(30), cancellationToken);
+        await syncQueue.EnqueueAsync(account.Id, cancellationToken);
         var access = jwt.Issue(account.Id);
         return new(access.Token, session.Token, account.Id, access.ExpiresAt);
     }
