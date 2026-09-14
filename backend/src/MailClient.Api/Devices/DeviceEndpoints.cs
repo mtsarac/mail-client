@@ -30,7 +30,16 @@ public static class DeviceEndpoints
             {
                 return Results.ValidationProblem(ex.Errors.ToDictionary(entry => entry.Key, entry => entry.Value));
             }
-        }).RequireRateLimiting("mail-operations");
+        })
+        .RequireRateLimiting("mail-operations")
+        .WithName("RegisterDevice")
+        .WithSummary("Register a push device token")
+        .WithDescription("Registers an FCM token for android or ios. Same token re-registers idempotently; tokens owned by another user are reassigned. Example: { \"pushToken\": \"fcm-example-push-token\", \"platform\": \"android\" }. Rate limited to 20/min per user.")
+        .Accepts<DeviceRegisterRequest>("application/json")
+        .Produces<MailClient.Application.Interfaces.DeviceTokenResponse>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status429TooManyRequests)
+        .ProducesValidationProblem();
 
         group.MapDelete("/{id:guid}", async (
             Guid id,
@@ -38,7 +47,14 @@ public static class DeviceEndpoints
             IDeviceTokenService devices,
             CancellationToken ct) =>
             await devices.DeleteAsync(GetUserId(user), id, ct) ? Results.NoContent() : Results.NotFound())
-            .RequireRateLimiting("mail-operations");
+            .RequireRateLimiting("mail-operations")
+            .WithName("RemoveDevice")
+            .WithSummary("Remove a push device token")
+            .WithDescription("Unregisters one owned device token. Rate limited to 20/min per user.")
+            .Produces(StatusCodes.Status204NoContent)
+            .Produces(StatusCodes.Status401Unauthorized)
+            .Produces(StatusCodes.Status404NotFound)
+            .Produces(StatusCodes.Status429TooManyRequests);
 
         return app;
     }
