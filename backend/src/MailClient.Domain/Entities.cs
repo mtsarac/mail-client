@@ -25,6 +25,8 @@ public sealed class MailAccount
     public DateTime? LastAuthenticatedAt { get; set; }
     public ICollection<MailCredential> Credentials { get; set; } = [];
     public ICollection<MailSession> Sessions { get; set; } = [];
+    public ICollection<MailFolder> Folders { get; set; } = [];
+    public ICollection<Mail> Mails { get; set; } = [];
 }
 
 public sealed class MailCredential
@@ -56,11 +58,78 @@ public sealed class MailSession
     public MailAccount MailAccount { get; set; } = null!;
 }
 
-public sealed class MailFolder { public Guid Id { get; set; } public Guid MailAccountId { get; set; } public string Name { get; set; } = ""; public string FullName { get; set; } = ""; public uint UidValidity { get; set; } public bool IsSyncEnabled { get; set; } = true; }
-public sealed class Mail { public Guid Id { get; set; } public Guid MailAccountId { get; set; } public Guid MailFolderId { get; set; } public uint Uid { get; set; } public string Subject { get; set; } = ""; public string FromAddress { get; set; } = ""; public string BodyText { get; set; } = ""; public string BodyHtml { get; set; } = ""; public bool IsRead { get; set; } public DateTime ReceivedAt { get; set; } }
-public sealed class Attachment { public Guid Id { get; set; } public Guid MailAccountId { get; set; } public Guid MailId { get; set; } public string FileName { get; set; } = ""; public string ContentType { get; set; } = ""; public string StoragePath { get; set; } = ""; public long SizeBytes { get; set; } }
-public sealed class SyncState { public Guid Id { get; set; } public Guid MailAccountId { get; set; } public Guid MailFolderId { get; set; } public uint UidValidity { get; set; } public uint LastUid { get; set; } public long NextUidScanStart { get; set; } = 1; }
+public sealed class MailFolder
+{
+    public Guid Id { get; set; }
+    public Guid MailAccountId { get; set; }
+    public string Name { get; set; } = "";
+    public string FullName { get; set; } = "";
+    public MailFolderType FolderType { get; set; } = MailFolderType.Unknown;
+    public uint UidValidity { get; set; }
+    public bool IsSyncEnabled { get; set; } = true;
+    public bool IsAvailable { get; set; } = true;
+    public MailAccount? MailAccount { get; set; }
+    public SyncState? SyncState { get; set; }
+    public ICollection<Mail> Mails { get; set; } = [];
+}
+public sealed class Mail
+{
+    public Guid Id { get; set; }
+    public Guid MailAccountId { get; set; }
+    public Guid MailFolderId { get; set; }
+    public uint Uid { get; set; }
+    public uint UidValidity { get; set; }
+    public string MessageId { get; set; } = "";
+    public string Subject { get; set; } = "";
+    public string FromAddress { get; set; } = "";
+    public string FromDisplayName { get; set; } = "";
+    public string ToAddress { get; set; } = "";
+    public string BodyText { get; set; } = "";
+    public string BodyHtml { get; set; } = "";
+    public bool IsRead { get; set; }
+    public bool HasAttachments { get; set; }
+    public DateTime ReceivedAt { get; set; }
+    public MailAccount? MailAccount { get; set; }
+    public MailFolder? MailFolder { get; set; }
+    public ICollection<Attachment> Attachments { get; set; } = [];
+}
+public sealed class Attachment
+{
+    public Guid Id { get; set; }
+    public Guid MailAccountId { get; set; }
+    public Guid MailId { get; set; }
+    public string FileName { get; set; } = "";
+    public string ContentType { get; set; } = "";
+    public string StoragePath { get; set; } = "";
+    public long SizeBytes { get; set; }
+    public bool IsInline { get; set; }
+    public string ContentId { get; set; } = "";
+    public Mail? Mail { get; set; }
+}
+public sealed class SyncState
+{
+    public Guid Id { get; set; }
+    public Guid MailAccountId { get; set; }
+    public Guid MailFolderId { get; set; }
+    public uint UidValidity { get; set; }
+    public uint LastUid { get; set; }
+    public long NextUidScanStart { get; set; } = 1;
+    public DateTime? LastNewMailSyncAt { get; set; }
+    public DateTime? LastFlagSyncAt { get; set; }
+    public MailFolder? MailFolder { get; set; }
+}
 public sealed class SyncSkippedUid { public Guid Id { get; set; } public Guid MailAccountId { get; set; } public Guid MailFolderId { get; set; } public uint Uid { get; set; } public string Reason { get; set; } = ""; public DateTime SkippedAt { get; set; } }
-public sealed class SendOperation { public Guid Id { get; set; } public Guid MailAccountId { get; set; } public string IdempotencyKey { get; set; } = ""; public string Fingerprint { get; set; } = ""; public SendOperationStatus Status { get; set; } public DateTime CreatedAt { get; set; } public DateTime UpdatedAt { get; set; } }
+public sealed class SendOperation
+{
+    public Guid Id { get; set; }
+    public Guid MailAccountId { get; set; }
+    public string IdempotencyKey { get; set; } = "";
+    public string Fingerprint { get; set; } = "";
+    public SendOperationStatus Status { get; set; } = SendOperationStatus.InProgress;
+    public bool SentCopySaved { get; set; }
+    public string? Warning { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public DateTime UpdatedAt { get; set; }
+}
 public sealed class DeviceToken { public Guid Id { get; set; } public Guid MailAccountId { get; set; } public Guid? MailSessionId { get; set; } public string Token { get; set; } = ""; public string Platform { get; set; } = ""; public DateTime RegisteredAt { get; set; } public DateTime? LastSeenAt { get; set; } }
 public sealed class AuditLog { public Guid Id { get; set; } public Guid? MailAccountId { get; set; } public string Action { get; set; } = ""; public string EntityType { get; set; } = ""; public string? EntityId { get; set; } public DateTime TimestampUtc { get; set; } public string? CorrelationId { get; set; } public string? Metadata { get; set; } }
