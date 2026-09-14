@@ -29,6 +29,7 @@ public sealed class DiscoveryStrategyTests
         Assert.Equal(smtpPort, candidate.Smtp.Port);
         Assert.Equal(smtpSecurity, candidate.Smtp.Security);
         Assert.Equal(DiscoverySource.KnownProvider, candidate.Source);
+        Assert.Equal([AuthenticationMethod.Password, AuthenticationMethod.AppSpecificPassword], candidate.AuthenticationMethods);
     }
 
     [Fact]
@@ -116,6 +117,7 @@ public sealed class DiscoveryStrategyTests
         Assert.Equal(MailProvider.Microsoft, candidate.Provider);
         Assert.Equal("outlook.office365.com", candidate.Imap.Host);
         Assert.Equal(DiscoverySource.Autodiscover, candidate.Source);
+        Assert.Equal([AuthenticationMethod.Password, AuthenticationMethod.AppSpecificPassword], candidate.AuthenticationMethods);
 
         var insecure = new MicrosoftAutodiscoverStrategy(StubHttp(_ => Ok("""{"Protocol":"IMAP","Url":"http://insecure.example.test/imap"}""", "application/json")));
         Assert.Empty(await CollectAsync(insecure, "person@example.test"));
