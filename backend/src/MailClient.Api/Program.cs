@@ -80,8 +80,13 @@ builder.Services.AddSingleton<IJwtTokenIssuer, JwtTokenIssuer>();
 builder.Services.AddScoped<ICurrentMailAccount, CurrentMailAccount>();
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(options => options.TokenValidationParameters = new()
 {
-    ValidateIssuer = true, ValidIssuer = jwt.Issuer, ValidateAudience = true, ValidAudience = jwt.Audience,
-    ValidateIssuerSigningKey = true, IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwt.Key)), ValidateLifetime = true,
+    ValidateIssuer = true,
+    ValidIssuer = jwt.Issuer,
+    ValidateAudience = true,
+    ValidAudience = jwt.Audience,
+    ValidateIssuerSigningKey = true,
+    IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwt.Key)),
+    ValidateLifetime = true,
     NameClaimType = JwtRegisteredClaimNames.Sub
 });
 builder.Services.AddAuthorization();

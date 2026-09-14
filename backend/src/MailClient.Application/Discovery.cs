@@ -21,8 +21,8 @@ public sealed class MailServerDiscoveryService(IEnumerable<IMailDiscoveryStrateg
     public async Task<MailServerCandidate?> DiscoverAsync(string email, CancellationToken cancellationToken)
     {
         foreach (var strategy in strategies.OrderBy(item => item.Order))
-        await foreach (var candidate in strategy.DiscoverAsync(email, cancellationToken).WithCancellation(cancellationToken))
-            if (await validator.ValidateAsync(candidate, cancellationToken)) return candidate;
+            await foreach (var candidate in strategy.DiscoverAsync(email, cancellationToken).WithCancellation(cancellationToken))
+                if (await validator.ValidateAsync(candidate, cancellationToken)) return candidate;
         return null;
     }
 }
