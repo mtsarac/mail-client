@@ -23,9 +23,7 @@ public sealed class FirebasePushNotificationService(
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex,
-                "Push notification failed for account {MailAccountId}, mail {MailId}. Sync state is unaffected.",
-                notification.MailAccountId, notification.MailId);
+            logger.LogWarning(ex, "Push notification delivery failed. Sync state is unaffected.");
         }
     }
 
@@ -63,8 +61,7 @@ public sealed class FirebasePushNotificationService(
                 .ToListAsync(cancellationToken);
             db.DeviceTokens.RemoveRange(invalid);
             await db.SaveChangesAsync(cancellationToken);
-            logger.LogInformation(
-                "Removed {Count} invalid device tokens for account {MailAccountId}.", invalid.Count, notification.MailAccountId);
+            logger.LogInformation("Removed {Count} invalid device tokens.", invalid.Count);
         }
     }
 }

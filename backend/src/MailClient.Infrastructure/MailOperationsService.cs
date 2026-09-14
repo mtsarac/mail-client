@@ -30,7 +30,7 @@ public sealed class InitialSyncWorker(
         {
             try
             {
-                logger.LogInformation("Initial synchronization requested for MailAccount {MailAccountId}.", accountId);
+                logger.LogInformation("A queued mailbox requested initial synchronization.");
                 await using var scope = scopes.CreateAsyncScope();
                 await scope.ServiceProvider.GetRequiredService<MailFolderSyncService>().SyncAllAsync(stoppingToken);
             }
@@ -40,7 +40,7 @@ public sealed class InitialSyncWorker(
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "Initial synchronization failed for MailAccount {MailAccountId}.", accountId);
+                logger.LogError(ex, "Queued initial synchronization failed.");
             }
         }
     }
