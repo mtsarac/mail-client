@@ -8,9 +8,9 @@ public sealed record HostValidationResult(bool Allowed, string? Reason = null);
 
 public sealed record ValidatedHost(string Host, IPAddress Address);
 
-public sealed class OutboundHostValidator(IDnsResolver dns)
+public class OutboundHostValidator(IDnsResolver dns)
 {
-    public async Task<HostValidationResult> ValidateAsync(string host, CancellationToken cancellationToken)
+    public virtual async Task<HostValidationResult> ValidateAsync(string host, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(host) || host.Equals("localhost", StringComparison.OrdinalIgnoreCase)) return new(false, "Invalid or local host.");
         IPAddress[] addresses;
@@ -23,7 +23,7 @@ public sealed class OutboundHostValidator(IDnsResolver dns)
         return addresses.Length > 0 && addresses.All(IsPublic) ? new(true) : new(false, "Host resolves to blocked address.");
     }
 
-    public async Task<ValidatedHost> ResolveAllowedAsync(string host, CancellationToken cancellationToken)
+    public virtual async Task<ValidatedHost> ResolveAllowedAsync(string host, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(host) || host.Equals("localhost", StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("Invalid or local host.");

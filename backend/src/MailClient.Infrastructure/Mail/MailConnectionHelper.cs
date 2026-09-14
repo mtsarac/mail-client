@@ -77,7 +77,7 @@ public sealed class MailConnectionHelper(
             logger.LogError(ex,
                 "Mail operation {Operation} failed ({Failure}) for host {Host} on port {Port}.",
                 operation, failure, endpoint.Host, endpoint.Port);
-            throw new MailConnectionException(failure, MailConnectionErrorClassifier.SafeMessage(failure), ex);
+            throw new MailConnectionException(failure, MailConnectionErrorClassifier.SafeMessage(failure), ex) { Operation = operation };
         }
         finally
         {

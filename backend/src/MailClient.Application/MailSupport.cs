@@ -9,6 +9,7 @@ public sealed record MailServerEndpoint(string Host, int Port, MailSecurity Secu
 public sealed class MailConnectionException(MailConnectionFailure failure, string message, Exception? inner = null) : Exception(message, inner)
 {
     public MailConnectionFailure Failure { get; } = failure;
+    public string Operation { get; init; } = "";
 }
 
 public sealed class SmtpDeliveryException(string message, Exception? inner = null) : Exception(message, inner);

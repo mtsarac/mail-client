@@ -48,7 +48,7 @@ public sealed class AccountConnectionService(
                 working = candidateUsername;
                 break;
             }
-            catch (MailKit.Security.AuthenticationException) when (candidateUsername != usernames.Last())
+            catch (MailConnectionException ex) when (ex.Failure == MailConnectionFailure.Authentication && candidateUsername != usernames.Last())
             {
                 continue;
             }

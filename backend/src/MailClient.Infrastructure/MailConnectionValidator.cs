@@ -1,8 +1,6 @@
 using MailClient.Application.Discovery;
+using MailClient.Application.Mail;
 using MailClient.Infrastructure.Network;
-using MailKit.Net.Imap;
-using MailKit.Net.Smtp;
-using MailKit.Security;
 
 namespace MailClient.Infrastructure.Mail;
 
@@ -12,9 +10,12 @@ public interface IMailConnectionValidator
     Task ValidateCredentialsAsync(MailServerCandidate candidate, string username, string password, CancellationToken cancellationToken);
 }
 
-public sealed class MailKitConnectionValidator(OutboundHostValidator hosts) : IMailConnectionValidator, IMailServerCandidateValidator
+public sealed class MailKitConnectionValidator(
+    OutboundHostValidator hosts,
+    MailConnectionHelper connections) : IMailConnectionValidator, IMailServerCandidateValidator
 {
-    public async Task<bool> ValidateAsync(MailServerCandidate candidate, CancellationToken cancellationToken) => await ValidateCandidateAsync(candidate, cancellationToken);
+    public Task<bool> ValidateAsync(MailServerCandidate candidate, CancellationToken cancellationToken) =>
+        ValidateCandidateAsync(candidate, cancellationToken);
 
     public async Task<bool> ValidateCandidateAsync(MailServerCandidate candidate, CancellationToken cancellationToken)
     {
@@ -25,18 +26,14 @@ public sealed class MailKitConnectionValidator(OutboundHostValidator hosts) : IM
     public async Task ValidateCredentialsAsync(MailServerCandidate candidate, string username, string password, CancellationToken cancellationToken)
     {
         if (!await ValidateCandidateAsync(candidate, cancellationToken)) throw new InvalidOperationException("mail_server_unsafe");
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(TimeSpan.FromSeconds(20));
-        using (var imap = new ImapClient())
-        {
-            await imap.ConnectAsync(candidate.Imap.Host, candidate.Imap.Port, Map(candidate.Imap.Security), timeout.Token);
-            await imap.AuthenticateAsync(username, password, timeout.Token);
-            await imap.DisconnectAsync(true, timeout.Token);
-        }
-        using var smtp = new SmtpClient();
-        await smtp.ConnectAsync(candidate.Smtp.Host, candidate.Smtp.Port, Map(candidate.Smtp.Security), timeout.Token);
-        await smtp.AuthenticateAsync(username, password, timeout.Token);
-        await smtp.DisconnectAsync(true, timeout.Token);
+        await connections.WithImapAsync(
+            new MailServerEndpoint(candidate.Imap.Host, candidate.Imap.Port, candidate.Imap.Security),
+            username, password, "ValidateImap",
+            static (_, _) => Task.FromResult(true), cancellationToken);
+        await connections.WithSmtpAsync(
+            new MailServerEndpoint(candidate.Smtp.Host, candidate.Smtp.Port, candidate.Smtp.Security),
+            username, password, "ValidateSmtp",
+            static (_, _) => Task.FromResult(true), cancellationToken);
     }
 
     private static bool Allowed(int port, Domain.Enums.MailSecurity security, bool imap) => security switch
@@ -45,5 +42,4 @@ public sealed class MailKitConnectionValidator(OutboundHostValidator hosts) : IM
         Domain.Enums.MailSecurity.StartTls => port == (imap ? 143 : 587),
         _ => false
     };
-    private static SecureSocketOptions Map(Domain.Enums.MailSecurity security) => security == Domain.Enums.MailSecurity.SslOnConnect ? SecureSocketOptions.SslOnConnect : SecureSocketOptions.StartTls;
 }
