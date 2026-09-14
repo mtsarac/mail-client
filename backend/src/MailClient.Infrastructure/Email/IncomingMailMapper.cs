@@ -1,9 +1,10 @@
+using MailClient.Domain.Enums;
+using MailKit;
 using MimeKit;
 
-// Maps downloaded MIME messages to cached mail and attachment records.
 namespace MailClient.Infrastructure.Email;
 
-internal sealed record IncomingMail(
+public sealed record IncomingMail(
     Guid MailAccountId,
     Guid MailFolderId,
     uint Uid,
@@ -19,14 +20,14 @@ internal sealed record IncomingMail(
     bool IsRead,
     IReadOnlyList<IncomingAttachment> Attachments);
 
-internal sealed record IncomingAttachment(
+public sealed record IncomingAttachment(
     IMimeContent Content,
     string FileName,
     string ContentType,
     bool IsInline,
     string ContentId);
 
-internal static class IncomingMailMapper
+public static class IncomingMailMapper
 {
     public static IncomingMail Map(
         MimeMessage message,

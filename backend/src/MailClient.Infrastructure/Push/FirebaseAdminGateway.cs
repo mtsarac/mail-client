@@ -1,14 +1,8 @@
 using FirebaseAdmin.Messaging;
 using Microsoft.Extensions.Logging;
 
-// FCM gateway mapping send outcomes to keep-or-remove token decisions.
 namespace MailClient.Infrastructure.Push;
 
-// IFirebaseGateway over the official Firebase Admin SDK (via
-// IFirebaseMessageSender). Only a definitive unregistered-token report removes
-// the token; quota, auth, transient, server and malformed-request failures keep
-// it. A total transport failure marks every recipient failed (kept) and never
-// throws, so push can never disturb the already-committed sync state.
 public sealed class FirebaseAdminGateway(
     IFirebaseMessageSender sender,
     ILogger<FirebaseAdminGateway> logger) : IFirebaseGateway

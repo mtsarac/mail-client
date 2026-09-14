@@ -2,14 +2,8 @@ using FirebaseAdmin;
 using FirebaseAdmin.Messaging;
 using Microsoft.Extensions.Logging;
 
-// Sends Firebase Cloud Messaging notifications through the Firebase Admin SDK.
 namespace MailClient.Infrastructure.Push;
 
-// Production IFirebaseMessageSender over the official Firebase Admin .NET SDK.
-// Recipients chunk at the FCM multicast limit (500); each chunk maps to one
-// SendEachForMulticastAsync call so per-recipient outcomes stay isolated.
-// Errors are reported per token via MessagingErrorCode; whole-batch transport
-// failures propagate so the gateway can mark every recipient failed (kept).
 public sealed class FirebaseMessageSender(ILogger<FirebaseMessageSender> logger) : IFirebaseMessageSender
 {
     public const int MaxTokensPerBatch = 500;
@@ -30,9 +24,6 @@ public sealed class FirebaseMessageSender(ILogger<FirebaseMessageSender> logger)
         CancellationToken cancellationToken)
     {
         var messaging = FirebaseMessaging.GetMessaging(FirebaseApp.GetInstance(FirebaseSetup.AppName));
-        // Message.Token is the FCM registration-token field our device tokens
-        // carry; the SDK marks it obsolete in favor of FID, which is a
-        // different identifier and would misroute these tokens.
 #pragma warning disable CS0618
         var outgoing = chunk.Select(message => new Message
         {

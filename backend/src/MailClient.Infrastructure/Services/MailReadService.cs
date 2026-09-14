@@ -1,40 +1,44 @@
 using System.Security.Cryptography;
-using MailClient.Application;
-using MailClient.Application.Interfaces;
-using MailClient.Application.Network;
-using MailClient.Domain;
+using MailClient.Application.Mail;
+using MailClient.Domain.Entities;
+using MailClient.Domain.Enums;
 using MailClient.Infrastructure.Email;
+using MailClient.Infrastructure.Observability;
 using MailClient.Infrastructure.Persistence;
 using MailKit;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using MailEntity = MailClient.Domain.Entities.Mail;
 
-// Applies read/unread changes to IMAP first, then to the local cache.
 namespace MailClient.Infrastructure.Services;
+
+public sealed record MailReadOutcome(bool Found, bool Applied, bool Conflict, bool ProviderError);
 
 public sealed class MailReadService(
     AppDbContext db,
-    IMailFolderClient folders,
-    IAuditLogger audit,
-    ILogger<MailReadService> logger) : IMailReadService
+    Mail.IMailFolderClient folders,
+    AuditLogger audit,
+    ILogger<MailReadService> logger)
 {
-    public async Task<ServiceResult<MailReadDto>> SetReadAsync(
-        Guid userId,
+    public Task<MailEntity?> GetAsync(Guid accountId, Guid mailId, CancellationToken cancellationToken) =>
+        db.Mails.AsNoTracking().SingleOrDefaultAsync(mail => mail.Id == mailId && mail.MailAccountId == accountId, cancellationToken);
+
+    public async Task<MailReadOutcome> SetReadAsync(
+        Guid accountId,
         Guid mailId,
         bool isRead,
+        string? correlationId,
         CancellationToken cancellationToken)
     {
         var mail = await db.Mails
             .Include(item => item.MailAccount)
             .Include(item => item.MailFolder)
-            .SingleOrDefaultAsync(
-                item => item.Id == mailId && item.MailAccount!.UserId == userId,
-                cancellationToken);
-        if (mail?.MailAccount is null || mail.MailFolder is null || !mail.MailAccount.IsActive)
-            return ServiceResult<MailReadDto>.Failure(ServiceOutcome.NotFound, "mail", "Mail not found.");
+            .SingleOrDefaultAsync(item => item.Id == mailId && item.MailAccountId == accountId, cancellationToken);
+        if (mail?.MailAccount is null || mail.MailFolder is null || mail.MailAccount.Status != MailAccountStatus.Active)
+            return new MailReadOutcome(false, false, false, false);
 
         if (mail.IsRead == isRead)
-            return ServiceResult<MailReadDto>.Success(new MailReadDto(mail.Id, mail.IsRead));
+            return new MailReadOutcome(true, false, false, false);
 
         var account = mail.MailAccount;
         var fullName = mail.MailFolder.FullName;
@@ -55,11 +59,8 @@ public sealed class MailReadService(
         }
         catch (MailboxStateChangedException)
         {
-            logger.LogWarning(
-                "Read flag not applied for mail {MailId}: UIDVALIDITY changed on folder {FullName}.",
-                mailId, fullName);
-            return ServiceResult<MailReadDto>.Failure(
-                ServiceOutcome.Conflict, "mail", "Mailbox folder changed. Sync will repair this folder.");
+            logger.LogWarning("Read flag not applied for mail {MailId}: UIDVALIDITY changed on folder {FullName}.", mailId, fullName);
+            return new MailReadOutcome(true, false, true, false);
         }
         catch (OperationCanceledException)
         {
@@ -68,20 +69,14 @@ public sealed class MailReadService(
         catch (Exception ex) when (ex is CryptographicException or MailConnectionException)
         {
             logger.LogWarning(ex, "Read flag not applied for mail {MailId}.", mailId);
-            return ServiceResult<MailReadDto>.Failure(
-                ServiceOutcome.ProviderError, "mail", "Mail server operation failed.");
+            return new MailReadOutcome(true, false, false, true);
         }
 
         mail.IsRead = isRead;
         await db.SaveChangesAsync(cancellationToken);
-        await audit.LogAsync(
-            userId,
-            AuditActions.MailReadStateChanged,
-            AuditEntities.Mail,
-            mail.Id.ToString(),
-            new Dictionary<string, string?> { ["isRead"] = isRead.ToString() },
-            cancellationToken);
-        return ServiceResult<MailReadDto>.Success(new MailReadDto(mail.Id, mail.IsRead));
+        await audit.WriteAsync(accountId, "mail.read-state-changed", "Mail", mail.Id.ToString(),
+            new Dictionary<string, string?> { ["isRead"] = isRead.ToString() }, correlationId, cancellationToken);
+        return new MailReadOutcome(true, true, false, false);
     }
 
     private sealed class MailboxStateChangedException : Exception;

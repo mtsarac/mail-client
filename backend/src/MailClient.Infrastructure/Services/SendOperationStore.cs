@@ -7,20 +7,8 @@ using MailClient.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
-// Transactional idempotency-claim store for send operations (proceed, replay, or deny).
 namespace MailClient.Infrastructure.Services;
 
-// Request-level SMTP deduplication for the send-mail operation.
-//
-// State machine (scoped per user + idempotency key):
-//   (none) --claim--> InProgress --provably before send--> FailedBeforeSend --retry--> InProgress
-//   InProgress --smtp accepted--> Sent --append ok--> SentWithCopy
-//   InProgress --attempted but outcome unknowable--> DeliveryUnknown (terminal)
-// A timeout alone never proves SMTP was unattempted, so stale InProgress
-// never auto-retries: both fresh and stale InProgress deny with 409.
-// Only FailedBeforeSend may claim again. Sent/SentWithCopy replay.
-// This is request deduplication, not protocol-level exactly-once delivery:
-// once SMTP may have accepted a message, automatic retries never resend.
 public sealed class SendOperationStore(AppDbContext db, ILogger<SendOperationStore> logger)
 {
     internal const int MaxKeyLength = 200;
@@ -32,7 +20,6 @@ public sealed class SendOperationStore(AppDbContext db, ILogger<SendOperationSto
     public sealed record Denied(string Reason) : Claim;
 
     public async Task<Claim> ClaimAsync(
-        Guid userId,
         Guid accountId,
         string key,
         string fingerprint,
@@ -42,11 +29,10 @@ public sealed class SendOperationStore(AppDbContext db, ILogger<SendOperationSto
         {
             try
             {
-                return await ClaimOnceAsync(userId, accountId, key, fingerprint, cancellationToken);
+                return await ClaimOnceAsync(accountId, key, fingerprint, cancellationToken);
             }
             catch (DbUpdateException) when (attempt == 0)
             {
-                // Lost the insert race: the row now exists, fall through and read it.
                 db.ChangeTracker.Clear();
             }
         }
@@ -76,7 +62,6 @@ public sealed class SendOperationStore(AppDbContext db, ILogger<SendOperationSto
             "Delivery status is uncertain; the message may have been sent.", cancellationToken);
 
     private async Task<Claim> ClaimOnceAsync(
-        Guid userId,
         Guid accountId,
         string key,
         string fingerprint,
@@ -84,18 +69,17 @@ public sealed class SendOperationStore(AppDbContext db, ILogger<SendOperationSto
     {
         var now = TruncateToMicroseconds(DateTime.UtcNow);
         if (!db.Database.IsRelational())
-            return await ClaimCoreAsync(userId, accountId, key, fingerprint, now, cancellationToken);
+            return await ClaimCoreAsync(accountId, key, fingerprint, now, cancellationToken);
 
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
         await db.Database.ExecuteSqlRawAsync(
-            "SELECT pg_advisory_xact_lock({0})", [LockKey(userId, key)], cancellationToken);
-        var claim = await ClaimCoreAsync(userId, accountId, key, fingerprint, now, cancellationToken);
+            "SELECT pg_advisory_xact_lock({0})", [LockKey(accountId, key)], cancellationToken);
+        var claim = await ClaimCoreAsync(accountId, key, fingerprint, now, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return claim;
     }
 
     private async Task<Claim> ClaimCoreAsync(
-        Guid userId,
         Guid accountId,
         string key,
         string fingerprint,
@@ -103,15 +87,14 @@ public sealed class SendOperationStore(AppDbContext db, ILogger<SendOperationSto
         CancellationToken cancellationToken)
     {
         var existing = await db.SendOperations.SingleOrDefaultAsync(
-            operation => operation.UserId == userId && operation.IdempotencyKey == key, cancellationToken);
+            operation => operation.MailAccountId == accountId && operation.IdempotencyKey == key, cancellationToken);
         if (existing is null)
         {
             var operation = new SendOperation
             {
                 Id = Guid.NewGuid(),
-                UserId = userId,
+                MailAccountId = accountId,
                 IdempotencyKey = key,
-                AccountId = accountId,
                 Fingerprint = fingerprint,
                 Status = SendOperationStatus.InProgress,
                 CreatedAt = now,
@@ -161,7 +144,7 @@ public sealed class SendOperationStore(AppDbContext db, ILogger<SendOperationSto
         if (operation is not null)
             await db.Database.ExecuteSqlRawAsync(
                 "SELECT pg_advisory_xact_lock({0})",
-                [LockKey(operation.UserId, operation.IdempotencyKey)],
+                [LockKey(operation.MailAccountId, operation.IdempotencyKey)],
                 cancellationToken);
 
         var updated = await UpdateCoreAsync(operationId, status, sentCopySaved, warning, now, cancellationToken);
@@ -221,6 +204,6 @@ public sealed class SendOperationStore(AppDbContext db, ILogger<SendOperationSto
     private static DateTime TruncateToMicroseconds(DateTime value) =>
         new(value.Ticks - value.Ticks % 10, value.Kind);
 
-    private static long LockKey(Guid userId, string key) => BitConverter.ToInt64(
-        SHA256.HashData(Encoding.UTF8.GetBytes($"sendop:{userId:N}:{key}")), 0);
+    private static long LockKey(Guid accountId, string key) => BitConverter.ToInt64(
+        SHA256.HashData(Encoding.UTF8.GetBytes($"sendop:{accountId:N}:{key}")), 0);
 }

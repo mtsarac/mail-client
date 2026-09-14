@@ -1,16 +1,15 @@
 using System.Net.Sockets;
-using MailClient.Application.Network;
+using MailClient.Application.Mail;
 using MailKit;
 using MailKit.Net.Imap;
 using MailKit.Net.Smtp;
 using MailKit.Security;
 
-// Classifies mail transport exceptions into actionable failure kinds.
 namespace MailClient.Infrastructure.Email;
 
-internal static class MailConnectionErrorClassifier
+public static class MailConnectionErrorClassifier
 {
-    internal static MailConnectionFailure Classify(Exception exception) => exception switch
+    public static MailConnectionFailure Classify(Exception exception) => exception switch
     {
         AuthenticationException => MailConnectionFailure.Authentication,
         SslHandshakeException => MailConnectionFailure.Tls,
@@ -28,7 +27,7 @@ internal static class MailConnectionErrorClassifier
         _ => MailConnectionFailure.Network
     };
 
-    internal static string SafeMessage(MailConnectionFailure failure) => failure switch
+    public static string SafeMessage(MailConnectionFailure failure) => failure switch
     {
         MailConnectionFailure.Authentication => "Mail authentication failed.",
         MailConnectionFailure.Tls => "Mail TLS handshake failed.",

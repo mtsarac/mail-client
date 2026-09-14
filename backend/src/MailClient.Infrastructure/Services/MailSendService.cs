@@ -1,39 +1,39 @@
 using System.Buffers;
 using System.Security.Cryptography;
-using MailClient.Application;
-using MailClient.Application.Interfaces;
-using MailClient.Application.Network;
+using MailClient.Application.Mail;
 using MailClient.Application.Sync;
-using MailClient.Domain;
 using MailClient.Domain.Entities;
 using MailClient.Domain.Enums;
 using MailClient.Infrastructure.Email;
+using MailClient.Infrastructure.Observability;
 using MailClient.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using MimeKit;
 
-// Validates, deduplicates, and sends mail through the account's SMTP server.
 namespace MailClient.Infrastructure.Services;
+
+public sealed record SendMailResult(bool Sent, bool SentCopySaved, string? Warning);
 
 public sealed class MailSendService(
     AppDbContext db,
-    IMailTransport transport,
+    Mail.IMailTransport transport,
     SendOperationStore operations,
     MailSyncOptions options,
-    IAuditLogger audit,
-    ILogger<MailSendService> logger) : IMailSendService
+    AuditLogger audit,
+    ILogger<MailSendService> logger)
 {
     private const int MaxAttachmentCount = 20;
 
-    public async Task<ServiceResult<SendMailResult>> SendAsync(
-        Guid userId,
+    public async Task<SendMailResult> SendAsync(
+        Guid accountId,
         SendMailCommand command,
+        string? correlationId,
         CancellationToken cancellationToken)
     {
         try
         {
-            return await SendCoreAsync(userId, command, cancellationToken);
+            return await SendCoreAsync(accountId, command, correlationId, cancellationToken);
         }
         finally
         {
@@ -42,98 +42,72 @@ public sealed class MailSendService(
         }
     }
 
-    private async Task<ServiceResult<SendMailResult>> SendCoreAsync(
-        Guid userId,
+    private async Task<SendMailResult> SendCoreAsync(
+        Guid accountId,
         SendMailCommand command,
+        string? correlationId,
         CancellationToken cancellationToken)
     {
-        if (!MailboxAddress.TryParse(command.ToAddress.Trim(), out var to)
-            || !HasLocalAndDomain(to.Address))
-            return ServiceResult<SendMailResult>.Failure(
-                ServiceOutcome.Invalid, "toAddress", "Recipient address is invalid.");
+        if (!MailboxAddress.TryParse(command.ToAddress.Trim(), out var to) || !HasLocalAndDomain(to.Address))
+            throw new InvalidOperationException("invalid_recipient");
         if (string.IsNullOrWhiteSpace(command.BodyHtml) && string.IsNullOrWhiteSpace(command.BodyText))
-            return ServiceResult<SendMailResult>.Failure(
-                ServiceOutcome.Invalid, "body", "Either HTML or text body is required.");
+            throw new InvalidOperationException("body_required");
         if ((command.BodyHtml?.Length ?? 0) > options.MaxSendBodyChars
             || (command.BodyText?.Length ?? 0) > options.MaxSendBodyChars)
-            return ServiceResult<SendMailResult>.Failure(
-                ServiceOutcome.Invalid, "body", "Message body is too large.");
+            throw new InvalidOperationException("body_too_large");
         if (command.Attachments.Count > MaxAttachmentCount)
-            return ServiceResult<SendMailResult>.Failure(
-                ServiceOutcome.Invalid, "attachments", $"At most {MaxAttachmentCount} attachments are allowed.");
+            throw new InvalidOperationException("too_many_attachments");
 
         var sizeError = CheckAttachmentSizes(command.Attachments);
         if (sizeError is not null)
-            return ServiceResult<SendMailResult>.Failure(ServiceOutcome.Invalid, "attachments", sizeError);
+            throw new InvalidOperationException("attachment_too_large");
 
-        var subject = MailFieldNormalizer.Truncate(command.Subject.Trim(), MailFieldLimits.Subject);
+        var subject = command.Subject.Contains('\r') || command.Subject.Contains('\n')
+            ? throw new InvalidOperationException("invalid_mail_header")
+            : MailFieldNormalizer.Truncate(command.Subject.Trim(), MailFieldLimits.Subject);
         var account = await db.MailAccounts.SingleOrDefaultAsync(
-            item => item.Id == command.AccountId && item.UserId == userId && item.IsActive,
-            cancellationToken);
-        if (account is null)
-            return ServiceResult<SendMailResult>.Failure(
-                ServiceOutcome.NotFound, "account", "Mail account not found.");
+            item => item.Id == command.AccountId && item.Id == accountId && item.Status == MailAccountStatus.Active,
+            cancellationToken)
+            ?? throw new InvalidOperationException("mail_account_not_found");
 
         if (string.IsNullOrWhiteSpace(command.IdempotencyKey))
-            return ServiceResult<SendMailResult>.Failure(
-                ServiceOutcome.Invalid, "idempotencyKey", "Idempotency-Key header is required.");
-
+            throw new InvalidOperationException("idempotency_key_required");
         if (command.IdempotencyKey.Length > SendOperationStore.MaxKeyLength)
-            return ServiceResult<SendMailResult>.Failure(
-                ServiceOutcome.Invalid, "idempotencyKey", "Idempotency key is too long.");
+            throw new InvalidOperationException("idempotency_key_too_long");
 
         var hashed = await HashAttachmentsAsync(command.Attachments, cancellationToken);
-        var fingerprint = SendOperationStore.Fingerprint(
-            account.Id,
-            to.Address,
-            subject,
-            command.BodyHtml,
-            command.BodyText,
-            hashed);
-        var claim = await operations.ClaimAsync(
-            userId, account.Id, command.IdempotencyKey, fingerprint, cancellationToken);
+        var fingerprint = SendOperationStore.Fingerprint(account.Id, to.Address, subject, command.BodyHtml, command.BodyText, hashed);
+        var claim = await operations.ClaimAsync(account.Id, command.IdempotencyKey, fingerprint, cancellationToken);
         return claim switch
         {
-            SendOperationStore.Replay replay => ServiceResult<SendMailResult>.Success(
-                new SendMailResult(true, replay.Operation.SentCopySaved, replay.Operation.Warning)),
-            SendOperationStore.Denied denied => ServiceResult<SendMailResult>.Failure(
-                ServiceOutcome.Conflict, "idempotencyKey", denied.Reason),
-            SendOperationStore.Proceed proceed => await SendAndAuditAsync(
-                userId, account, to, subject, command, proceed.Operation, cancellationToken),
-            _ => ServiceResult<SendMailResult>.Failure(
-                ServiceOutcome.Invalid, "idempotencyKey", "Idempotency key could not be processed.")
+            SendOperationStore.Replay replay => new SendMailResult(true, replay.Operation.SentCopySaved, replay.Operation.Warning),
+            SendOperationStore.Denied denied => throw new InvalidOperationException(denied.Reason.Contains("different request") ? "idempotency_conflict" : "send_in_progress"),
+            SendOperationStore.Proceed proceed => await SendAndAuditAsync(account, to, subject, command, proceed.Operation, correlationId, cancellationToken),
+            _ => throw new InvalidOperationException("idempotency_key_required")
         };
     }
 
-    private async Task<ServiceResult<SendMailResult>> SendAndAuditAsync(
-        Guid userId,
+    private async Task<SendMailResult> SendAndAuditAsync(
         MailAccount account,
         MailboxAddress to,
         string subject,
         SendMailCommand command,
         SendOperation? operation,
+        string? correlationId,
         CancellationToken cancellationToken)
     {
         var result = await SendAndStoreAsync(account, to, subject, command, operation, cancellationToken);
-        if (result is { Succeeded: true, Value.Sent: true })
+        if (result.Sent)
         {
-            await audit.LogAsync(
-                userId,
-                AuditActions.MailSent,
-                AuditEntities.MailAccount,
-                account.Id.ToString(),
-                new Dictionary<string, string?>
-                {
-                    ["toAddress"] = to.Address,
-                    ["sentCopySaved"] = result.Value!.SentCopySaved.ToString()
-                },
-                cancellationToken);
+            await audit.WriteAsync(account.Id, "mail.sent", "MailAccount", account.Id.ToString(),
+                new Dictionary<string, string?> { ["toAddress"] = to.Address, ["sentCopySaved"] = result.SentCopySaved.ToString() },
+                correlationId, cancellationToken);
         }
 
         return result;
     }
 
-    private async Task<ServiceResult<SendMailResult>> SendAndStoreAsync(
+    private async Task<SendMailResult> SendAndStoreAsync(
         MailAccount account,
         MailboxAddress to,
         string subject,
@@ -153,8 +127,7 @@ public sealed class MailSendService(
             logger.LogWarning(ex, "Send message could not be constructed for account {AccountId}.", account.Id);
             if (operation is not null)
                 await operations.TryFailAsync(operation.Id, "The message could not be constructed.", cancellationToken);
-            return ServiceResult<SendMailResult>.Failure(
-                ServiceOutcome.Invalid, "body", "The message could not be constructed.");
+            throw new InvalidOperationException("message_not_constructible");
         }
 
         try
@@ -171,39 +144,31 @@ public sealed class MailSendService(
             logger.LogWarning(ex, "SMTP delivery outcome unknown for account {AccountId}.", account.Id);
             if (operation is not null)
                 await operations.TryMarkUnknownAsync(operation.Id, cancellationToken);
-            return ServiceResult<SendMailResult>.Failure(
-                ServiceOutcome.Conflict, "delivery",
-                "Delivery status is uncertain; the message may have been sent. Retry with the same idempotency key to check.");
+            throw new InvalidOperationException("delivery_unknown");
         }
         catch (MailConnectionException ex)
         {
             logger.LogWarning(ex, "SMTP send failed before delivery for account {AccountId}.", account.Id);
             if (operation is not null)
                 await operations.TryFailAsync(operation.Id, "The message could not be sent.", cancellationToken);
-            return ServiceResult<SendMailResult>.Success(
-                new SendMailResult(false, false, "The message could not be sent."));
+            return new SendMailResult(false, false, "The message could not be sent.");
         }
         catch (Exception ex)
         {
             logger.LogWarning(ex, "SMTP send failed ambiguously for account {AccountId}.", account.Id);
             if (operation is not null)
                 await operations.TryMarkUnknownAsync(operation.Id, cancellationToken);
-            return ServiceResult<SendMailResult>.Failure(
-                ServiceOutcome.Conflict, "delivery",
-                "Delivery status is uncertain; the message may have been sent. Retry with the same idempotency key to check.");
+            throw new InvalidOperationException("delivery_unknown");
         }
 
         if (operation is not null)
-            await operations.TryCompleteAsync(
-                operation.Id, SendOperationStatus.Sent, false, null, CancellationToken.None);
+            await operations.TryCompleteAsync(operation.Id, SendOperationStatus.Sent, false, null, CancellationToken.None);
 
         if (!account.SaveSentCopy)
         {
             if (operation is not null)
-                await operations.TryCompleteAsync(
-                    operation.Id, SendOperationStatus.Sent,
-                    false, null, CancellationToken.None);
-            return ServiceResult<SendMailResult>.Success(new SendMailResult(true, false, null));
+                await operations.TryCompleteAsync(operation.Id, SendOperationStatus.Sent, false, null, CancellationToken.None);
+            return new SendMailResult(true, false, null);
         }
 
         var sentFullName = await db.MailFolders
@@ -214,11 +179,8 @@ public sealed class MailSendService(
         {
             logger.LogWarning("Sent copy skipped for account {AccountId}: no Sent folder discovered.", account.Id);
             if (operation is not null)
-                await operations.TryCompleteAsync(
-                    operation.Id, SendOperationStatus.Sent,
-                    false, "Message was sent, but no Sent folder is configured.", CancellationToken.None);
-            return ServiceResult<SendMailResult>.Success(new SendMailResult(
-                true, false, "Message was sent, but no Sent folder is configured."));
+                await operations.TryCompleteAsync(operation.Id, SendOperationStatus.Sent, false, "Message was sent, but no Sent folder is configured.", CancellationToken.None);
+            return new SendMailResult(true, false, "Message was sent, but no Sent folder is configured.");
         }
 
         try
@@ -226,10 +188,8 @@ public sealed class MailSendService(
             RewindAttachments(command.Attachments);
             await transport.AppendToSentAsync(account, sentFullName, message, cancellationToken);
             if (operation is not null)
-                await operations.TryCompleteAsync(
-                    operation.Id, SendOperationStatus.SentWithCopy,
-                    true, null, CancellationToken.None);
-            return ServiceResult<SendMailResult>.Success(new SendMailResult(true, true, null));
+                await operations.TryCompleteAsync(operation.Id, SendOperationStatus.SentWithCopy, true, null, CancellationToken.None);
+            return new SendMailResult(true, true, null);
         }
         catch (OperationCanceledException)
         {
@@ -239,19 +199,11 @@ public sealed class MailSendService(
         {
             logger.LogWarning(ex, "Sent append failed for account {AccountId}.", account.Id);
             if (operation is not null)
-                await operations.TryCompleteAsync(
-                    operation.Id, SendOperationStatus.Sent,
-                    false, "Message was sent, but the Sent copy could not be stored.", CancellationToken.None);
-            return ServiceResult<SendMailResult>.Success(new SendMailResult(
-                true, false, "Message was sent, but the Sent copy could not be stored."));
+                await operations.TryCompleteAsync(operation.Id, SendOperationStatus.Sent, false, "Message was sent, but the Sent copy could not be stored.", CancellationToken.None);
+            return new SendMailResult(true, false, "Message was sent, but the Sent copy could not be stored.");
         }
     }
 
-    // The request token is already dead on this path by definition, so the
-    // safety write runs under a short server-owned timeout instead. Only the
-    // status UPDATE runs here: no SMTP, no APPEND, no other work. Failure is
-    // swallowed (the row stays InProgress, which still denies resend) and the
-    // original cancellation keeps propagating via the caller's rethrow.
     private async Task MarkUnknownBestEffortAsync(SendOperation? operation)
     {
         if (operation is null)
@@ -263,10 +215,7 @@ public sealed class MailSendService(
         }
         catch (Exception ex)
         {
-            logger.LogWarning(
-                ex,
-                "Could not persist uncertain SMTP delivery state for send operation {OperationId}.",
-                operation.Id);
+            logger.LogWarning(ex, "Could not persist uncertain SMTP delivery state for send operation {OperationId}.", operation.Id);
         }
     }
 
