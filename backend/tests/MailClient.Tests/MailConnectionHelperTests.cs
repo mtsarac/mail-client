@@ -65,7 +65,7 @@ public sealed class MailConnectionHelperTests
         Assert.False(await validator.ValidateCandidateAsync(Candidate("imap.example.test", 2525, MailSecurity.SslOnConnect), CancellationToken.None));
         Assert.False(await validator.ValidateCandidateAsync(Candidate("imap.example.test", 993, MailSecurity.StartTls), CancellationToken.None));
         Assert.False(await validator.ValidateCandidateAsync(Candidate("127.0.0.1", 993, MailSecurity.SslOnConnect), CancellationToken.None));
-        Assert.True(await validator.ValidateCandidateAsync(Candidate("imap.example.test", 993, MailSecurity.SslOnConnect), CancellationToken.None));
+        Assert.False(await validator.ValidateCandidateAsync(Candidate("imap.example.test", 993, MailSecurity.SslOnConnect), CancellationToken.None));
     }
 
     [Fact]

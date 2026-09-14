@@ -16,6 +16,31 @@ public sealed class MailConnectionHelper(
     ILogger<MailConnectionHelper> logger)
 {
     private const int OperationTimeoutMs = 30_000;
+    private static readonly TimeSpan DiscoveryTimeout = TimeSpan.FromSeconds(10);
+
+    public async Task ProbeImapAsync(MailServerEndpoint endpoint, CancellationToken cancellationToken)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(DiscoveryTimeout);
+        using var client = new ImapClient { Timeout = OperationTimeoutMs };
+        await RunAsync(client, endpoint, null, null, "DiscoverImap", static async (service, ct) =>
+        {
+            await ((ImapClient)service).NoOpAsync(ct);
+            return true;
+        }, timeout.Token);
+    }
+
+    public async Task ProbeSmtpAsync(MailServerEndpoint endpoint, CancellationToken cancellationToken)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(DiscoveryTimeout);
+        using var client = new SmtpClient { Timeout = OperationTimeoutMs };
+        await RunAsync(client, endpoint, null, null, "DiscoverSmtp", static async (service, ct) =>
+        {
+            await ((SmtpClient)service).NoOpAsync(ct);
+            return true;
+        }, timeout.Token);
+    }
 
     public async Task<T> WithImapAsync<T>(
         MailServerEndpoint endpoint,
@@ -46,8 +71,8 @@ public sealed class MailConnectionHelper(
     private async Task<T> RunAsync<T>(
         MailService client,
         MailServerEndpoint endpoint,
-        string username,
-        string password,
+        string? username,
+        string? password,
         string operation,
         Func<MailService, CancellationToken, Task<T>> action,
         CancellationToken cancellationToken)
@@ -59,7 +84,8 @@ public sealed class MailConnectionHelper(
             await socket.ConnectAsync(destination.Address, endpoint.Port, cancellationToken);
             await client.ConnectAsync(socket, endpoint.Host, endpoint.Port,
                 ToSocketOptions(endpoint.Security), cancellationToken);
-            await client.AuthenticateAsync(username, password, cancellationToken);
+            if (username is not null && password is not null)
+                await client.AuthenticateAsync(username, password, cancellationToken);
             return await action(client, cancellationToken);
         }
         catch (OperationCanceledException ex)
