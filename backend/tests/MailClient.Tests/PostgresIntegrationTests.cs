@@ -1,3 +1,4 @@
+using MailClient.Application.Authentication;
 using MailClient.Application.Mail;
 using MailClient.Domain.Entities;
 using MailClient.Domain.Enums;
@@ -60,14 +61,14 @@ public sealed class PostgresIntegrationTests(PostgresFixture fixture)
         string token;
         await using (var db = fixture.CreateDb())
         {
-            token = (await new MailSessionService(db).CreateAsync(accountId, null, TimeSpan.FromDays(1), CancellationToken.None)).Token;
+            token = (await new MailSessionService(db, new SessionOptions()).CreateAsync(accountId, null, TimeSpan.FromDays(1), CancellationToken.None)).Token;
         }
 
         await using var first = fixture.CreateDb();
         await using var second = fixture.CreateDb();
         var results = await Task.WhenAll(
-            new MailSessionService(first).RotateAsync(token, TimeSpan.FromDays(1), CancellationToken.None),
-            new MailSessionService(second).RotateAsync(token, TimeSpan.FromDays(1), CancellationToken.None));
+            new MailSessionService(first, new SessionOptions()).RotateAsync(token, TimeSpan.FromDays(1), true, CancellationToken.None),
+            new MailSessionService(second, new SessionOptions()).RotateAsync(token, TimeSpan.FromDays(1), true, CancellationToken.None));
 
         Assert.Equal(1, results.Count(static result => result is not null));
         await using var check = fixture.CreateDb();
@@ -79,10 +80,10 @@ public sealed class PostgresIntegrationTests(PostgresFixture fixture)
     {
         if (!IntegrationEnvironment.PostgresEnabled) return;
         await using var db = fixture.CreateDb();
-        var service = new MailSessionService(db);
+        var service = new MailSessionService(db, new SessionOptions());
 
-        Assert.Null(await service.RotateAsync("not-base64!!", TimeSpan.FromDays(1), CancellationToken.None));
-        Assert.Null(await service.RotateAsync(Convert.ToBase64String(new byte[64]), TimeSpan.FromDays(1), CancellationToken.None));
+        Assert.Null(await service.RotateAsync("not-base64!!", TimeSpan.FromDays(1), true, CancellationToken.None));
+        Assert.Null(await service.RotateAsync(Convert.ToBase64String(new byte[64]), TimeSpan.FromDays(1), true, CancellationToken.None));
         Assert.False(await service.RevokeAsync("not-base64!!", CancellationToken.None));
     }
 
@@ -142,6 +143,84 @@ public sealed class PostgresIntegrationTests(PostgresFixture fixture)
             new SendOperationStore(second, NullLogger<SendOperationStore>.Instance).ClaimAsync(accountId, key, fingerprint, CancellationToken.None));
 
         Assert.Equal(1, claims.Count(static claim => claim is SendOperationStore.Proceed));
+    }
+
+    [Fact]
+    public async Task AccountDeletion_CascadesOwnedRows_AndNullsAuditLogs()
+    {
+        if (!IntegrationEnvironment.PostgresEnabled) return;
+        var accountId = await SeedAccountAsync();
+        await using (var db = fixture.CreateDb())
+        {
+            var folderId = Guid.NewGuid();
+            var mailId = Guid.NewGuid();
+            var sendOperationId = Guid.NewGuid();
+            var deviceId = Guid.NewGuid();
+            var sessionId = Guid.NewGuid();
+            db.MailFolders.Add(new MailFolder
+            {
+                Id = folderId,
+                MailAccountId = accountId,
+                Name = "INBOX",
+                FullName = "INBOX",
+                FolderType = MailFolderType.Inbox,
+                IsSyncEnabled = true,
+                IsAvailable = true
+            });
+            db.Mails.Add(new Domain.Entities.Mail
+            {
+                Id = mailId,
+                MailAccountId = accountId,
+                MailFolderId = folderId,
+                Uid = 1,
+                UidValidity = 7,
+                Subject = "cascade",
+                FromAddress = "a@example.test",
+                ReceivedAt = DateTime.UtcNow
+            });
+            db.Attachments.Add(new Attachment
+            {
+                Id = Guid.NewGuid(),
+                MailAccountId = accountId,
+                MailId = mailId,
+                FileName = "file.txt",
+                ContentType = "text/plain",
+                StoragePath = "attachments/x",
+                SizeBytes = 3
+            });
+            db.SyncStates.Add(new SyncState { Id = Guid.NewGuid(), MailAccountId = accountId, MailFolderId = folderId, UidValidity = 7 });
+            db.SyncSkippedUids.Add(new SyncSkippedUid { Id = Guid.NewGuid(), MailAccountId = accountId, MailFolderId = folderId, Uid = 9, Reason = "gone" });
+            db.SendOperations.Add(new SendOperation { Id = sendOperationId, MailAccountId = accountId, IdempotencyKey = "key", Fingerprint = "fp" });
+            db.DeviceTokens.Add(new DeviceToken { Id = deviceId, MailAccountId = accountId, Token = "tok", Platform = "ios" });
+            db.MailSessions.Add(new MailSession
+            {
+                Id = sessionId,
+                MailAccountId = accountId,
+                RefreshTokenHash = new string('h', 64),
+                CreatedAt = DateTime.UtcNow,
+                LastUsedAt = DateTime.UtcNow,
+                ExpiresAt = DateTime.UtcNow.AddDays(1)
+            });
+            db.AuditLogs.Add(new AuditLog { Id = Guid.NewGuid(), MailAccountId = accountId, Action = "test.action", EntityType = "MailAccount", TimestampUtc = DateTime.UtcNow });
+            db.AuditLogs.Add(new AuditLog { Id = Guid.NewGuid(), MailAccountId = null, Action = "other.action", EntityType = "MailAccount", TimestampUtc = DateTime.UtcNow });
+            await db.SaveChangesAsync();
+            db.Remove(await db.MailAccounts.SingleAsync(x => x.Id == accountId));
+            await db.SaveChangesAsync();
+            db.ChangeTracker.Clear();
+        }
+
+        await using var check = fixture.CreateDb();
+        Assert.Equal(0, await check.MailAccounts.CountAsync(x => x.Id == accountId));
+        Assert.Equal(0, await check.MailFolders.CountAsync(x => x.MailAccountId == accountId));
+        Assert.Equal(0, await check.Mails.CountAsync(x => x.MailAccountId == accountId));
+        Assert.Equal(0, await check.Attachments.CountAsync(x => x.MailAccountId == accountId));
+        Assert.Equal(0, await check.SyncStates.CountAsync(x => x.MailAccountId == accountId));
+        Assert.Equal(0, await check.SyncSkippedUids.CountAsync(x => x.MailAccountId == accountId));
+        Assert.Equal(0, await check.SendOperations.CountAsync(x => x.MailAccountId == accountId));
+        Assert.Equal(0, await check.DeviceTokens.CountAsync(x => x.MailAccountId == accountId));
+        Assert.Equal(0, await check.MailSessions.CountAsync(x => x.MailAccountId == accountId));
+        Assert.Equal(1, await check.AuditLogs.CountAsync(x => x.MailAccountId == null && x.Action == "test.action"));
+        Assert.Equal(1, await check.AuditLogs.CountAsync(x => x.MailAccountId == null && x.Action == "other.action"));
     }
 
     private async Task<Guid> SeedAccountAsync()

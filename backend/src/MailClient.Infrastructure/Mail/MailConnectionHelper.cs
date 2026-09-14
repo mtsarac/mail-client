@@ -64,7 +64,7 @@ public sealed class MailConnectionHelper(
         }
         catch (OperationCanceledException ex)
         {
-            logger.LogInformation(ex, "Mail operation {Operation} cancelled for host {Host}.", operation, endpoint.Host);
+            logger.LogInformation(ex, "Mail operation {Operation} cancelled for host {Host}.", operation, LogSafe(endpoint.Host));
             throw;
         }
         catch (Exception ex) when (ex is MailConnectionException or SmtpDeliveryException)
@@ -76,7 +76,7 @@ public sealed class MailConnectionHelper(
             var failure = MailConnectionErrorClassifier.Classify(ex);
             logger.LogError(ex,
                 "Mail operation {Operation} failed ({Failure}) for host {Host} on port {Port}.",
-                operation, failure, endpoint.Host, endpoint.Port);
+                operation, failure, LogSafe(endpoint.Host), endpoint.Port);
             throw new MailConnectionException(failure, MailConnectionErrorClassifier.SafeMessage(failure), ex) { Operation = operation };
         }
         finally
@@ -89,11 +89,13 @@ public sealed class MailConnectionHelper(
                 }
                 catch (Exception ex)
                 {
-                    logger.LogDebug(ex, "Mail disconnect failed for host {Host}.", endpoint.Host);
+                    logger.LogDebug(ex, "Mail disconnect failed for host {Host}.", LogSafe(endpoint.Host));
                 }
             }
         }
     }
+
+    private static string LogSafe(string value) => value.Replace('\r', ' ').Replace('\n', ' ');
 
     private static SecureSocketOptions ToSocketOptions(MailSecurity security) => security switch
     {

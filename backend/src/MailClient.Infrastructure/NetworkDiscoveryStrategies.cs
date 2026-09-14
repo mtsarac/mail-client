@@ -97,7 +97,7 @@ public sealed class MicrosoftAutodiscoverStrategy(HttpClient http) : IMailDiscov
         if (!response.IsSuccessStatusCode) yield break;
         var payload = await response.Content.ReadFromJsonAsync<AutodiscoverResponse>(cancellationToken);
         if (payload?.Url is null || !Uri.TryCreate(payload.Url, UriKind.Absolute, out var discovered) || discovered.Scheme != Uri.UriSchemeHttps) yield break;
-        yield return new(MailProvider.Microsoft, new(discovered.Host, 993, MailSecurity.SslOnConnect), new(discovered.Host, 587, MailSecurity.StartTls), [AuthenticationMethod.Password, AuthenticationMethod.AppSpecificPassword, AuthenticationMethod.OAuth2], DiscoverySource.Autodiscover);
+        yield return new(MailProvider.Microsoft, new(discovered.Host, 993, MailSecurity.SslOnConnect), new(discovered.Host, 587, MailSecurity.StartTls), [AuthenticationMethod.Password, AuthenticationMethod.AppSpecificPassword], DiscoverySource.Autodiscover);
     }
 
     private sealed record AutodiscoverResponse(string? Protocol, string? Url);
