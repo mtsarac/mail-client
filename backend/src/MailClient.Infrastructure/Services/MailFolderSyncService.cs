@@ -167,7 +167,7 @@ public sealed class MailFolderSyncService(
     {
         var folder = await db.MailFolders
             .AsNoTracking()
-            .Where(item => item.Id == folderId && item.MailAccountId == accountId && item.IsSyncEnabled && item.IsAvailable)
+            .Where(item => item.Id == folderId && item.MailAccountId == accountId && item.IsAvailable)
             .Select(item => new { item.Id, item.FullName })
             .SingleOrDefaultAsync(cancellationToken);
         return folder is null ? null : (folder.Id, folder.FullName);

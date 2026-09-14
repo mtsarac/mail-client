@@ -8,7 +8,7 @@ MailAccount is the authenticated principal and directly owns MailCredential, Mai
 
 1. Client submits email to `POST /api/accounts/discover`.
 2. Backend tries known provider, DNS SRV, autoconfig, Microsoft Autodiscover, and safe host heuristics in order.
-3. First candidate passing outbound-host and transport validation is stored temporarily behind opaque discovery ID.
+3. Each candidate must pass outbound-host and transport validation plus unauthenticated IMAP and SMTP connectivity, TLS certificate, and protocol checks. The first usable candidate is stored temporarily behind an opaque discovery ID.
 4. Client submits credential to `POST /api/accounts/connect`.
 5. Backend validates IMAP and SMTP auth, creates or reuses normalized account, encrypts credential, creates refresh session, returns JWT plus refresh token, and queues initial sync.
 
@@ -32,7 +32,7 @@ Successful connection persists discovered folders, then queues initial sync asyn
 
 ## Errors and observability
 
-API uses ProblemDetails with stable codes. Correlation IDs use `X-Correlation-ID`. Serilog writes JSON application and HTTP logs. Audit rows use nullable MailAccountId. Secret values are recursively redacted and request bodies are not logged by V2 middleware.
+API uses ProblemDetails with stable codes. One validated `X-Correlation-ID` value is shared by responses, ProblemDetails, application logs, HTTP logs, and audit rows. Serilog writes JSON application and HTTP logs. HTTP JSON request and response bodies are size-bounded and recursively redacted; multipart and binary bodies are excluded.
 
 ## Client flow
 

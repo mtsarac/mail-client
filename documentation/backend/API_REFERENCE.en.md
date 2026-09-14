@@ -76,7 +76,7 @@ All routes below require bearer JWT and infer account from `sub`:
 | DELETE | `/api/account` | delete mailbox and cached data |
 | GET | `/api/folders` | list folders |
 | POST | `/api/folders/refresh` | enqueue folder refresh |
-| POST | `/api/folders/{id}/sync` | request folder sync |
+| POST | `/api/folders/{id}/sync` | request folder sync; explicit requests ignore `IsSyncEnabled`, unavailable folders return `409 mail_folder_unavailable` |
 | GET | `/api/mails` | paged list of current-account messages (`folderId`, `isRead`, `hasAttachments`, `search`, `page`, `pageSize` ≤ 100 → `{ items, page, pageSize, total }`) |
 | GET | `/api/mails/{id}` | message detail |
 | PATCH | `/api/mails/{id}/read` | `{ "isRead": true }` |

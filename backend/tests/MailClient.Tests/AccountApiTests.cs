@@ -33,6 +33,7 @@ public class MailClientApiFactory : WebApplicationFactory<Program>
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
+        builder.UseEnvironment("Test");
         builder.ConfigureServices(services =>
         {
             foreach (var descriptor in services.Where(d => d.ServiceType == typeof(DbContextOptions<AppDbContext>)).ToList())
@@ -117,6 +118,39 @@ public sealed class AccountApiTests(AcceptingApiFactory factory) : IClassFixture
     private readonly AcceptingApiFactory _accepting = factory;
 
     [Fact]
+    public async Task CorrelationId_IsSharedByResponseAuditAndProblemDetails()
+    {
+        var client = _accepting.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Correlation-ID", "client-correlation-1");
+
+        var discovery = await client.PostAsJsonAsync("/api/accounts/discover", new { email = "person@gmail.com" });
+
+        Assert.Equal("client-correlation-1", discovery.Headers.GetValues("X-Correlation-ID").Single());
+        using (var scope = _accepting.Services.CreateScope())
+        {
+            var audit = await scope.ServiceProvider.GetRequiredService<AppDbContext>().AuditLogs.SingleAsync();
+            Assert.Equal("client-correlation-1", audit.CorrelationId);
+        }
+
+        var problem = await client.PostAsJsonAsync("/api/accounts/connect", new { discoveryId = Guid.NewGuid().ToString("N") });
+        var body = await problem.Content.ReadFromJsonAsync<JsonDocument>();
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, problem.StatusCode);
+        Assert.Equal("discovery_expired", body!.RootElement.GetProperty("code").GetString());
+        Assert.Equal("client-correlation-1", body.RootElement.GetProperty("correlationId").GetString());
+    }
+
+    [Fact]
+    public async Task CorrelationId_InvalidHeader_IsReplaced()
+    {
+        var client = _accepting.CreateClient();
+        client.DefaultRequestHeaders.TryAddWithoutValidation("X-Correlation-ID", "forged\r\nvalue");
+
+        var response = await client.GetAsync("/health");
+
+        Assert.NotEqual("forged\r\nvalue", response.Headers.GetValues("X-Correlation-ID").Single());
+    }
+
+    [Fact]
     public async Task ConnectManual_Success_IssuesAccountBoundTokens()
     {
         var factory = _accepting;
@@ -187,6 +221,92 @@ public sealed class AccountApiTests(AcceptingApiFactory factory) : IClassFixture
         var asA = factory.CreateClient();
         asA.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", tokenA);
         Assert.Equal(HttpStatusCode.OK, (await asA.GetAsync($"/api/mails/{mailA}")).StatusCode);
+    }
+
+    [Theory]
+    [InlineData(true, true, HttpStatusCode.Accepted)]
+    [InlineData(false, true, HttpStatusCode.Accepted)]
+    [InlineData(true, false, HttpStatusCode.Conflict)]
+    public async Task SyncFolder_UsesExplicitAvailabilitySemantics(bool enabled, bool available, HttpStatusCode expected)
+    {
+        var accountId = Guid.NewGuid();
+        var folderId = Guid.NewGuid();
+        using (var scope = _accepting.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            db.MailAccounts.Add(new MailAccount
+            {
+                Id = accountId,
+                EmailAddress = $"{accountId:N}@mail.test.invalid",
+                NormalizedEmailAddress = $"{accountId:N}@MAIL.TEST.INVALID",
+                Username = accountId.ToString("N"),
+                ImapHost = "mail.test.invalid",
+                ImapPort = 993,
+                SmtpHost = "mail.test.invalid",
+                SmtpPort = 465,
+                Status = MailAccountStatus.Active
+            });
+            db.MailFolders.Add(new Domain.Entities.MailFolder
+            {
+                Id = folderId,
+                MailAccountId = accountId,
+                Name = "INBOX",
+                FullName = "INBOX",
+                IsSyncEnabled = enabled,
+                IsAvailable = available
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var client = _accepting.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _accepting.Services.GetRequiredService<IJwtTokenIssuer>().Issue(accountId).Token);
+        var response = await client.PostAsync($"/api/folders/{folderId}/sync", null);
+
+        Assert.Equal(expected, response.StatusCode);
+        if (expected == HttpStatusCode.Conflict)
+        {
+            var body = await response.Content.ReadFromJsonAsync<JsonDocument>();
+            Assert.Equal("mail_folder_unavailable", body!.RootElement.GetProperty("code").GetString());
+        }
+    }
+
+    [Fact]
+    public async Task SyncFolder_ForeignFolder_ReturnsNotFound()
+    {
+        var ownerId = Guid.NewGuid();
+        var callerId = Guid.NewGuid();
+        var folderId = Guid.NewGuid();
+        using (var scope = _accepting.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            foreach (var accountId in new[] { ownerId, callerId })
+                db.MailAccounts.Add(new MailAccount
+                {
+                    Id = accountId,
+                    EmailAddress = $"{accountId:N}@mail.test.invalid",
+                    NormalizedEmailAddress = $"{accountId:N}@MAIL.TEST.INVALID",
+                    Username = accountId.ToString("N"),
+                    ImapHost = "mail.test.invalid",
+                    ImapPort = 993,
+                    SmtpHost = "mail.test.invalid",
+                    SmtpPort = 465,
+                    Status = MailAccountStatus.Active
+                });
+            db.MailFolders.Add(new Domain.Entities.MailFolder
+            {
+                Id = folderId,
+                MailAccountId = ownerId,
+                Name = "INBOX",
+                FullName = "INBOX",
+                IsAvailable = true
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var client = _accepting.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _accepting.Services.GetRequiredService<IJwtTokenIssuer>().Issue(callerId).Token);
+
+        Assert.Equal(HttpStatusCode.NotFound, (await client.PostAsync($"/api/folders/{folderId}/sync", null)).StatusCode);
     }
 
     [Fact]

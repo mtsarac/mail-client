@@ -19,13 +19,28 @@ public sealed class MailKitConnectionValidator(
 
     public async Task<bool> ValidateCandidateAsync(MailServerCandidate candidate, CancellationToken cancellationToken)
     {
-        if (!Allowed(candidate.Imap.Port, candidate.Imap.Security, true) || !Allowed(candidate.Smtp.Port, candidate.Smtp.Security, false)) return false;
-        return (await hosts.ValidateAsync(candidate.Imap.Host, cancellationToken)).Allowed && (await hosts.ValidateAsync(candidate.Smtp.Host, cancellationToken)).Allowed;
+        if (!Allowed(candidate)) return false;
+        if (!(await hosts.ValidateAsync(candidate.Imap.Host, cancellationToken)).Allowed
+            || !(await hosts.ValidateAsync(candidate.Smtp.Host, cancellationToken)).Allowed)
+            return false;
+        try
+        {
+            await connections.ProbeImapAsync(ToEndpoint(candidate.Imap), cancellationToken);
+            await connections.ProbeSmtpAsync(ToEndpoint(candidate.Smtp), cancellationToken);
+            return true;
+        }
+        catch (Exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            return false;
+        }
     }
 
     public async Task ValidateCredentialsAsync(MailServerCandidate candidate, string username, string password, CancellationToken cancellationToken)
     {
-        if (!await ValidateCandidateAsync(candidate, cancellationToken)) throw new InvalidOperationException("mail_server_unsafe");
+        if (!Allowed(candidate)
+            || !(await hosts.ValidateAsync(candidate.Imap.Host, cancellationToken)).Allowed
+            || !(await hosts.ValidateAsync(candidate.Smtp.Host, cancellationToken)).Allowed)
+            throw new InvalidOperationException("mail_server_unsafe");
         await connections.WithImapAsync(
             new MailServerEndpoint(candidate.Imap.Host, candidate.Imap.Port, candidate.Imap.Security),
             username, password, "ValidateImap",
@@ -35,6 +50,13 @@ public sealed class MailKitConnectionValidator(
             username, password, "ValidateSmtp",
             static (_, _) => Task.FromResult(true), cancellationToken);
     }
+
+    private static bool Allowed(MailServerCandidate candidate) =>
+        Allowed(candidate.Imap.Port, candidate.Imap.Security, true)
+        && Allowed(candidate.Smtp.Port, candidate.Smtp.Security, false);
+
+    private static MailServerEndpoint ToEndpoint(MailEndpoint endpoint) =>
+        new(endpoint.Host, endpoint.Port, endpoint.Security);
 
     private static bool Allowed(int port, Domain.Enums.MailSecurity security, bool imap) => security switch
     {

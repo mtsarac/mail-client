@@ -49,4 +49,4 @@ dotnet ef migrations script --project backend/src/MailClient.Infrastructure --st
 
 ## Doğrulama
 
-Commit öncesi warning-as-error build, test ve format çalıştırın; Development OpenAPI'yi inceleyin; yeni `backend/` içinde eski User kavramlarını arayın ve `git diff -- frontend` çıktısının boş olduğunu doğrulayın.
+Commit öncesi warning-as-error build, test ve format çalıştırın; Development OpenAPI'yi inceleyin; yeni `backend/` içinde eski User kavramlarını arayın ve frontend yollarının eklenmediğini doğrulayın.
