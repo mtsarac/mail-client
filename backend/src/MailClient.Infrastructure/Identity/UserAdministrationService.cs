@@ -1,6 +1,7 @@
 using MailClient.Application;
 using MailClient.Application.Interfaces;
 using MailClient.Application.Validation;
+using MailClient.Domain;
 using MailClient.Domain.Entities;
 using MailClient.Domain.Enums;
 using MailClient.Infrastructure.Persistence;
@@ -14,6 +15,7 @@ namespace MailClient.Infrastructure.Identity;
 public sealed class UserAdministrationService(
     AppDbContext db,
     IPasswordHasher<User> passwords,
+    IAuditLogger audit,
     ILogger<UserAdministrationService> logger) : IUserAdministrationService
 {
     public async Task<IReadOnlyList<UserDto>> ListAsync(CancellationToken cancellationToken) =>
@@ -55,6 +57,18 @@ public sealed class UserAdministrationService(
         }
 
         logger.LogInformation("Admin created user {UserId} with role {Role}.", user.Id, user.Role);
+        await audit.LogAsync(
+            user.Id,
+            AuditActions.AdminUserCreated,
+            AuditEntities.User,
+            user.Id.ToString(),
+            new Dictionary<string, string?>
+            {
+                ["email"] = user.Email,
+                ["role"] = user.Role.ToString(),
+                ["status"] = user.Status.ToString()
+            },
+            cancellationToken);
         return ServiceResult<UserDto>.Success(ToDto(user));
     }
 
@@ -69,6 +83,13 @@ public sealed class UserAdministrationService(
         await db.SaveChangesAsync(cancellationToken);
 
         logger.LogInformation("Admin set user {UserId} status to {Status}; sessions invalidated.", user.Id, status);
+        await audit.LogAsync(
+            user.Id,
+            AuditActions.AdminUserStatusChanged,
+            AuditEntities.User,
+            user.Id.ToString(),
+            new Dictionary<string, string?> { ["status"] = status.ToString() },
+            cancellationToken);
         return ServiceResult<object?>.Success(null);
     }
 
@@ -88,6 +109,13 @@ public sealed class UserAdministrationService(
         await db.SaveChangesAsync(cancellationToken);
 
         logger.LogInformation("Admin reset password for user {UserId}; sessions invalidated.", user.Id);
+        await audit.LogAsync(
+            user.Id,
+            AuditActions.AdminPasswordReset,
+            AuditEntities.User,
+            user.Id.ToString(),
+            null,
+            cancellationToken);
         return ServiceResult<object?>.Success(null);
     }
 

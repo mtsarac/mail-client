@@ -1,6 +1,7 @@
 using MailClient.Application.Interfaces;
 using MailClient.Application.Network;
 using MailClient.Application.Validation;
+using MailClient.Domain;
 using MailClient.Domain.Entities;
 using MailClient.Domain.Enums;
 using MailClient.Infrastructure.Persistence;
@@ -18,6 +19,7 @@ public sealed class MailAccountService(
     IMailConnectivityTester tester,
     IOutboundHostValidator hosts,
     IFileStorage storage,
+    IAuditLogger audit,
     ILogger<MailAccountService> logger) : IMailAccountService
 {
     public async Task<IReadOnlyList<MailAccountResponse>> ListAsync(Guid userId, CancellationToken cancellationToken)
@@ -77,6 +79,13 @@ public sealed class MailAccountService(
         }
 
         logger.LogInformation("User {UserId} created mail account {AccountId}.", userId, account.Id);
+        await audit.LogAsync(
+            userId,
+            AuditActions.MailAccountCreated,
+            AuditEntities.MailAccount,
+            account.Id.ToString(),
+            new Dictionary<string, string?> { ["emailAddress"] = account.EmailAddress },
+            cancellationToken);
         return ToResponse(account);
     }
 
@@ -119,6 +128,13 @@ public sealed class MailAccountService(
             }
 
             logger.LogInformation("User {UserId} updated mail account {AccountId}.", userId, accountId);
+            await audit.LogAsync(
+                userId,
+                AuditActions.MailAccountUpdated,
+                AuditEntities.MailAccount,
+                accountId.ToString(),
+                new Dictionary<string, string?> { ["emailAddress"] = account.EmailAddress },
+                cancellationToken);
             return ToResponse(account);
         }
 
@@ -174,6 +190,17 @@ public sealed class MailAccountService(
 
         logger.LogInformation(
             "User {UserId} changed IMAP identity for mail account {AccountId}; cached mailbox state reset.", userId, accountId);
+        await audit.LogAsync(
+            userId,
+            AuditActions.MailAccountUpdated,
+            AuditEntities.MailAccount,
+            accountId.ToString(),
+            new Dictionary<string, string?>
+            {
+                ["emailAddress"] = account.EmailAddress,
+                ["imapIdentityChanged"] = "true"
+            },
+            cancellationToken);
 
         // Storage cleanup runs after the DB commit so metadata rows never
         // reference deleted files; failures are logged, never restored.
@@ -246,6 +273,13 @@ public sealed class MailAccountService(
                 await heldLocks[index].DisposeAsync();
         }
         logger.LogInformation("User {UserId} deleted mail account {AccountId}.", userId, accountId);
+        await audit.LogAsync(
+            userId,
+            AuditActions.MailAccountDeleted,
+            AuditEntities.MailAccount,
+            accountId.ToString(),
+            null,
+            cancellationToken);
 
         // Storage cleanup after the DB commit; scoped to the account directory
         // and idempotent. Failure must not block deletion.
@@ -282,6 +316,13 @@ public sealed class MailAccountService(
                 new MailServerEndpoint(account.SmtpHost, account.SmtpPort, account.SmtpSecurity),
                 account.Username, password, cancellationToken);
             logger.LogInformation("Mail connection test succeeded for account {AccountId} of user {UserId}.", accountId, userId);
+            await audit.LogAsync(
+                userId,
+                AuditActions.MailAccountTested,
+                AuditEntities.MailAccount,
+                accountId.ToString(),
+                new Dictionary<string, string?> { ["succeeded"] = "true" },
+                cancellationToken);
             return new MailAccountTestResponse(true, "IMAP and SMTP connections succeeded.");
         }
         catch (OperationCanceledException)

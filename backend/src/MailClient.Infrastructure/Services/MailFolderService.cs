@@ -1,5 +1,6 @@
 using MailClient.Application.Interfaces;
 using MailClient.Application.Network;
+using MailClient.Domain;
 using MailClient.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -11,6 +12,7 @@ public sealed class MailFolderService(
     AppDbContext db,
     ICredentialProtector credentials,
     IMailFolderExplorer explorer,
+    IAuditLogger audit,
     ILogger<MailFolderService> logger) : IMailFolderService
 {
     public async Task<IReadOnlyList<MailFolderResponse>?> ListAsync(Guid userId, Guid accountId, CancellationToken cancellationToken)
@@ -39,6 +41,17 @@ public sealed class MailFolderService(
 
         folder.IsSyncEnabled = isSyncEnabled;
         await db.SaveChangesAsync(cancellationToken);
+        await audit.LogAsync(
+            userId,
+            AuditActions.FolderSyncToggled,
+            AuditEntities.MailFolder,
+            folderId.ToString(),
+            new Dictionary<string, string?>
+            {
+                ["accountId"] = accountId.ToString(),
+                ["isSyncEnabled"] = isSyncEnabled.ToString()
+            },
+            cancellationToken);
         return ToResponse(folder);
     }
 
@@ -88,6 +101,13 @@ public sealed class MailFolderService(
             logger.LogInformation(
                 "Mail folder discovery stored {Count} folders for account {AccountId} of user {UserId}.",
                 foldersResponse.Count, accountId, userId);
+            await audit.LogAsync(
+                userId,
+                AuditActions.FolderRefreshRequested,
+                AuditEntities.MailAccount,
+                accountId.ToString(),
+                new Dictionary<string, string?> { ["folderCount"] = foldersResponse.Count.ToString() },
+                cancellationToken);
             return new MailFolderRefreshResponse(true, "Folder discovery succeeded.", foldersResponse);
         }
         catch (OperationCanceledException)
