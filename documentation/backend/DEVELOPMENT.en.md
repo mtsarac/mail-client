@@ -33,7 +33,7 @@ dotnet test backend/MailClient.slnx --configuration Release --no-build
 ```
 
 - `MAILCLIENT_TEST_POSTGRES_ADMIN` — admin DSN. The fixture creates and migrates `mailclient_v2_tests`; it never touches `mailclient_v2`.
-- `MAILCLIENT_TEST_GREENMAIL=1` — enables GreenMail tests. Override `MAILCLIENT_TEST_GREENMAIL_HOST`, `..._SMTP` (3025), `..._IMAP` (3143), `..._USER` (`test@localhost`), `..._PASSWORD` when not using the default container.
+- `MAILCLIENT_TEST_GREENMAIL=1` — enables GreenMail tests. Override `MAILCLIENT_TEST_GREENMAIL_HOST`, `..._IMAP` (3143), `..._USER` (`test@localhost`), `..._PASSWORD` (`test123`) when not using the default container.
 - `MAILCLIENT_SKIP_INTEGRATION=1` — skip integration tests even when the variables above are set.
 
 GreenMail integration tests cover the real IMAP sync core (UID mapping, seen flags, UIDVALIDITY), production `MailKitRemoteMailFolder.AppendAsync`, and the production connection helper refusing the plaintext loopback endpoint. PostgreSQL integration tests cover unique-index enforcement, atomic refresh-token rotation under concurrency, and advisory-locked send idempotency.
