@@ -294,6 +294,24 @@ public sealed class HttpBodyLoggingTests : IDisposable
     }
 
     [Fact]
+    public async Task NewlinesInCapturedValues_AreStrippedToPreventLogForging()
+    {
+        var middleware = Create(async context =>
+        {
+            context.Response.ContentType = "application/json";
+            await context.Response.WriteAsync("{\"ok\":true}");
+        });
+        var context = JsonContext("POST", "/api/accounts/discover", "{\"note\":\"line1\\nline2\\rline3\"}");
+
+        await middleware.InvokeAsync(context);
+
+        var rendered = Render(SingleEvent());
+        Assert.DoesNotContain("line1\nline2", rendered);
+        Assert.DoesNotContain("line2\rline3", rendered);
+        Assert.Contains("line1 line2 line3", rendered);
+    }
+
+    [Fact]
     public async Task ConnectManual_EndToEnd_RequestStreamUsable()
     {
         using var factory = new AcceptingApiFactory();
