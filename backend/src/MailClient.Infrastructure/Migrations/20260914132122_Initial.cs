@@ -12,23 +12,6 @@ namespace MailClient.Infrastructure.Migrations
         protected override void Up(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.CreateTable(
-                name: "Attachments",
-                columns: table => new
-                {
-                    Id = table.Column<Guid>(type: "uuid", nullable: false),
-                    MailAccountId = table.Column<Guid>(type: "uuid", nullable: false),
-                    MailId = table.Column<Guid>(type: "uuid", nullable: false),
-                    FileName = table.Column<string>(type: "text", nullable: false),
-                    ContentType = table.Column<string>(type: "text", nullable: false),
-                    StoragePath = table.Column<string>(type: "text", nullable: false),
-                    SizeBytes = table.Column<long>(type: "bigint", nullable: false)
-                },
-                constraints: table =>
-                {
-                    table.PrimaryKey("PK_Attachments", x => x.Id);
-                });
-
-            migrationBuilder.CreateTable(
                 name: "AuditLogs",
                 columns: table => new
                 {
@@ -93,42 +76,6 @@ namespace MailClient.Infrastructure.Migrations
                 });
 
             migrationBuilder.CreateTable(
-                name: "MailFolders",
-                columns: table => new
-                {
-                    Id = table.Column<Guid>(type: "uuid", nullable: false),
-                    MailAccountId = table.Column<Guid>(type: "uuid", nullable: false),
-                    Name = table.Column<string>(type: "text", nullable: false),
-                    FullName = table.Column<string>(type: "text", nullable: false),
-                    UidValidity = table.Column<long>(type: "bigint", nullable: false),
-                    IsSyncEnabled = table.Column<bool>(type: "boolean", nullable: false)
-                },
-                constraints: table =>
-                {
-                    table.PrimaryKey("PK_MailFolders", x => x.Id);
-                });
-
-            migrationBuilder.CreateTable(
-                name: "Mails",
-                columns: table => new
-                {
-                    Id = table.Column<Guid>(type: "uuid", nullable: false),
-                    MailAccountId = table.Column<Guid>(type: "uuid", nullable: false),
-                    MailFolderId = table.Column<Guid>(type: "uuid", nullable: false),
-                    Uid = table.Column<long>(type: "bigint", nullable: false),
-                    Subject = table.Column<string>(type: "text", nullable: false),
-                    FromAddress = table.Column<string>(type: "text", nullable: false),
-                    BodyText = table.Column<string>(type: "text", nullable: false),
-                    BodyHtml = table.Column<string>(type: "text", nullable: false),
-                    IsRead = table.Column<bool>(type: "boolean", nullable: false),
-                    ReceivedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: false)
-                },
-                constraints: table =>
-                {
-                    table.PrimaryKey("PK_Mails", x => x.Id);
-                });
-
-            migrationBuilder.CreateTable(
                 name: "SendOperations",
                 columns: table => new
                 {
@@ -137,6 +84,8 @@ namespace MailClient.Infrastructure.Migrations
                     IdempotencyKey = table.Column<string>(type: "text", nullable: false),
                     Fingerprint = table.Column<string>(type: "text", nullable: false),
                     Status = table.Column<int>(type: "integer", nullable: false),
+                    SentCopySaved = table.Column<bool>(type: "boolean", nullable: false),
+                    Warning = table.Column<string>(type: "text", nullable: true),
                     CreatedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
                     UpdatedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: false)
                 },
@@ -162,22 +111,6 @@ namespace MailClient.Infrastructure.Migrations
                 });
 
             migrationBuilder.CreateTable(
-                name: "SyncStates",
-                columns: table => new
-                {
-                    Id = table.Column<Guid>(type: "uuid", nullable: false),
-                    MailAccountId = table.Column<Guid>(type: "uuid", nullable: false),
-                    MailFolderId = table.Column<Guid>(type: "uuid", nullable: false),
-                    UidValidity = table.Column<long>(type: "bigint", nullable: false),
-                    LastUid = table.Column<long>(type: "bigint", nullable: false),
-                    NextUidScanStart = table.Column<long>(type: "bigint", nullable: false)
-                },
-                constraints: table =>
-                {
-                    table.PrimaryKey("PK_SyncStates", x => x.Id);
-                });
-
-            migrationBuilder.CreateTable(
                 name: "MailCredentials",
                 columns: table => new
                 {
@@ -197,6 +130,30 @@ namespace MailClient.Infrastructure.Migrations
                     table.PrimaryKey("PK_MailCredentials", x => x.Id);
                     table.ForeignKey(
                         name: "FK_MailCredentials_MailAccounts_MailAccountId",
+                        column: x => x.MailAccountId,
+                        principalTable: "MailAccounts",
+                        principalColumn: "Id",
+                        onDelete: ReferentialAction.Cascade);
+                });
+
+            migrationBuilder.CreateTable(
+                name: "MailFolders",
+                columns: table => new
+                {
+                    Id = table.Column<Guid>(type: "uuid", nullable: false),
+                    MailAccountId = table.Column<Guid>(type: "uuid", nullable: false),
+                    Name = table.Column<string>(type: "text", nullable: false),
+                    FullName = table.Column<string>(type: "text", nullable: false),
+                    FolderType = table.Column<int>(type: "integer", nullable: false),
+                    UidValidity = table.Column<long>(type: "bigint", nullable: false),
+                    IsSyncEnabled = table.Column<bool>(type: "boolean", nullable: false),
+                    IsAvailable = table.Column<bool>(type: "boolean", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_MailFolders", x => x.Id);
+                    table.ForeignKey(
+                        name: "FK_MailFolders_MailAccounts_MailAccountId",
                         column: x => x.MailAccountId,
                         principalTable: "MailAccounts",
                         principalColumn: "Id",
@@ -228,10 +185,101 @@ namespace MailClient.Infrastructure.Migrations
                         onDelete: ReferentialAction.Cascade);
                 });
 
+            migrationBuilder.CreateTable(
+                name: "Mails",
+                columns: table => new
+                {
+                    Id = table.Column<Guid>(type: "uuid", nullable: false),
+                    MailAccountId = table.Column<Guid>(type: "uuid", nullable: false),
+                    MailFolderId = table.Column<Guid>(type: "uuid", nullable: false),
+                    Uid = table.Column<long>(type: "bigint", nullable: false),
+                    UidValidity = table.Column<long>(type: "bigint", nullable: false),
+                    MessageId = table.Column<string>(type: "character varying(998)", maxLength: 998, nullable: false),
+                    Subject = table.Column<string>(type: "character varying(500)", maxLength: 500, nullable: false),
+                    FromAddress = table.Column<string>(type: "character varying(320)", maxLength: 320, nullable: false),
+                    FromDisplayName = table.Column<string>(type: "character varying(250)", maxLength: 250, nullable: false),
+                    ToAddress = table.Column<string>(type: "character varying(320)", maxLength: 320, nullable: false),
+                    BodyText = table.Column<string>(type: "text", nullable: false),
+                    BodyHtml = table.Column<string>(type: "text", nullable: false),
+                    IsRead = table.Column<bool>(type: "boolean", nullable: false),
+                    HasAttachments = table.Column<bool>(type: "boolean", nullable: false),
+                    ReceivedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_Mails", x => x.Id);
+                    table.ForeignKey(
+                        name: "FK_Mails_MailAccounts_MailAccountId",
+                        column: x => x.MailAccountId,
+                        principalTable: "MailAccounts",
+                        principalColumn: "Id",
+                        onDelete: ReferentialAction.Cascade);
+                    table.ForeignKey(
+                        name: "FK_Mails_MailFolders_MailFolderId",
+                        column: x => x.MailFolderId,
+                        principalTable: "MailFolders",
+                        principalColumn: "Id",
+                        onDelete: ReferentialAction.Cascade);
+                });
+
+            migrationBuilder.CreateTable(
+                name: "SyncStates",
+                columns: table => new
+                {
+                    Id = table.Column<Guid>(type: "uuid", nullable: false),
+                    MailAccountId = table.Column<Guid>(type: "uuid", nullable: false),
+                    MailFolderId = table.Column<Guid>(type: "uuid", nullable: false),
+                    UidValidity = table.Column<long>(type: "bigint", nullable: false),
+                    LastUid = table.Column<long>(type: "bigint", nullable: false),
+                    NextUidScanStart = table.Column<long>(type: "bigint", nullable: false),
+                    LastNewMailSyncAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: true),
+                    LastFlagSyncAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: true)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_SyncStates", x => x.Id);
+                    table.ForeignKey(
+                        name: "FK_SyncStates_MailFolders_MailFolderId",
+                        column: x => x.MailFolderId,
+                        principalTable: "MailFolders",
+                        principalColumn: "Id",
+                        onDelete: ReferentialAction.Cascade);
+                });
+
+            migrationBuilder.CreateTable(
+                name: "Attachments",
+                columns: table => new
+                {
+                    Id = table.Column<Guid>(type: "uuid", nullable: false),
+                    MailAccountId = table.Column<Guid>(type: "uuid", nullable: false),
+                    MailId = table.Column<Guid>(type: "uuid", nullable: false),
+                    FileName = table.Column<string>(type: "character varying(255)", maxLength: 255, nullable: false),
+                    ContentType = table.Column<string>(type: "character varying(150)", maxLength: 150, nullable: false),
+                    StoragePath = table.Column<string>(type: "text", nullable: false),
+                    SizeBytes = table.Column<long>(type: "bigint", nullable: false),
+                    IsInline = table.Column<bool>(type: "boolean", nullable: false),
+                    ContentId = table.Column<string>(type: "character varying(998)", maxLength: 998, nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_Attachments", x => x.Id);
+                    table.ForeignKey(
+                        name: "FK_Attachments_Mails_MailId",
+                        column: x => x.MailId,
+                        principalTable: "Mails",
+                        principalColumn: "Id",
+                        onDelete: ReferentialAction.Cascade);
+                });
+
             migrationBuilder.CreateIndex(
                 name: "IX_Attachments_MailAccountId_MailId",
                 table: "Attachments",
                 columns: new[] { "MailAccountId", "MailId" });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_Attachments_MailId",
+                table: "Attachments",
+                column: "MailId");
 
             migrationBuilder.CreateIndex(
                 name: "IX_AuditLogs_MailAccountId_TimestampUtc",
@@ -261,6 +309,11 @@ namespace MailClient.Infrastructure.Migrations
                 table: "MailFolders",
                 columns: new[] { "MailAccountId", "FullName" },
                 unique: true);
+
+            migrationBuilder.CreateIndex(
+                name: "IX_Mails_MailAccountId",
+                table: "Mails",
+                column: "MailAccountId");
 
             migrationBuilder.CreateIndex(
                 name: "IX_Mails_MailFolderId_Uid",
@@ -314,12 +367,6 @@ namespace MailClient.Infrastructure.Migrations
                 name: "MailCredentials");
 
             migrationBuilder.DropTable(
-                name: "MailFolders");
-
-            migrationBuilder.DropTable(
-                name: "Mails");
-
-            migrationBuilder.DropTable(
                 name: "MailSessions");
 
             migrationBuilder.DropTable(
@@ -330,6 +377,12 @@ namespace MailClient.Infrastructure.Migrations
 
             migrationBuilder.DropTable(
                 name: "SyncStates");
+
+            migrationBuilder.DropTable(
+                name: "Mails");
+
+            migrationBuilder.DropTable(
+                name: "MailFolders");
 
             migrationBuilder.DropTable(
                 name: "MailAccounts");
