@@ -1,6 +1,7 @@
 using MailClient.Application.Accounts;
 using MailClient.Application.Discovery;
 using MailClient.Application.Mail;
+using MailClient.Application.Sync;
 using MailClient.Domain.Entities;
 using MailClient.Domain.Enums;
 using MailClient.Infrastructure.Authentication;
@@ -74,8 +75,8 @@ public sealed class AccountConnectionService(
         credential.EncryptedMaterial = protector.Protect(authentication.Password); credential.UpdatedAt = now;
         await db.SaveChangesAsync(cancellationToken);
         await RefreshFoldersBestEffortAsync(account, working, authentication.Password, cancellationToken);
-        var session = await sessions.CreateAsync(account.Id, deviceIdentifier, TimeSpan.FromDays(30), cancellationToken);
-        await syncQueue.EnqueueAsync(account.Id, cancellationToken);
+        var session = await sessions.CreateAsync(account.Id, deviceIdentifier, cancellationToken);
+        await syncQueue.EnqueueAsync(SyncRequest.Account(account.Id), cancellationToken);
         var access = jwt.Issue(account.Id);
         return new(access.Token, session.Token, account.Id, access.ExpiresAt);
     }

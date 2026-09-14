@@ -77,7 +77,7 @@ Aşağıdaki rotalar bearer JWT ister ve hesabı `sub` üzerinden belirler:
 | GET | `/api/folders` | klasörleri listele |
 | POST | `/api/folders/refresh` | klasör yenilemeyi kuyruğa al |
 | POST | `/api/folders/{id}/sync` | klasör sync isteği |
-| GET | `/api/mails` | mevcut hesabın en fazla 100 postası |
+| GET | `/api/mails` | mevcut hesabın sayfalı postaları (`folderId`, `isRead`, `hasAttachments`, `search`, `page`, `pageSize` ≤ 100 → `{ items, page, pageSize, total }`) |
 | GET | `/api/mails/{id}` | posta detayı |
 | PATCH | `/api/mails/{id}/read` | `{ "isRead": true }` |
 | GET | `/api/mails/{mailId}/attachments/{attachmentId}` | hesaba ait eki indir |

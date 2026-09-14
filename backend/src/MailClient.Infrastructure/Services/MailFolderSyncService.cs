@@ -20,7 +20,7 @@ public sealed class MailFolderSyncService(
     IFileStorage storage,
     MailSyncOptions options,
     IPushNotificationService push,
-    ILogger<MailFolderSyncService> logger)
+    ILogger<MailFolderSyncService> logger) : ISyncExecutor
 {
     public async Task SyncAllAsync(CancellationToken cancellationToken)
     {
@@ -33,7 +33,7 @@ public sealed class MailFolderSyncService(
         {
             try
             {
-                await SyncAccountAsync(accountId, cancellationToken);
+                await SyncAccountCoreAsync(accountId, null, cancellationToken);
             }
             catch (OperationCanceledException)
             {
@@ -66,7 +66,13 @@ public sealed class MailFolderSyncService(
         await db.SaveChangesAsync(cancellationToken);
     }
 
-    private async Task SyncAccountAsync(Guid accountId, CancellationToken cancellationToken)
+    public Task SyncAccountAsync(Guid accountId, CancellationToken cancellationToken) =>
+        SyncAccountCoreAsync(accountId, null, cancellationToken);
+
+    public Task SyncFolderAsync(Guid accountId, Guid folderId, CancellationToken cancellationToken) =>
+        SyncAccountCoreAsync(accountId, folderId, cancellationToken);
+
+    private async Task SyncAccountCoreAsync(Guid accountId, Guid? targetFolderId, CancellationToken cancellationToken)
     {
         var account = await db.MailAccounts
             .SingleOrDefaultAsync(item => item.Id == accountId, cancellationToken);
@@ -92,7 +98,7 @@ public sealed class MailFolderSyncService(
 
         var endpoint = new MailServerEndpoint(resolved.Account.ImapHost, resolved.Account.ImapPort, resolved.Account.ImapSecurity);
 
-        foreach (var (folderId, fullName) in await GetSyncableFoldersAsync(accountId, cancellationToken))
+        foreach (var (folderId, fullName) in await SelectFoldersAsync(accountId, targetFolderId, cancellationToken))
         {
             try
             {
@@ -141,6 +147,30 @@ public sealed class MailFolderSyncService(
             .ToListAsync(cancellationToken))
             .Select(folder => (folder.Id, folder.FullName))
             .ToList();
+    }
+
+    private async Task<IReadOnlyList<(Guid FolderId, string FullName)>> SelectFoldersAsync(
+        Guid accountId,
+        Guid? targetFolderId,
+        CancellationToken cancellationToken)
+    {
+        if (targetFolderId is not { } folderId)
+            return await GetSyncableFoldersAsync(accountId, cancellationToken);
+        var single = await GetSyncableFolderAsync(accountId, folderId, cancellationToken);
+        return single is { } value ? [value] : [];
+    }
+
+    internal async Task<(Guid FolderId, string FullName)?> GetSyncableFolderAsync(
+        Guid accountId,
+        Guid folderId,
+        CancellationToken cancellationToken)
+    {
+        var folder = await db.MailFolders
+            .AsNoTracking()
+            .Where(item => item.Id == folderId && item.MailAccountId == accountId && item.IsSyncEnabled && item.IsAvailable)
+            .Select(item => new { item.Id, item.FullName })
+            .SingleOrDefaultAsync(cancellationToken);
+        return folder is null ? null : (folder.Id, folder.FullName);
     }
 
     internal async Task SyncFolderCoreAsync(

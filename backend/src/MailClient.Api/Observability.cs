@@ -1,10 +1,9 @@
-using System.Diagnostics;
 using System.IdentityModel.Tokens.Jwt;
 using Serilog.Context;
 
 namespace MailClient.Api.Observability;
 
-public sealed class CorrelationMiddleware(RequestDelegate next, ILogger<CorrelationMiddleware> logger)
+public sealed class CorrelationMiddleware(RequestDelegate next)
 {
     public async Task InvokeAsync(HttpContext context)
     {
@@ -12,12 +11,11 @@ public sealed class CorrelationMiddleware(RequestDelegate next, ILogger<Correlat
             ? supplied[0]!
             : Guid.NewGuid().ToString("N");
         context.Response.Headers["X-Correlation-ID"] = correlationId;
-        var stopwatch = Stopwatch.StartNew();
+        context.Items["CorrelationId"] = correlationId;
         using (LogContext.PushProperty("CorrelationId", correlationId))
         using (LogContext.PushProperty("MailAccountId", context.User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value))
         {
             await next(context);
-            logger.LogInformation("HTTP request responded {StatusCode} in {ElapsedMs} ms.", context.Response.StatusCode, stopwatch.ElapsedMilliseconds);
         }
     }
 }

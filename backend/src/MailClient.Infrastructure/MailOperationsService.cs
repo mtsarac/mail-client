@@ -1,38 +1,59 @@
+using System.Collections.Concurrent;
+using System.Threading.Channels;
+using MailClient.Application.Sync;
 using MailClient.Infrastructure.Persistence;
-using MailClient.Infrastructure.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 namespace MailClient.Infrastructure.Mail;
 
 public sealed class MailOperationsService(AppDbContext db)
 {
-    public async Task<bool> SyncFolderAsync(Guid accountId, Guid folderId, CancellationToken cancellationToken) =>
-        await db.MailFolders.AnyAsync(x => x.Id == folderId && x.MailAccountId == accountId, cancellationToken);
+    public Task<bool> OwnsFolderAsync(Guid accountId, Guid folderId, CancellationToken cancellationToken) =>
+        db.MailFolders.AnyAsync(x => x.Id == folderId && x.MailAccountId == accountId, cancellationToken);
 }
 
 public sealed class InitialSyncQueue
 {
-    private readonly System.Threading.Channels.Channel<Guid> _channel = System.Threading.Channels.Channel.CreateUnbounded<Guid>();
-    public ValueTask EnqueueAsync(Guid accountId, CancellationToken cancellationToken) => _channel.Writer.WriteAsync(accountId, cancellationToken);
-    public IAsyncEnumerable<Guid> ReadAllAsync(CancellationToken cancellationToken) => _channel.Reader.ReadAllAsync(cancellationToken);
+    private readonly Channel<SyncRequest> _channel = Channel.CreateUnbounded<SyncRequest>();
+    private readonly ConcurrentDictionary<SyncRequest, byte> _pending = new();
+
+    public async ValueTask EnqueueAsync(SyncRequest request, CancellationToken cancellationToken)
+    {
+        if (!_pending.TryAdd(request, 0)) return;
+        await _channel.Writer.WriteAsync(request, cancellationToken);
+    }
+
+    public async IAsyncEnumerable<SyncRequest> ReadAllAsync(
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        await foreach (var request in _channel.Reader.ReadAllAsync(cancellationToken))
+        {
+            _pending.TryRemove(request, out _);
+            yield return request;
+        }
+    }
 }
 
 public sealed class InitialSyncWorker(
     InitialSyncQueue queue,
     IServiceScopeFactory scopes,
-    ILogger<InitialSyncWorker> logger) : Microsoft.Extensions.Hosting.BackgroundService
+    ILogger<InitialSyncWorker> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        await foreach (var accountId in queue.ReadAllAsync(stoppingToken))
+        await foreach (var request in queue.ReadAllAsync(stoppingToken))
         {
             try
             {
-                logger.LogInformation("A queued mailbox requested initial synchronization.");
                 await using var scope = scopes.CreateAsyncScope();
-                await scope.ServiceProvider.GetRequiredService<MailFolderSyncService>().SyncAllAsync(stoppingToken);
+                var executor = scope.ServiceProvider.GetRequiredService<ISyncExecutor>();
+                if (request.FolderId is { } folderId)
+                    await executor.SyncFolderAsync(request.AccountId, folderId, stoppingToken);
+                else
+                    await executor.SyncAccountAsync(request.AccountId, stoppingToken);
             }
             catch (OperationCanceledException)
             {
@@ -40,7 +61,7 @@ public sealed class InitialSyncWorker(
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "Queued initial synchronization failed.");
+                logger.LogError(ex, "Queued mailbox synchronization failed.");
             }
         }
     }
