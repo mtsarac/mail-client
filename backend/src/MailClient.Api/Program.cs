@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json.Serialization;
 using System.Threading.RateLimiting;
 using MailClient.Api.Auth;
+using MailClient.Api.Observability;
 using MailClient.Application.Accounts;
 using MailClient.Application.Discovery;
 using MailClient.Domain.Entities;
@@ -20,8 +21,21 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
+using Serilog;
+using Serilog.Events;
+using Serilog.Formatting.Json;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Host.UseSerilog((context, services, configuration) => configuration
+    .ReadFrom.Configuration(context.Configuration)
+    .ReadFrom.Services(services)
+    .Enrich.FromLogContext()
+    .WriteTo.Logger(appLog => appLog
+        .Filter.ByExcluding(log => log.Properties.ContainsKey("RequestPath"))
+        .WriteTo.File(new JsonFormatter(), "logs/app-.json", rollingInterval: RollingInterval.Day))
+    .WriteTo.Logger(httpLog => httpLog
+        .Filter.ByIncludingOnly(log => log.Properties.ContainsKey("RequestPath"))
+        .WriteTo.File(new JsonFormatter(), "logs/http-.json", rollingInterval: RollingInterval.Day)));
 builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 builder.Services.AddProblemDetails();
 builder.Services.AddEndpointsApiExplorer();
@@ -55,6 +69,7 @@ builder.Services.AddScoped<MailSessionService>();
 builder.Services.AddScoped<AccountConnectionService>();
 builder.Services.AddScoped<AccountScopedMailService>();
 builder.Services.AddScoped<MailOperationsService>();
+builder.Services.AddScoped<MailClient.Infrastructure.Observability.AuditLogger>();
 builder.Services.AddSingleton<InitialSyncQueue>();
 builder.Services.AddHostedService<InitialSyncWorker>();
 builder.Services.AddSingleton(new LocalAttachmentStorage(Path.Combine(builder.Environment.ContentRootPath, "data")));
@@ -88,6 +103,8 @@ app.UseExceptionHandler(error => error.Run(async context =>
 }));
 app.UseRateLimiter();
 app.UseAuthentication();
+app.UseMiddleware<CorrelationMiddleware>();
+app.UseSerilogRequestLogging();
 app.UseAuthorization();
 if (app.Environment.IsDevelopment()) { app.UseSwagger(); app.UseSwaggerUI(options => options.SwaggerEndpoint("/swagger/v2/swagger.json", "Mail Client v2")); }
 
