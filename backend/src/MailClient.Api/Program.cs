@@ -8,6 +8,7 @@ using System.Threading.RateLimiting;
 using MailClient.Api.Auth;
 using MailClient.Api.Endpoints;
 using MailClient.Api.Observability;
+using MailClient.Application;
 using MailClient.Application.Authentication;
 using MailClient.Application.Accounts;
 using MailClient.Application.Discovery;
@@ -51,7 +52,12 @@ builder.Host.UseSerilog((context, services, configuration) => configuration
 builder.Services.Configure<HttpLoggingOptions>(builder.Configuration.GetSection("HttpLogging"));
 builder.Services.AddSingleton<Serilog.ILogger>(_ => Serilog.Log.Logger);
 builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
-builder.Services.AddProblemDetails();
+builder.Services.AddProblemDetails(options => options.CustomizeProblemDetails = context =>
+{
+    var correlation = context.HttpContext.RequestServices.GetService<CorrelationContext>();
+    if (!string.IsNullOrEmpty(correlation?.CorrelationId))
+        context.ProblemDetails.Extensions["correlationId"] = correlation.CorrelationId;
+});
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
 {
@@ -76,6 +82,7 @@ var certificatePath = builder.Configuration["DataProtection:CertificatePath"];
 if (!string.IsNullOrWhiteSpace(certificatePath))
     dataProtection.ProtectKeysWithCertificate(X509CertificateLoader.LoadCertificateFromFile(certificatePath));
 builder.Services.AddHttpContextAccessor();
+builder.Services.AddScoped<CorrelationContext>();
 builder.Services.AddSingleton<IDnsResolver, SystemDnsResolver>();
 builder.Services.AddSingleton<OutboundHostValidator>();
 builder.Services.AddSingleton<DiscoveryStateStore>();
@@ -97,7 +104,6 @@ var sessionOptions = builder.Configuration.GetSection("Session").Get<MailClient.
 sessionOptions.Validate();
 builder.Services.AddSingleton(sessionOptions);
 builder.Services.AddSingleton<MailConnectionHelper>();
-builder.Services.AddSingleton<MailKitConnectivityTester>();
 builder.Services.AddScoped<MailKitFolderExplorer>();
 builder.Services.AddScoped<MailCredentialResolver>();
 builder.Services.AddSingleton<IMailConnectionValidator, MailKitConnectionValidator>();
@@ -190,13 +196,16 @@ if (trustedProxy)
 }
 
 var app = builder.Build();
+app.UseMiddleware<CorrelationMiddleware>();
+app.UseMiddleware<HttpBodyLoggingMiddleware>();
 app.UseExceptionHandler(error => error.Run(async context =>
 {
     var exception = context.Features.Get<Microsoft.AspNetCore.Diagnostics.IExceptionHandlerFeature>()?.Error;
     var (code, status) = ApiFailureMapper.MapFailure(exception);
     if (status >= 500)
         app.Logger.LogError(exception, "Unhandled request failure {Code} for {Method} {Path}.", code, context.Request.Method, context.Request.Path);
-    var extensions = new Dictionary<string, object?> { ["code"] = code, ["correlationId"] = context.TraceIdentifier };
+    var correlationId = context.RequestServices.GetRequiredService<CorrelationContext>().CorrelationId;
+    var extensions = new Dictionary<string, object?> { ["code"] = code, ["correlationId"] = correlationId };
     if (app.Environment.IsDevelopment() && exception is not null)
         extensions["detail"] = $"{exception.GetType().Name}: {exception.Message}";
     context.Response.StatusCode = status;
@@ -210,8 +219,6 @@ if (app.Environment.IsDevelopment())
     app.UseCors("DevelopmentLan");
 app.UseAuthentication();
 app.UseRateLimiter();
-app.UseMiddleware<CorrelationMiddleware>();
-app.UseMiddleware<HttpBodyLoggingMiddleware>();
 app.UseAuthorization();
 if (app.Environment.IsDevelopment()) { app.UseSwagger(); app.UseSwaggerUI(options => options.SwaggerEndpoint("/swagger/v2/swagger.json", "Mail Client v2")); }
 

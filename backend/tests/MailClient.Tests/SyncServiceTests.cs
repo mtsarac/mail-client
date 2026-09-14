@@ -138,6 +138,34 @@ public sealed class SyncServiceTests
     }
 
     [Fact]
+    public async Task TargetedFolderSelection_IncludesDisabledAvailableFolder()
+    {
+        await using var db = CreateDb();
+        var (accountId, folderId) = await SeedFolderAsync(db);
+        var folder = await db.MailFolders.SingleAsync(x => x.Id == folderId);
+        folder.IsSyncEnabled = false;
+        await db.SaveChangesAsync();
+
+        var folders = await CreateService(db, Options(100)).GetSyncableFolderAsync(accountId, folderId, CancellationToken.None);
+
+        Assert.Equal((folderId, "INBOX"), folders);
+    }
+
+    [Fact]
+    public async Task BackgroundFolderSelection_ExcludesDisabledFolder()
+    {
+        await using var db = CreateDb();
+        var (accountId, folderId) = await SeedFolderAsync(db);
+        var folder = await db.MailFolders.SingleAsync(x => x.Id == folderId);
+        folder.IsSyncEnabled = false;
+        await db.SaveChangesAsync();
+
+        var folders = await CreateService(db, Options(100)).GetSyncableFoldersAsync(accountId, CancellationToken.None);
+
+        Assert.Empty(folders);
+    }
+
+    [Fact]
     public async Task SyncAll_MissingCredential_MarksReauthenticationWithoutThrowing()
     {
         await using var db = CreateDb();

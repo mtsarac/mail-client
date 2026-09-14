@@ -49,4 +49,4 @@ dotnet ef migrations script --project backend/src/MailClient.Infrastructure --st
 
 ## Validation
 
-Before commit: build with warnings as errors, run tests and format, inspect OpenAPI in Development, search new `backend/` for obsolete User concepts, and confirm `git diff -- frontend` is empty.
+Before commit: build with warnings as errors, run tests and format, inspect OpenAPI in Development, search new `backend/` for obsolete User concepts, and confirm no frontend paths were introduced.

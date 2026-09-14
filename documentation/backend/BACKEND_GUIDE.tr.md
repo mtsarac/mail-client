@@ -8,7 +8,7 @@ MailAccount authenticated principal'dır ve MailCredential, MailSession, MailFol
 
 1. İstemci e-postayı `POST /api/accounts/discover` rotasına gönderir.
 2. Backend sırayla known provider, DNS SRV, autoconfig, Microsoft Autodiscover ve güvenli host heuristic'lerini dener.
-3. Outbound-host ve transport kontrolünü geçen ilk aday opaque discovery ID arkasında geçici saklanır.
+3. Her aday outbound-host ve transport kontrolüne ek olarak kimlik doğrulamasız IMAP ve SMTP bağlantısı, TLS sertifikası ve protokol kontrollerini geçmelidir. Kullanılabilir ilk aday opaque discovery ID arkasında geçici saklanır.
 4. İstemci credential'ı `POST /api/accounts/connect` rotasına gönderir.
 5. Backend IMAP ve SMTP auth doğrular, normalize hesabı oluşturur veya kullanır, credential'ı şifreler, refresh session oluşturur, JWT + refresh token döndürür ve initial sync kuyruğuna iş bırakır.
 
@@ -32,7 +32,7 @@ Başarılı bağlantı önce keşfedilen klasörleri yazar, sonra initial sync'i
 
 ## Hatalar ve gözlemlenebilirlik
 
-API stabil kodlu ProblemDetails kullanır. Correlation ID `X-Correlation-ID` ile taşınır. Serilog JSON application ve HTTP logları yazar. Audit satırları nullable MailAccountId kullanır. Secret değerler recursive maskelenir; V2 middleware request body loglamaz.
+API stabil kodlu ProblemDetails kullanır. Doğrulanmış tek `X-Correlation-ID` değeri response, ProblemDetails, application log, HTTP log ve audit satırlarında ortaktır. Serilog JSON application ve HTTP logları yazar. HTTP JSON request ve response body'leri boyut sınırıyla ve recursive maskeleme ile kaydedilir; multipart ve binary body'ler hariç tutulur.
 
 ## İstemci akışı
 
