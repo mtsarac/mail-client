@@ -37,7 +37,15 @@ builder.Services.AddHttpContextAccessor();
 builder.Services.AddSingleton<IDnsResolver, SystemDnsResolver>();
 builder.Services.AddSingleton<OutboundHostValidator>();
 builder.Services.AddSingleton<DiscoveryStateStore>();
+builder.Services.AddSingleton(new DnsClient.LookupClient());
+builder.Services.AddHttpClient<AutoconfigDiscoveryStrategy>(client => client.Timeout = TimeSpan.FromSeconds(10))
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
+builder.Services.AddHttpClient<MicrosoftAutodiscoverStrategy>(client => client.Timeout = TimeSpan.FromSeconds(10))
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
 builder.Services.AddSingleton<IMailDiscoveryStrategy, KnownProviderStrategy>();
+builder.Services.AddSingleton<IMailDiscoveryStrategy, DnsSrvDiscoveryStrategy>();
+builder.Services.AddTransient<IMailDiscoveryStrategy>(sp => sp.GetRequiredService<AutoconfigDiscoveryStrategy>());
+builder.Services.AddTransient<IMailDiscoveryStrategy>(sp => sp.GetRequiredService<MicrosoftAutodiscoverStrategy>());
 builder.Services.AddSingleton<IMailDiscoveryStrategy, HeuristicDiscoveryStrategy>();
 builder.Services.AddSingleton<MailServerDiscoveryService>();
 builder.Services.AddScoped<IMailConnectionValidator, MailKitConnectionValidator>();
