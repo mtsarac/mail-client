@@ -20,5 +20,14 @@ public sealed class JwtTokenIssuer(JwtOptions options) : IJwtTokenIssuer
 
 public sealed class CurrentMailAccount(IHttpContextAccessor accessor) : ICurrentMailAccount
 {
-    public Guid MailAccountId => Guid.TryParse(accessor.HttpContext?.User.FindFirstValue(JwtRegisteredClaimNames.Sub), out var id) ? id : throw new UnauthorizedAccessException();
+    public Guid MailAccountId
+    {
+        get
+        {
+            var user = accessor.HttpContext?.User;
+            var subject = user?.FindFirstValue(ClaimTypes.NameIdentifier)
+                ?? user?.FindFirstValue(JwtRegisteredClaimNames.Sub);
+            return Guid.TryParse(subject, out var id) ? id : throw new UnauthorizedAccessException();
+        }
+    }
 }
