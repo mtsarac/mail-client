@@ -14,6 +14,7 @@ using MailClient.Infrastructure.Mail;
 using MailClient.Infrastructure.Network;
 using MailClient.Infrastructure.Persistence;
 using MailClient.Infrastructure.Security;
+using MailClient.Infrastructure.Storage;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
@@ -44,6 +45,11 @@ builder.Services.AddScoped<IMailServerCandidateValidator>(sp => (MailKitConnecti
 builder.Services.AddScoped<ICredentialProtector, DataProtectionCredentialProtector>();
 builder.Services.AddScoped<MailSessionService>();
 builder.Services.AddScoped<AccountConnectionService>();
+builder.Services.AddScoped<AccountScopedMailService>();
+builder.Services.AddScoped<MailOperationsService>();
+builder.Services.AddSingleton<InitialSyncQueue>();
+builder.Services.AddHostedService<InitialSyncWorker>();
+builder.Services.AddSingleton(new LocalAttachmentStorage(Path.Combine(builder.Environment.ContentRootPath, "data")));
 var jwt = builder.Configuration.GetSection("Jwt").Get<JwtOptions>() ?? new("MailClient", "MailClient", "development-only-key-change-before-production-123456789", 15);
 if (jwt.Key.Length < 32) throw new InvalidOperationException("Jwt:Key must contain at least 32 characters.");
 builder.Services.AddSingleton(jwt);
@@ -102,10 +108,24 @@ auth.MapPost("/logout", async (LogoutRequest request, MailSessionService session
 var api = app.MapGroup("/api").RequireAuthorization();
 api.MapGet("/account", async (ICurrentMailAccount current, AppDbContext db, CancellationToken ct) => await db.MailAccounts.Where(x => x.Id == current.MailAccountId).Select(x => new AccountResponse(x.Id, x.EmailAddress, x.DisplayName, x.Provider, x.Status)).SingleOrDefaultAsync(ct) is { } account ? Results.Ok(account) : Results.NotFound()).WithName("GetCurrentAccount").WithSummary("Get current mailbox account");
 api.MapDelete("/account", async (ICurrentMailAccount current, AppDbContext db, CancellationToken ct) => { var account = await db.MailAccounts.FindAsync([current.MailAccountId], ct); if (account is null) return Results.NotFound(); db.Remove(account); await db.SaveChangesAsync(ct); return Results.NoContent(); }).WithName("DeleteCurrentAccount").WithSummary("Delete mailbox and cached data");
-api.MapGet("/folders", async (ICurrentMailAccount current, AppDbContext db, CancellationToken ct) => Results.Ok(await db.MailFolders.Where(x => x.MailAccountId == current.MailAccountId).ToListAsync(ct))).WithName("ListFolders").WithSummary("List mailbox folders");
-api.MapGet("/mails", async (ICurrentMailAccount current, AppDbContext db, CancellationToken ct) => Results.Ok(await db.Mails.Where(x => x.MailAccountId == current.MailAccountId).OrderByDescending(x => x.ReceivedAt).Take(100).ToListAsync(ct))).WithName("ListMails").WithSummary("List current mailbox mail");
-api.MapGet("/mails/{id:guid}", async (Guid id, ICurrentMailAccount current, AppDbContext db, CancellationToken ct) => await db.Mails.SingleOrDefaultAsync(x => x.Id == id && x.MailAccountId == current.MailAccountId, ct) is { } mail ? Results.Ok(mail) : Results.NotFound()).WithName("GetMail").WithSummary("Get mailbox mail");
+api.MapGet("/folders", async (ICurrentMailAccount current, AppDbContext db, CancellationToken ct) => Results.Ok(await db.MailFolders.Where(x => x.MailAccountId == current.MailAccountId).ToListAsync(ct))).WithName("ListFolders").WithSummary("List mailbox folders").Produces<List<MailFolder>>();
+api.MapPost("/folders/refresh", async (ICurrentMailAccount current, InitialSyncQueue queue, CancellationToken ct) => { await queue.EnqueueAsync(current.MailAccountId, ct); return Results.Accepted(); }).WithName("RefreshFolders").WithSummary("Refresh mailbox folders").Produces(202);
+api.MapPost("/folders/{id:guid}/sync", async (Guid id, ICurrentMailAccount current, MailOperationsService service, CancellationToken ct) => await service.SyncFolderAsync(current.MailAccountId, id, ct) ? Results.Accepted() : Results.NotFound()).WithName("SyncFolder").WithSummary("Request folder synchronization").Produces(202).Produces(404);
+api.MapGet("/mails", async (ICurrentMailAccount current, AppDbContext db, CancellationToken ct) => Results.Ok(await db.Mails.Where(x => x.MailAccountId == current.MailAccountId).OrderByDescending(x => x.ReceivedAt).Take(100).ToListAsync(ct))).WithName("ListMails").WithSummary("List current mailbox mail").Produces<List<MailClient.Domain.Entities.Mail>>();
+api.MapGet("/mails/{id:guid}", async (Guid id, ICurrentMailAccount current, AccountScopedMailService service, CancellationToken ct) => await service.GetAsync(current.MailAccountId, id, ct) is { } mail ? Results.Ok(mail) : Results.NotFound()).WithName("GetMail").WithSummary("Get mailbox mail").Produces<MailClient.Domain.Entities.Mail>().Produces(404);
+api.MapPatch("/mails/{id:guid}/read", async (Guid id, ReadRequest request, ICurrentMailAccount current, AccountScopedMailService service, CancellationToken ct) => await service.SetReadAsync(current.MailAccountId, id, request.IsRead, ct) ? Results.NoContent() : Results.NotFound()).WithName("SetMailReadState").WithSummary("Change mail read state").Produces(204).Produces(404);
+api.MapGet("/mails/{mailId:guid}/attachments/{attachmentId:guid}", async (Guid mailId, Guid attachmentId, ICurrentMailAccount current, AppDbContext db, LocalAttachmentStorage storage, CancellationToken ct) =>
+{
+    var attachment = await db.Attachments.SingleOrDefaultAsync(x => x.Id == attachmentId && x.MailId == mailId && x.MailAccountId == current.MailAccountId, ct);
+    return attachment is null ? Results.NotFound() : Results.File(await storage.OpenReadAsync(attachment.StoragePath, ct), attachment.ContentType, attachment.FileName);
+}).WithName("DownloadAttachment").WithSummary("Download account-owned attachment").Produces(200).Produces(404);
+api.MapPost("/mails/send", async (SendRequest request, ICurrentMailAccount current, MailOperationsService service, CancellationToken ct) => Results.Accepted(value: await service.ClaimSendAsync(current.MailAccountId, new(request.To, request.Subject, request.BodyText, request.BodyHtml, request.IdempotencyKey), ct))).WithName("SendMail").WithSummary("Send mail idempotently").Produces<SendOperation>(202).ProducesProblem(409);
+api.MapPost("/devices", async (DeviceRequest request, ICurrentMailAccount current, AppDbContext db, CancellationToken ct) => { var token = new DeviceToken { Id = Guid.NewGuid(), MailAccountId = current.MailAccountId, Token = request.Token, Platform = request.Platform, RegisteredAt = DateTime.UtcNow }; db.DeviceTokens.Add(token); await db.SaveChangesAsync(ct); return Results.Created($"/api/devices/{token.Id}", token); }).WithName("RegisterDevice").WithSummary("Register device for current mailbox").Produces<DeviceToken>(201);
+api.MapDelete("/devices/{id:guid}", async (Guid id, ICurrentMailAccount current, AppDbContext db, CancellationToken ct) => { var token = await db.DeviceTokens.SingleOrDefaultAsync(x => x.Id == id && x.MailAccountId == current.MailAccountId, ct); if (token is null) return Results.NotFound(); db.Remove(token); await db.SaveChangesAsync(ct); return Results.NoContent(); }).WithName("DeleteDevice").WithSummary("Remove account-owned device").Produces(204).Produces(404);
 app.MapGet("/health", () => Results.Ok(new { status = "healthy" })).WithName("Health").WithSummary("Check API health");
 app.Run();
 
+public sealed record ReadRequest(bool IsRead);
+public sealed record SendRequest(string To, string Subject, string? BodyText, string? BodyHtml, string IdempotencyKey);
+public sealed record DeviceRequest(string Token, string Platform);
 public partial class Program;
