@@ -41,19 +41,17 @@ public sealed class MailFolderSyncService(
             }
             catch (CryptographicException ex)
             {
-                logger.LogError(ex,
-                    "Mail sync failed for account {AccountId}: stored credential cannot be decrypted. Re-enter the mailbox password.",
-                    accountId);
+                logger.LogError(ex, "Mail sync failed because the stored credential cannot be decrypted.");
                 await MarkReauthenticationAsync(accountId, cancellationToken);
             }
             catch (MailConnectionException ex) when (ex.Failure == MailConnectionFailure.Authentication)
             {
-                logger.LogWarning(ex, "Mail sync failed for account {AccountId}: provider rejected the credential.", accountId);
+                logger.LogWarning(ex, "Mail sync failed because the provider rejected the credential.");
                 await MarkReauthenticationAsync(accountId, cancellationToken);
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "Mail sync failed for account {AccountId}.", accountId);
+                logger.LogError(ex, "Mail sync failed.");
             }
         }
     }
@@ -81,15 +79,13 @@ public sealed class MailFolderSyncService(
         }
         catch (CryptographicException ex)
         {
-            logger.LogError(ex,
-                "Mail sync failed for account {AccountId}: stored credential cannot be decrypted. Re-enter the mailbox password.",
-                accountId);
+            logger.LogError(ex, "Mail sync failed because the stored credential cannot be decrypted.");
             await MarkReauthenticationAsync(accountId, cancellationToken);
             return;
         }
         catch (InvalidOperationException ex) when (ex.Message is "credential_missing" or "mail_account_not_found" or "mail_account_disabled")
         {
-            logger.LogWarning(ex, "Mail sync skipped for account {AccountId}: credential unavailable.", accountId);
+            logger.LogWarning(ex, "Mail sync skipped because the credential is unavailable.");
             await MarkReauthenticationAsync(accountId, cancellationToken);
             return;
         }
@@ -123,19 +119,13 @@ public sealed class MailFolderSyncService(
             }
             catch (MailConnectionException ex) when (ex.Failure == MailConnectionFailure.Authentication)
             {
-                logger.LogWarning(ex,
-                    "Mail sync failed for account {AccountId}, folder {FolderId}: provider rejected the credential.",
-                    account.Id, folderId);
+                logger.LogWarning(ex, "Mail sync failed because the provider rejected the credential.");
                 await MarkReauthenticationAsync(accountId, cancellationToken);
                 return;
             }
             catch (Exception ex)
             {
-                logger.LogWarning(ex,
-                    "Mail sync failed for account {AccountId}, folder {FolderId}, host {Host}.",
-                    account.Id,
-                    folderId,
-                    resolved.Account.ImapHost);
+                logger.LogWarning(ex, "Mail sync failed while communicating with the provider.");
             }
         }
     }
@@ -200,7 +190,7 @@ public sealed class MailFolderSyncService(
                 }
                 catch (Exception ex)
                 {
-                    logger.LogWarning(ex, "Failed to remove obsolete attachment for folder {FolderId}.", folderId);
+                    logger.LogWarning(ex, "Failed to remove an obsolete attachment.");
                 }
             }
         }
@@ -279,7 +269,7 @@ public sealed class MailFolderSyncService(
             }
             catch (Exception ex)
             {
-                logger.LogWarning(ex, "Push notification failed for mail {MailId}. Sync state is unaffected.", candidate.MailId);
+                logger.LogWarning(ex, "Push notification failed. Sync state is unaffected.");
             }
         }
     }
@@ -311,7 +301,7 @@ public sealed class MailFolderSyncService(
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "Flag reconciliation failed for folder {FolderId}.", folderId);
+            logger.LogWarning(ex, "Flag reconciliation failed.");
         }
     }
 
@@ -412,9 +402,7 @@ public sealed class MailFolderSyncService(
 
             if (summary.Size > (ulong)options.MaxMessageBytes)
             {
-                logger.LogWarning(
-                    "Skipped oversized message {Uid} ({Size} bytes) for account {AccountId}, folder {FolderId}.",
-                    uid.Id, summary.Size, accountId, folderId);
+                logger.LogWarning("Skipped an oversized message ({Size} bytes).", summary.Size);
                 await SkipAndAdvanceAsync(state, folderId, uid.Id, "oversized", "Message exceeds MaxMessageBytes.",
                     accountId, folderId, cancellationToken);
                 return null;
@@ -453,7 +441,7 @@ public sealed class MailFolderSyncService(
                 var remaining = options.MaxMessageAttachmentBytes - messageAttachmentBytes;
                 if (remaining <= 0)
                 {
-                    logger.LogWarning("Skipped oversized attachment for account {AccountId}, folder {FolderId}.", accountId, folderId);
+                    logger.LogWarning("Skipped an oversized attachment.");
                     continue;
                 }
 
@@ -475,7 +463,7 @@ public sealed class MailFolderSyncService(
                 }
                 catch (AttachmentLimitExceededException)
                 {
-                    logger.LogWarning("Skipped oversized attachment for account {AccountId}, folder {FolderId}.", accountId, folderId);
+                    logger.LogWarning("Skipped an oversized attachment.");
                     continue;
                 }
 
@@ -522,9 +510,7 @@ public sealed class MailFolderSyncService(
         catch (Exception ex) when (SyncFailurePolicy.Classify(ex) == SyncFailureDisposition.Skip)
         {
             await CleanupCreatedFilesAsync(createdPaths);
-            logger.LogWarning(ex,
-                "Skipping message {Uid} for account {AccountId}, folder {FolderId}: {Error}.",
-                uid.Id, accountId, folderId, ex.GetType().Name);
+            logger.LogWarning(ex, "Skipped a message because it could not be processed.");
             try
             {
                 await SkipAndAdvanceAsync(state, folderId, uid.Id, "failed", ex.GetType().Name,
@@ -542,9 +528,7 @@ public sealed class MailFolderSyncService(
         {
             state.LastUid = checkpointBefore;
             await CleanupCreatedFilesAsync(createdPaths);
-            logger.LogWarning(ex,
-                "Transient sync failure for message {Uid} for account {AccountId}, folder {FolderId}: {Error}. Retrying next poll.",
-                uid.Id, accountId, folderId, ex.GetType().Name);
+            logger.LogWarning(ex, "Transient message sync failure. Retrying on the next poll.");
             throw;
         }
     }
@@ -587,9 +571,7 @@ public sealed class MailFolderSyncService(
         if (uid > state.LastUid)
             state.LastUid = uid;
         await db.SaveChangesAsync(cancellationToken);
-        logger.LogWarning(
-            "Marked UID {Uid} as skipped ({Kind}) for account {AccountId}, folder {FolderId}.",
-            uid, kind, accountId, logFolderId);
+        logger.LogWarning("Marked a message as skipped ({Kind}).", kind);
     }
 
     private async Task CleanupCreatedFilesAsync(List<string> paths)
