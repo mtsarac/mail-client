@@ -1,4 +1,5 @@
 using System.IdentityModel.Tokens.Jwt;
+using System.Net;
 using System.Security.Claims;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
@@ -25,7 +26,9 @@ using MailClient.Infrastructure.Security;
 using MailClient.Infrastructure.Services;
 using MailClient.Infrastructure.Storage;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
@@ -146,30 +149,57 @@ builder.Services.AddRateLimiter(options =>
         context.User.FindFirstValue(JwtRegisteredClaimNames.Sub) ?? context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
         _ => new FixedWindowRateLimiterOptions { PermitLimit = 60, Window = TimeSpan.FromMinutes(1) }));
 });
+if (builder.Environment.IsDevelopment())
+{
+    builder.Services.AddCors(options => options.AddPolicy("DevelopmentLan", policy => policy
+        .AllowAnyOrigin()
+        .AllowAnyHeader()
+        .AllowAnyMethod()));
+}
+
+var knownProxies = builder.Configuration.GetSection("Proxy:KnownProxies").Get<string[]>() ?? [];
+var knownNetworks = builder.Configuration.GetSection("Proxy:KnownNetworks").Get<string[]>() ?? [];
+var trustedProxy = knownProxies.Length > 0 || knownNetworks.Length > 0;
+if (trustedProxy)
+{
+    builder.Services.Configure<ForwardedHeadersOptions>(options =>
+    {
+        options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+        options.KnownProxies.Clear();
+        options.KnownIPNetworks.Clear();
+        foreach (var proxy in knownProxies)
+            if (IPAddress.TryParse(proxy, out var address))
+                options.KnownProxies.Add(address);
+        foreach (var network in knownNetworks)
+        {
+            var parts = network.Split('/');
+            if (parts.Length == 2 && IPAddress.TryParse(parts[0], out var prefix) && int.TryParse(parts[1], out var prefixLength))
+                options.KnownIPNetworks.Add(new System.Net.IPNetwork(prefix, prefixLength));
+        }
+    });
+}
 
 var app = builder.Build();
 app.UseExceptionHandler(error => error.Run(async context =>
 {
     var exception = context.Features.Get<Microsoft.AspNetCore.Diagnostics.IExceptionHandlerFeature>()?.Error;
-    var code = exception?.Message ?? "unexpected_error";
-    context.Response.StatusCode = code switch
-    {
-        "mail_authentication_failed" => 401,
-        "invalid_recipient" or "body_required" or "body_too_large" or "too_many_attachments"
-            or "attachment_too_large" or "message_not_constructible" or "idempotency_key_required"
-            or "idempotency_key_too_long" or "invalid_mail_header" => 400,
-        "mail_server_unsafe" or "unsupported_authentication_method" or "invalid_email"
-            or "oauth_not_implemented" => 422,
-        "mail_account_not_found" => 404,
-        "idempotency_conflict" or "send_in_progress" or "delivery_unknown" or "mailbox_changed"
-            or "credential_missing" or "mail_account_needs_reauthentication" => 409,
-        "mail_account_disabled" => 403,
-        _ => 500
-    };
-    await Results.Problem(title: code.Replace('_', ' '), statusCode: context.Response.StatusCode, extensions: new Dictionary<string, object?> { ["code"] = code, ["correlationId"] = context.TraceIdentifier }).ExecuteAsync(context);
+    var (code, status) = MapFailure(exception);
+    if (status >= 500)
+        app.Logger.LogError(exception, "Unhandled request failure {Code} for {Method} {Path}.", code, context.Request.Method, context.Request.Path);
+    var extensions = new Dictionary<string, object?> { ["code"] = code, ["correlationId"] = context.TraceIdentifier };
+    if (app.Environment.IsDevelopment() && exception is not null)
+        extensions["detail"] = $"{exception.GetType().Name}: {exception.Message}";
+    context.Response.StatusCode = status;
+    await Results.Problem(title: code.Replace('_', ' '), statusCode: status, extensions: extensions).ExecuteAsync(context);
 }));
-app.UseRateLimiter();
+if (trustedProxy)
+    app.UseForwardedHeaders();
+if (!app.Environment.IsDevelopment() && !app.Environment.IsEnvironment("Test"))
+    app.UseHttpsRedirection();
+if (app.Environment.IsDevelopment())
+    app.UseCors("DevelopmentLan");
 app.UseAuthentication();
+app.UseRateLimiter();
 app.UseMiddleware<CorrelationMiddleware>();
 app.UseSerilogRequestLogging();
 app.UseAuthorization();
@@ -331,6 +361,34 @@ api.MapDelete("/devices/{id:guid}", async (Guid id, ICurrentMailAccount current,
     return Results.NoContent();
 }).WithName("DeleteDevice").WithSummary("Remove account-owned device").Produces(204).Produces(404);
 app.MapGet("/health", () => Results.Ok(new { status = "healthy" })).WithName("Health").WithSummary("Check API health").Produces(200);
+
+static (string Code, int Status) MapFailure(Exception? exception) => exception switch
+{
+    MailConnectionException { Failure: MailConnectionFailure.Authentication, Operation: "ValidateSmtp" } => ("mail_smtp_authentication_failed", 401),
+    MailConnectionException { Failure: MailConnectionFailure.Authentication } => ("mail_authentication_failed", 401),
+    MailConnectionException { Failure: MailConnectionFailure.Tls } => ("mail_tls_failed", 502),
+    MailConnectionException { Failure: MailConnectionFailure.Protocol } => ("mail_provider_unavailable", 502),
+    MailConnectionException => ("mail_server_unreachable", 502),
+    InvalidOperationException known when StatusFor(known.Message) is { } status => (known.Message, status),
+    _ => ("unexpected_error", 500)
+};
+
+static int? StatusFor(string code) => code switch
+{
+    "mail_authentication_failed" or "mail_smtp_authentication_failed" => 401,
+    "invalid_recipient" or "body_required" or "body_too_large" or "too_many_attachments"
+        or "attachment_too_large" or "message_not_constructible" or "idempotency_key_required"
+        or "idempotency_key_too_long" or "invalid_mail_header" or "manual_setup_invalid"
+        or "invalid_email" => 400,
+    "mail_server_unsafe" or "unsupported_authentication_method"
+        or "oauth_not_implemented" or "discovery_invalid" => 422,
+    "mail_account_not_found" => 404,
+    "idempotency_conflict" or "send_in_progress" or "delivery_unknown" or "mailbox_changed"
+        or "credential_missing" or "mail_account_needs_reauthentication" => 409,
+    "mail_account_disabled" => 403,
+    _ => null
+};
+
 app.Run();
 
 public sealed record ReadRequest(bool IsRead);

@@ -199,7 +199,7 @@ public sealed class AccountApiTests(AcceptingApiFactory factory) : IClassFixture
         var firstRefresh = (await connect.Content.ReadFromJsonAsync<JsonDocument>())!.RootElement.GetProperty("refreshToken").GetString()!;
 
         var rotated = await client.PostAsJsonAsync("/api/auth/refresh", new { refreshToken = firstRefresh });
-        Assert.Equal(HttpStatusCode.OK, rotated.StatusCode);
+        Assert.True(rotated.StatusCode == HttpStatusCode.OK, await rotated.Content.ReadAsStringAsync());
         var secondRefresh = (await rotated.Content.ReadFromJsonAsync<JsonDocument>())!.RootElement.GetProperty("refreshToken").GetString()!;
         Assert.NotEqual(firstRefresh, secondRefresh);
 
