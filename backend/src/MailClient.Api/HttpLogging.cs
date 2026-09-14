@@ -111,7 +111,6 @@ public sealed class HttpBodyLoggingMiddleware(
             ?? context.Response.Headers["X-Correlation-ID"].ToString();
         if (string.IsNullOrEmpty(correlationId))
             correlationId = context.TraceIdentifier;
-        var accountClaim = context.User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value;
         var path = Sanitize(context.Request.Path.Value ?? "/");
         var method = Sanitize(context.Request.Method);
         var query = context.Request.QueryString.Value;
@@ -131,8 +130,6 @@ public sealed class HttpBodyLoggingMiddleware(
             .ForContext("ResponseBody", SanitizeBody(responseBody.Value), destructureObjects: true);
         if (!string.IsNullOrEmpty(query))
             log = log.ForContext("QueryString", Sanitize(query));
-        if (Guid.TryParse(accountClaim, out var mailAccountId))
-            log = log.ForContext("MailAccountId", mailAccountId);
         log.Information(
             "HTTP {Method} {RequestPath} responded {StatusCode} in {ElapsedMs} ms.",
             method, path, context.Response.StatusCode, elapsedMs);
