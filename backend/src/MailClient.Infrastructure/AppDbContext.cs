@@ -42,10 +42,18 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         model.Entity<Attachment>().Property(x => x.ContentType).HasMaxLength(150);
         model.Entity<Attachment>().Property(x => x.ContentId).HasMaxLength(998);
         model.Entity<Attachment>().HasOne(x => x.Mail).WithMany(x => x.Attachments).HasForeignKey(x => x.MailId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<Attachment>().HasOne<MailAccount>().WithMany().HasForeignKey(x => x.MailAccountId).OnDelete(DeleteBehavior.Cascade);
         model.Entity<SyncState>().HasIndex(x => x.MailFolderId).IsUnique();
+        model.Entity<SyncState>().HasOne<MailAccount>().WithMany().HasForeignKey(x => x.MailAccountId).OnDelete(DeleteBehavior.Cascade);
         model.Entity<SyncSkippedUid>().HasIndex(x => new { x.MailFolderId, x.Uid }).IsUnique();
+        model.Entity<SyncSkippedUid>().HasOne<MailFolder>().WithMany().HasForeignKey(x => x.MailFolderId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<SyncSkippedUid>().HasOne<MailAccount>().WithMany().HasForeignKey(x => x.MailAccountId).OnDelete(DeleteBehavior.Cascade);
         model.Entity<SendOperation>().HasIndex(x => new { x.MailAccountId, x.IdempotencyKey }).IsUnique();
+        model.Entity<SendOperation>().HasOne<MailAccount>().WithMany().HasForeignKey(x => x.MailAccountId).OnDelete(DeleteBehavior.Cascade);
         model.Entity<DeviceToken>().HasIndex(x => new { x.MailAccountId, x.Token }).IsUnique();
+        model.Entity<DeviceToken>().HasOne<MailAccount>().WithMany().HasForeignKey(x => x.MailAccountId).OnDelete(DeleteBehavior.Cascade);
         model.Entity<AuditLog>().HasIndex(x => new { x.MailAccountId, x.TimestampUtc });
+        // Audit history is deliberately not destroyed with the mailbox: the row survives with a null account id.
+        model.Entity<AuditLog>().HasOne<MailAccount>().WithMany().HasForeignKey(x => x.MailAccountId).OnDelete(DeleteBehavior.SetNull);
     }
 }
