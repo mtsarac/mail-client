@@ -20,7 +20,7 @@ public sealed class KnownProviderStrategy : IMailDiscoveryStrategy
         if (candidate is not null) yield return candidate;
         await Task.CompletedTask;
     }
-    private static MailServerCandidate Candidate(MailProvider provider, string imap, string smtp, int smtpPort = 465, MailSecurity smtpSecurity = MailSecurity.SslOnConnect) => new(provider, new(imap, 993, MailSecurity.SslOnConnect), new(smtp, smtpPort, smtpSecurity), [AuthenticationMethod.Password, AuthenticationMethod.AppSpecificPassword, AuthenticationMethod.OAuth2], DiscoverySource.KnownProvider);
+    private static MailServerCandidate Candidate(MailProvider provider, string imap, string smtp, int smtpPort = 465, MailSecurity smtpSecurity = MailSecurity.SslOnConnect) => new(provider, new(imap, 993, MailSecurity.SslOnConnect), new(smtp, smtpPort, smtpSecurity), [AuthenticationMethod.Password, AuthenticationMethod.AppSpecificPassword], DiscoverySource.KnownProvider);
 }
 
 public sealed class HeuristicDiscoveryStrategy : IMailDiscoveryStrategy
