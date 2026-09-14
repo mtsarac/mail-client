@@ -429,7 +429,51 @@ reads (`ReceivedAt DESC, Id DESC`, `page ≥ 1`, `1 ≤ pageSize ≤ 100`).
 
 ---
 
-## 13. Production considerations
+## 13. Audit logging, structured logs, correlation
+
+- **Audit** (`AuditLogs` table, `IAuditLogger` → `EfAuditLogger`): one row
+  per successful semantic action — register, login, mail-account
+  create/update/delete/test, folder refresh/sync-toggle, mail sent (only
+  when `Sent=true`; idempotent replays write nothing), read-state changes
+  (only real changes; no-ops write nothing), device register/remove, admin
+  create/status-change/password-reset. Failed logins and read-only GETs
+  write nothing. Columns: `UserId`, `Action` (`AuditActions.*`
+  constants), `EntityType`, `EntityId`, `TimestampUtc`, `Metadata` (jsonb),
+  `CorrelationId`. Metadata holds ids/emails/hosts/flags only — never
+  passwords, tokens, hashes, or bodies.
+- **Logs** (Serilog, `ILogger<T>` unchanged): `logs/app-YYYYMMDD.json`
+  for application/errors (rolling daily, 14 files) and
+  `logs/http-YYYYMMDD.json` for HTTP traffic (rolling daily, 7 files).
+  NDJSON, one structured event per line; console stays human-readable in
+  dev. Configure via `Logging:File` (`Directory`, `RetainedFileCount`)
+  and `HttpLogging` (`Enabled`, `MaxRequestBodyBytes` 32 KB,
+  `MaxResponseBodyBytes` 64 KB, `ExcludedPaths` for
+  `/health*`, `/swagger`, `/openapi`).
+- **HTTP log shape**: method, path, query, user id, status, elapsed ms,
+  content types, remote IP, correlation id, plus `request`/`response` as
+  parsed JSON objects (not escaped strings) when the body is JSON under
+  the size limit (`bodyTruncated: true` otherwise). Multipart sends log
+  field names + attachment filename/type/size only — never file bytes or
+  `bodyHtml`/`bodyText`. Binary downloads log metadata only.
+- **Redaction** (recursive, case-insensitive): `password`,
+  `newPassword`, `currentPassword`, `accessToken`, `refreshToken`,
+  `token`, `pushToken`, `authorization`, `secret`, `clientSecret`,
+  `apiKey`, `encryptedPassword`, `credential(s)`, `certificatePassword`,
+  `privateKey` → `"[REDACTED]"`. Authorization headers and cookies are
+  never logged.
+- **Correlation**: send `X-Correlation-ID` (letters/digits/`-`/`_`, max
+  64 chars) or one is generated; echoed in the response, attached to HTTP
+  logs, Serilog scope, and audit rows.
+- **Errors**: `ExceptionLoggingMiddleware` logs unhandled exceptions once
+  (type, message, stack, method/path, user, correlation); `UseExceptionHandler`
+  still renders `ProblemDetails` without internals. Validation/404/409
+  are not error-logged.
+- **Inspect**: `cat logs/http-*.json | jq 'select(.Path=="/api/auth/login")'`,
+  `jq '.Request.email'`, `jq 'select(.StatusCode>=500)'`.
+
+---
+
+## 14. Production considerations
 
 Implemented requirements vs recommendations:
 
@@ -443,7 +487,7 @@ Implemented requirements vs recommendations:
 
 ---
 
-## 14. Troubleshooting
+## 15. Troubleshooting
 
 | Symptom | Likely cause / fix |
 |---|---|
@@ -464,7 +508,7 @@ Implemented requirements vs recommendations:
 
 ---
 
-## 15. Glossary
+## 16. Glossary
 
 **IMAP**: mailbox read protocol; **SMTP**: mail send protocol;
 **UID**: per-folder immutable message id; **UIDVALIDITY**: folder

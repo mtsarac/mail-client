@@ -119,11 +119,26 @@ untrusted networks have no effect.
 
 ## Error handling
 
-Unhandled exceptions → ProblemDetails via `UseExceptionHandler` (no stack
-traces to clients). Validation/auth/rate-limit/mail/provider errors map to
+Unhandled exceptions → logged once server-side (type, message, stack,
+method/path, user, correlation id) → ProblemDetails via
+`UseExceptionHandler` (no stack traces to clients). Validation/auth/rate-limit/mail/provider errors map to
 400/401/403/429/404/409/502 per [API_REFERENCE.en.md](API_REFERENCE.en.md).
 Sync failures log server-side (user id + host, never passwords); push
 failures never disturb committed state.
+
+## Logging & audit privacy
+
+- HTTP request/response bodies are parsed to structured JSON and
+  recursively redacted (`password`, `token`, `secret`, `apiKey`, … →
+  `"[REDACTED]"`, case-insensitive). Authorization headers and cookies
+  are never logged. Multipart sends log only field names + attachment
+  filename/type/size; mail bodies and file bytes never enter logs.
+- Audit rows (`AuditLogs`) hold ids/emails/hosts/flags only — never
+  passwords, hashes, tokens, or message content. Failed logins and
+  read-only GETs write no audit row.
+- Every request carries a correlation id (`X-Correlation-ID`, validated,
+  max 64 chars) echoed in the response and stored in logs + audit rows.
+  See [BACKEND_GUIDE.en.md](BACKEND_GUIDE.en.md) §13.
 
 ## Dev concessions vs production requirements
 

@@ -92,7 +92,8 @@ For LAN CORS, cleartext rules, and firewall troubleshooting:
 
 | Project | Kind | How |
 |---|---|---|
-| `MailClient.Api.Tests` | full-stack integration | `WebApplicationFactory` + Testcontainers Postgres (+ GreenMail for mail flows): auth, isolation, token invalidation, mail endpoints, send, rate limits, LAN/config, persistence |
+| `MailClient.Api.Tests` | full-stack integration | `WebApplicationFactory` + Testcontainers Postgres (+ GreenMail for mail flows): auth, isolation, token invalidation, mail endpoints, send, rate limits, LAN/config, persistence, audit + correlation |
+| `MailClient.Api.Tests` | unit | redaction, HTTP middleware (stream passthrough, truncation, exclusions), OpenAPI endpoint names |
 | `MailClient.Infrastructure.Tests` | unit | EF InMemory + fakes: validation, password policy, idempotent send, reconfiguration, device + push (fake gateway, no network), discovery, mapping, limits, storage, classifier, validator |
 | `MailClient.Infrastructure.Tests` | Postgres semantics | Testcontainers: sync backlog/flags/availability, Postgres idempotency, migrations upgrade, race tests |
 
