@@ -41,6 +41,7 @@ public sealed class MailOperationService(
                 _ => new(true)
             };
         }
+        var auditKind = request.Kind;
         if (request.Kind == MailOperationKind.Restore)
         {
             if (mail.PreviousMailFolderId is not { } previousFolderId)
@@ -84,12 +85,17 @@ public sealed class MailOperationService(
                     return new(false, MailOperationError.MoveFailed, true);
                 if (moveResult.DestinationUid is not { } destinationUid)
                 {
-                    mail.NeedsReconciliation = true;
-                    await syncQueue.EnqueueAsync(SyncRequest.Folder(accountId, target!.Id), cancellationToken);
+                    if (auditKind is MailOperationKind.Trash or MailOperationKind.Spam)
+                        mail.PreviousMailFolderId = mail.MailFolderId;
+                    mail.ExpectedMailFolderId = target!.Id;
+                    mail.ReconciliationState = MailReconciliationState.Pending;
+                    await syncQueue.EnqueueAsync(SyncRequest.Folder(accountId, target.Id), cancellationToken);
                     await db.SaveChangesAsync(cancellationToken);
-                    return await AuditSuccess(accountId, request.Kind, mail.Id, correlationId, cancellationToken, new(true, MailOperationError.None, true));
+                    return await AuditSuccess(accountId, auditKind, mail.Id, correlationId, cancellationToken, new(true, MailOperationError.None, true));
                 }
-                mail.PreviousMailFolderId = request.Kind is MailOperationKind.Trash or MailOperationKind.Spam ? mail.MailFolderId : mail.PreviousMailFolderId;
+                mail.PreviousMailFolderId = auditKind is MailOperationKind.Restore
+                    ? null
+                    : auditKind is MailOperationKind.Trash or MailOperationKind.Spam ? mail.MailFolderId : mail.PreviousMailFolderId;
                 mail.MailFolderId = target!.Id;
                 mail.Uid = destinationUid.Id;
                 mail.UidValidity = moveResult.DestinationUidValidity;
@@ -100,10 +106,10 @@ public sealed class MailOperationService(
             else if (request.Kind is MailOperationKind.Star or MailOperationKind.Unstar)
                 mail.Flagged = request.Kind == MailOperationKind.Star;
             else if (request.Kind == MailOperationKind.Copy)
-                return await AuditSuccess(accountId, request.Kind, mail.Id, correlationId, cancellationToken, new(true));
+                return await AuditSuccess(accountId, auditKind, mail.Id, correlationId, cancellationToken, new(true));
 
             await db.SaveChangesAsync(cancellationToken);
-            return await AuditSuccess(accountId, request.Kind, mail.Id, correlationId, cancellationToken, new(true));
+            return await AuditSuccess(accountId, auditKind, mail.Id, correlationId, cancellationToken, new(true));
         }
         catch (MailOperationConflictException)
         {

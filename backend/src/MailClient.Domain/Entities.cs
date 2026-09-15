@@ -78,7 +78,13 @@ public sealed class Mail
     public Guid MailAccountId { get; set; }
     public Guid MailFolderId { get; set; }
     public Guid? PreviousMailFolderId { get; set; }
-    public bool NeedsReconciliation { get; set; }
+    public Guid? ExpectedMailFolderId { get; set; }
+    public MailReconciliationState ReconciliationState { get; set; }
+    public bool NeedsReconciliation
+    {
+        get => ReconciliationState == MailReconciliationState.Pending;
+        set => ReconciliationState = value ? MailReconciliationState.Pending : MailReconciliationState.None;
+    }
     public Guid? ConversationId { get; set; }
     public uint Uid { get; set; }
     public uint UidValidity { get; set; }
