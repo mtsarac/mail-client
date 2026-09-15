@@ -15,6 +15,7 @@ public sealed record RemoteSummary(
     DateTime? InternalDate);
 
 public sealed record UidSearchResult(IList<UniqueId> Uids, uint ScannedUpTo);
+public sealed record RemoteMoveResult(UniqueId? DestinationUid, uint DestinationUidValidity);
 
 public interface IRemoteMailFolder
 {
@@ -27,8 +28,8 @@ public interface IRemoteMailFolder
     Task<MimeMessage> GetMessageAsync(UniqueId uid, CancellationToken cancellationToken);
     Task SetSeenAsync(UniqueId uid, bool seen, CancellationToken cancellationToken);
     Task SetFlaggedAsync(UniqueId uid, bool flagged, CancellationToken cancellationToken);
-    Task<UniqueId?> MoveAsync(UniqueId uid, string destinationFullName, CancellationToken cancellationToken);
-    Task<UniqueId?> CopyAsync(UniqueId uid, string destinationFullName, CancellationToken cancellationToken);
+    Task<RemoteMoveResult> MoveAsync(UniqueId uid, string destinationFullName, CancellationToken cancellationToken);
+    Task<RemoteMoveResult> CopyAsync(UniqueId uid, string destinationFullName, CancellationToken cancellationToken);
     Task AppendAsync(MimeMessage message, CancellationToken cancellationToken);
 }
 
@@ -150,22 +151,22 @@ public sealed class MailKitRemoteMailFolder(IMailFolder folder, Func<string, Can
             ? folder.AddFlagsAsync(uid, MessageFlags.Flagged, true, cancellationToken)
             : folder.RemoveFlagsAsync(uid, MessageFlags.Flagged, true, cancellationToken);
 
-    public async Task<UniqueId?> MoveAsync(UniqueId uid, string destinationFullName, CancellationToken cancellationToken)
+    public async Task<RemoteMoveResult> MoveAsync(UniqueId uid, string destinationFullName, CancellationToken cancellationToken)
     {
         if (resolveFolder is null)
             throw new NotSupportedException("Destination folder resolution is unavailable.");
         var destination = await resolveFolder(destinationFullName, cancellationToken);
         var result = await folder.MoveToAsync(uid, destination, cancellationToken);
-        return result;
+        return new(result, destination.UidValidity);
     }
 
-    public async Task<UniqueId?> CopyAsync(UniqueId uid, string destinationFullName, CancellationToken cancellationToken)
+    public async Task<RemoteMoveResult> CopyAsync(UniqueId uid, string destinationFullName, CancellationToken cancellationToken)
     {
         if (resolveFolder is null)
             throw new NotSupportedException("Destination folder resolution is unavailable.");
         var destination = await resolveFolder(destinationFullName, cancellationToken);
         var result = await folder.CopyToAsync(uid, destination, cancellationToken);
-        return result;
+        return new(result, destination.UidValidity);
     }
 
     public Task AppendAsync(MimeMessage message, CancellationToken cancellationToken) =>
