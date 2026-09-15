@@ -7,6 +7,7 @@ public static class MailFieldLimits
     public const int FromDisplayName = 250;
     public const int ToAddress = 320;
     public const int MessageId = 998;
+    public const int References = 4096;
     public const int FileName = 255;
     public const int ContentType = 150;
     public const int ContentId = 998;
