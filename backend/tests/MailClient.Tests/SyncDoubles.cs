@@ -89,8 +89,8 @@ internal class FakeRemoteMailFolder(
     }
 
     public virtual Task SetFlaggedAsync(UniqueId uid, bool flagged, CancellationToken cancellationToken) => Task.CompletedTask;
-    public virtual Task<UniqueId?> MoveAsync(UniqueId uid, string destinationFullName, CancellationToken cancellationToken) => Task.FromResult<UniqueId?>(null);
-    public Task<UniqueId?> CopyAsync(UniqueId uid, string destinationFullName, CancellationToken cancellationToken) => Task.FromResult<UniqueId?>(null);
+    public virtual Task<RemoteMoveResult> MoveAsync(UniqueId uid, string destinationFullName, CancellationToken cancellationToken) => Task.FromResult(new RemoteMoveResult(null, UidValidity));
+    public Task<RemoteMoveResult> CopyAsync(UniqueId uid, string destinationFullName, CancellationToken cancellationToken) => Task.FromResult(new RemoteMoveResult(null, UidValidity));
     public Task AppendAsync(MimeMessage message, CancellationToken cancellationToken) => Task.CompletedTask;
 }
 

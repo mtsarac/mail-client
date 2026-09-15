@@ -87,6 +87,7 @@ public static class MailEndpoints
             MailOperationError.FolderNotFound => (404, "Mail folder not found.", "mail_folder_not_found"),
             MailOperationError.NeedsReauthentication => (409, "Mailbox needs reauthentication.", "mail_account_needs_reauthentication"),
             MailOperationError.ProviderUnavailable => (502, "Mail provider unavailable.", "mail_provider_unavailable"),
+            MailOperationError.Conflict when legacyRead => (409, "Mailbox folder changed.", "mailbox_changed"),
             MailOperationError.Conflict => (409, "Mailbox state changed.", "mail_operation_conflict"),
             MailOperationError.MoveFailed => (502, "Mail move failed.", "mail_move_failed"),
             MailOperationError.NotSupported => (422, "Mail operation is not supported.", "mail_operation_not_supported"),
