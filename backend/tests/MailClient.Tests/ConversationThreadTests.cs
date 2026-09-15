@@ -110,6 +110,128 @@ public sealed class ConversationThreadTests
         Assert.Equal(firstConversationId, mail.ConversationId);
     }
 
+    [Fact]
+    public async Task LateAncestor_MergesTwoSeparateConversations_WithDeterministicSurvivorAndBounds()
+    {
+        await using var db = CreateDb();
+        var (accountId, service) = await SeedAsync(db);
+        var sentA = DateTime.UtcNow.AddHours(-3);
+        var sentB = DateTime.UtcNow.AddHours(-2);
+        var sentBridge = DateTime.UtcNow.AddHours(-1);
+
+        var mailA = await AddMailAsync(db, accountId, "Alpha plan", "alice@ornek.test", messageId: "a-t05-merge@x", sentAt: sentA);
+        await service.AssignAsync(mailA.Id, CancellationToken.None);
+        var mailB = await AddMailAsync(db, accountId, "Beta plan", "bob@ornek.test", messageId: "b-t05-merge@x", sentAt: sentB);
+        await service.AssignAsync(mailB.Id, CancellationToken.None);
+
+        var convA = (await db.Mails.AsNoTracking().SingleAsync(item => item.Id == mailA.Id)).ConversationId;
+        var convB = (await db.Mails.AsNoTracking().SingleAsync(item => item.Id == mailB.Id)).ConversationId;
+        Assert.NotNull(convA);
+        Assert.NotNull(convB);
+        Assert.NotEqual(convA, convB);
+
+        var bridge = await AddMailAsync(db, accountId, "Re: Alpha plan", "carol@ornek.test",
+            messageId: "c-t05-merge@x", inReplyTo: "a-t05-merge@x", references: "a-t05-merge@x b-t05-merge@x", sentAt: sentBridge);
+        await service.AssignAsync(bridge.Id, CancellationToken.None);
+
+        var accountConvs = await db.Conversations.AsNoTracking().Where(item => item.MailAccountId == accountId).ToListAsync();
+        Assert.Single(accountConvs);
+        Assert.Equal(convA, accountConvs[0].Id);
+
+        var mails = await db.Mails.AsNoTracking().Where(item => item.MailAccountId == accountId).ToListAsync();
+        Assert.Equal(3, mails.Count);
+        Assert.All(mails, item => Assert.Equal(accountConvs[0].Id, item.ConversationId));
+        Assert.Equal(sentA, accountConvs[0].StartedAt);
+        Assert.Equal(sentBridge, accountConvs[0].LastMessageAt);
+    }
+
+    [Fact]
+    public async Task LateAncestor_ByMessageId_RebindsChildren_AndIsIdempotent()
+    {
+        await using var db = CreateDb();
+        var (accountId, service) = await SeedAsync(db);
+        var sentRoot = DateTime.UtcNow.AddHours(-4);
+        var sentFirst = DateTime.UtcNow.AddHours(-3);
+        var sentSecond = DateTime.UtcNow.AddHours(-2);
+
+        var first = await AddMailAsync(db, accountId, "Alpha item", "alice@ornek.test",
+            messageId: "m1-t05-root@x", inReplyTo: "root-t05-late@x", sentAt: sentFirst);
+        await service.AssignAsync(first.Id, CancellationToken.None);
+        var second = await AddMailAsync(db, accountId, "Beta item", "bob@ornek.test",
+            messageId: "m2-t05-root@x", inReplyTo: "root-t05-late@x", sentAt: sentSecond);
+        await service.AssignAsync(second.Id, CancellationToken.None);
+
+        var convFirst = (await db.Mails.AsNoTracking().SingleAsync(item => item.Id == first.Id)).ConversationId;
+        var convSecond = (await db.Mails.AsNoTracking().SingleAsync(item => item.Id == second.Id)).ConversationId;
+        Assert.NotNull(convFirst);
+        Assert.NotNull(convSecond);
+        Assert.NotEqual(convFirst, convSecond);
+
+        var root = await AddMailAsync(db, accountId, "Root item", "boss@corp.test",
+            messageId: "root-t05-late@x", sentAt: sentRoot);
+        await service.AssignAsync(root.Id, CancellationToken.None);
+
+        var survivor = await db.Conversations.AsNoTracking().Where(item => item.MailAccountId == accountId).ToListAsync();
+        Assert.Single(survivor);
+        Assert.Equal(convFirst, survivor[0].Id);
+        var boundMails = await db.Mails.AsNoTracking().Where(item => item.MailAccountId == accountId).ToListAsync();
+        Assert.All(boundMails, item => Assert.Equal(survivor[0].Id, item.ConversationId));
+        Assert.Equal(sentRoot, survivor[0].StartedAt);
+        Assert.Equal(sentSecond, survivor[0].LastMessageAt);
+
+        await service.AssignAsync(root.Id, CancellationToken.None);
+        await service.AssignAsync(first.Id, CancellationToken.None);
+
+        var after = await db.Conversations.AsNoTracking().Where(item => item.MailAccountId == accountId).ToListAsync();
+        Assert.Single(after);
+        Assert.Equal(survivor[0].Id, after[0].Id);
+        Assert.Equal(sentRoot, after[0].StartedAt);
+        Assert.Equal(sentSecond, after[0].LastMessageAt);
+    }
+
+    [Fact]
+    public async Task LateAncestor_DoesNotMergeAcrossAccounts()
+    {
+        await using var db = CreateDb();
+        var (accountId, service) = await SeedAsync(db);
+        var otherAccountId = Guid.NewGuid();
+        db.MailAccounts.Add(new MailAccount
+        {
+            Id = otherAccountId,
+            EmailAddress = "other@client.test",
+            NormalizedEmailAddress = "other@client.test",
+            Username = "other",
+            ImapHost = "imap.example.test",
+            ImapPort = 993,
+            SmtpHost = "smtp.example.test",
+            SmtpPort = 465,
+            Status = MailAccountStatus.Active
+        });
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+        var otherService = new ConversationService(db);
+
+        var mailA = await AddMailAsync(db, accountId, "Alpha plan", "alice@ornek.test", messageId: "a-t05-iso@x");
+        await service.AssignAsync(mailA.Id, CancellationToken.None);
+        var mailB = await AddMailAsync(db, accountId, "Beta plan", "bob@ornek.test", messageId: "b-t05-iso@x");
+        await service.AssignAsync(mailB.Id, CancellationToken.None);
+        var foreign = await AddMailAsync(db, otherAccountId, "Foreign plan", "carol@ornek.test",
+            messageId: "a-t05-iso@x", references: "b-t05-iso@x");
+        await otherService.AssignAsync(foreign.Id, CancellationToken.None);
+        var foreignConv = (await db.Mails.AsNoTracking().SingleAsync(item => item.Id == foreign.Id)).ConversationId;
+
+        var bridge = await AddMailAsync(db, accountId, "Re: Alpha plan", "dave@ornek.test",
+            messageId: "c-t05-iso@x", inReplyTo: "a-t05-iso@x", references: "a-t05-iso@x b-t05-iso@x");
+        await service.AssignAsync(bridge.Id, CancellationToken.None);
+
+        var ownConvs = await db.Conversations.AsNoTracking().Where(item => item.MailAccountId == accountId).ToListAsync();
+        Assert.Single(ownConvs);
+        var foreignAfter = await db.Mails.AsNoTracking().SingleAsync(item => item.Id == foreign.Id);
+        Assert.Equal(foreignConv, foreignAfter.ConversationId);
+        var foreignConvs = await db.Conversations.AsNoTracking().Where(item => item.MailAccountId == otherAccountId).ToListAsync();
+        Assert.Single(foreignConvs);
+    }
+
     private static AppDbContext CreateDb() => new(new DbContextOptionsBuilder<AppDbContext>()
         .UseInMemoryDatabase(Guid.NewGuid().ToString("N")).Options);
 
@@ -141,7 +263,8 @@ public sealed class ConversationThreadTests
         string? messageId = null,
         string? inReplyTo = null,
         string? references = null,
-        string? to = null)
+        string? to = null,
+        DateTime? sentAt = null)
     {
         var mail = new MailEntity
         {
@@ -154,7 +277,7 @@ public sealed class ConversationThreadTests
             MessageId = messageId ?? "",
             InReplyToMessageId = inReplyTo ?? "",
             References = references ?? "",
-            SentAt = DateTime.UtcNow.AddMinutes(-db.Mails.Count()),
+            SentAt = sentAt ?? DateTime.UtcNow.AddMinutes(-db.Mails.Count()),
             ReceivedAt = DateTime.UtcNow,
             InternalDate = DateTime.UtcNow
         };
