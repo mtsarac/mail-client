@@ -26,6 +26,12 @@ public sealed record AttachmentResponse(
 
 public sealed record MailHeaderResponse(string Name, string Value);
 
+public sealed record MailBodyResponse(
+    string Html,
+    bool HasRemoteContent,
+    IReadOnlyList<string> RemoteContentHosts,
+    IReadOnlyList<string> TrackingPixelHosts);
+
 public sealed record MailListItemResponse(
     Guid Id,
     Guid FolderId,
@@ -58,7 +64,7 @@ public sealed record MailDetailResponse(
     IReadOnlyList<MailParticipantResponse> Bcc,
     IReadOnlyList<MailParticipantResponse> ReplyTo,
     string BodyText,
-    string BodyHtml,
+    MailBodyResponse Body,
     bool IsRead,
     bool Answered,
     bool Flagged,

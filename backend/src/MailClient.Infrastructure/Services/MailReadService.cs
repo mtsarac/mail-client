@@ -30,6 +30,9 @@ public sealed class MailReadService(
         if (mail is null)
             return null;
 
+        var body = HtmlMailBodyRenderer.Render(mail, mail.BodyHtml);
+        var bodyContract = new MailBodyResponse(body.Html, body.HasRemoteContent, body.RemoteContentHosts, body.TrackingPixelHosts);
+
         return new MailDetailResponse(
             mail.Id,
             mail.MailFolderId,
@@ -45,7 +48,7 @@ public sealed class MailReadService(
             ToParticipantResponses(mail.Participants, ParticipantType.Bcc),
             ToParticipantResponses(mail.Participants, ParticipantType.ReplyTo),
             mail.BodyText,
-            mail.BodyHtml,
+            bodyContract,
             mail.IsRead,
             mail.Answered,
             mail.Flagged,
