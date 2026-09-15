@@ -79,7 +79,7 @@ public static class HtmlMailBodyRenderer
             foreach (var attribute in new[] { "src", "srcset", "href", "background", "poster" })
             {
                 var value = element.GetAttribute(attribute);
-                if (string.IsNullOrWhiteSpace(value) || !IsRemoteResource(value))
+                if (string.IsNullOrWhiteSpace(value) || !IsRemoteResource(value, attribute))
                     continue;
                 element.SetAttribute($"data-remote-{attribute}", value);
                 element.RemoveAttribute(attribute);
@@ -89,9 +89,11 @@ public static class HtmlMailBodyRenderer
         return document.Body?.InnerHtml ?? html;
     }
 
-    private static bool IsRemoteResource(string value) =>
+    private static bool IsRemoteResource(string value, string attribute) =>
         value.StartsWith("//", StringComparison.Ordinal)
-        || Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https";
+        || (attribute == "srcset"
+            ? value.Split(',', StringSplitOptions.RemoveEmptyEntries).Any(candidate => IsRemoteResource(candidate.Trim().Split(' ', 2)[0], "src"))
+            : Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https");
 
     private static List<string> CollectRemoteHosts(AngleSharp.Dom.IElement? root)
     {
