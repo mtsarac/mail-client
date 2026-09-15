@@ -77,6 +77,7 @@ public sealed class Mail
     public Guid Id { get; set; }
     public Guid MailAccountId { get; set; }
     public Guid MailFolderId { get; set; }
+    public Guid? ConversationId { get; set; }
     public uint Uid { get; set; }
     public uint UidValidity { get; set; }
     public string MessageId { get; set; } = "";
@@ -103,6 +104,18 @@ public sealed class Mail
     public ICollection<Attachment> Attachments { get; set; } = [];
     public ICollection<MailParticipant> Participants { get; set; } = [];
     public ICollection<MailHeader> Headers { get; set; } = [];
+    public Conversation? Conversation { get; set; }
+}
+
+public sealed class Conversation
+{
+    public Guid Id { get; set; }
+    public Guid MailAccountId { get; set; }
+    public string NormalizedSubject { get; set; } = "";
+    public DateTime StartedAt { get; set; }
+    public DateTime LastMessageAt { get; set; }
+    public MailAccount? MailAccount { get; set; }
+    public ICollection<Mail> Mails { get; set; } = [];
 }
 
 public sealed class MailParticipant

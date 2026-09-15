@@ -16,6 +16,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<SendOperation> SendOperations => Set<SendOperation>();
     public DbSet<DeviceToken> DeviceTokens => Set<DeviceToken>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
+    public DbSet<Conversation> Conversations => Set<Conversation>();
+    public DbSet<MailParticipant> Participants => Set<MailParticipant>();
+    public DbSet<MailClient.Domain.Entities.MailHeader> MailHeaders => Set<MailClient.Domain.Entities.MailHeader>();
 
     protected override void OnModelCreating(ModelBuilder model)
     {
@@ -40,6 +43,11 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         model.Entity<MailClient.Domain.Entities.Mail>().HasIndex(x => x.MessageId);
         model.Entity<MailClient.Domain.Entities.Mail>().HasOne(x => x.MailAccount).WithMany(x => x.Mails).HasForeignKey(x => x.MailAccountId).OnDelete(DeleteBehavior.Cascade);
         model.Entity<MailClient.Domain.Entities.Mail>().HasOne(x => x.MailFolder).WithMany(x => x.Mails).HasForeignKey(x => x.MailFolderId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<MailClient.Domain.Entities.Mail>().HasOne(x => x.Conversation).WithMany(x => x.Mails).HasForeignKey(x => x.ConversationId).OnDelete(DeleteBehavior.SetNull);
+        model.Entity<MailClient.Domain.Entities.Mail>().HasIndex(x => x.ConversationId);
+        model.Entity<Conversation>().Property(x => x.NormalizedSubject).HasMaxLength(500);
+        model.Entity<Conversation>().HasIndex(x => new { x.MailAccountId, x.NormalizedSubject });
+        model.Entity<Conversation>().HasIndex(x => new { x.MailAccountId, x.LastMessageAt });
         model.Entity<MailParticipant>().HasIndex(x => new { x.MailId, x.Type, x.SortOrder });
         model.Entity<MailParticipant>().Property(x => x.Address).HasMaxLength(320);
         model.Entity<MailParticipant>().Property(x => x.NormalizedAddress).HasMaxLength(320);
