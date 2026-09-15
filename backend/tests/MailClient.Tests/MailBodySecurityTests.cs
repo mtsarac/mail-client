@@ -68,7 +68,8 @@ public sealed class MailBodySecurityTests
 
         Assert.True(contract.HasRemoteContent);
         Assert.Contains("tracker.example", contract.RemoteContentHosts);
-        Assert.Contains("<img", contract.Html, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("<img src=\"https://", contract.Html, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("data-remote-src", contract.Html, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -83,14 +84,14 @@ public sealed class MailBodySecurityTests
     }
 
     [Fact]
-    public void Sanitize_RewritesProtocolRelativeSrcAndHrefToHttps()
+    public void Sanitize_NeutralizesProtocolRelativeSrcAndHref()
     {
         var mail = CreateMail();
 
         var contract = HtmlMailBodyRenderer.Render(mail, """<a href="//bad.example/landing">yönlendir</a>""");
 
-        Assert.Contains("href=\"https://bad.example/landing\"", contract.Html, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("href=\"//", contract.Html, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("data-remote-href=\"//bad.example/landing\"", contract.Html, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(" href=\"//", contract.Html, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

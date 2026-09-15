@@ -52,7 +52,8 @@ public static class IncomingMailMapper
         uint uidValidity,
         Guid accountId,
         Guid folderId,
-        IncomingFlags flags)
+        IncomingFlags flags,
+        DateTime? internalDate = null)
     {
         var participants = MapParticipants(message);
         var attachments = message.BodyParts
@@ -78,7 +79,8 @@ public static class IncomingMailMapper
                 headers.Add(new IncomingHeader(headerName, value.Trim()));
         }
 
-        var internalDate = DateTime.UtcNow;
+        var receivedAt = internalDate ?? DateTime.UtcNow;
+        var sentAt = message.Date == DateTimeOffset.MinValue ? receivedAt : message.Date.UtcDateTime;
 
         return new IncomingMail(
             accountId,
@@ -87,15 +89,15 @@ public static class IncomingMailMapper
             uidValidity,
             MailFieldNormalizer.MessageId(message.MessageId),
             MailFieldNormalizer.MessageId(message.InReplyTo),
-            MailFieldNormalizer.Truncate(string.Join(' ', message.References), MailFieldLimits.MessageId),
+            MailFieldNormalizer.Truncate(string.Join(' ', message.References), MailFieldLimits.References),
             MailFieldNormalizer.Subject(message.Subject),
             from.Count > 0 ? from[0].Address : string.Empty,
             from.Count > 0 ? from[0].DisplayName : string.Empty,
             to.Count > 0 ? to[0].Address : string.Empty,
             message.HtmlBody ?? string.Empty,
             message.TextBody ?? string.Empty,
-            message.Date == DateTimeOffset.MinValue ? internalDate : message.Date.UtcDateTime,
-            internalDate,
+            sentAt,
+            receivedAt,
             flags.IsRead,
             flags.Answered,
             flags.Flagged,

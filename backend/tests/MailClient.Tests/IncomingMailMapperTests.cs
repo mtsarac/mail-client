@@ -102,6 +102,48 @@ public sealed class IncomingMailMapperTests
     }
 
     [Fact]
+    public void Map_References_3000Chars_Preserved()
+    {
+        var message = SyncTestSeed.SimpleMessage("refs-3000");
+        var reference = new string('r', 2989) + "@ornek.test";
+        Assert.Equal(3000, reference.Length);
+        message.References.Add(reference);
+
+        var incoming = IncomingMailMapper.Map(message, 1, 7, AccountId, FolderId, Unseen);
+
+        Assert.Equal(3000, incoming.References.Length);
+        Assert.Equal(reference, incoming.References);
+    }
+
+    [Fact]
+    public void Map_References_OverLimit_CappedAt4096()
+    {
+        var message = SyncTestSeed.SimpleMessage("refs-capped");
+        var reference = new string('r', 4989) + "@ornek.test";
+        Assert.Equal(5000, reference.Length);
+        message.References.Add(reference);
+
+        var incoming = IncomingMailMapper.Map(message, 1, 7, AccountId, FolderId, Unseen);
+
+        Assert.Equal(4096, incoming.References.Length);
+        Assert.Equal(reference[..4096], incoming.References);
+    }
+
+    [Fact]
+    public void Map_UsesInjectedInternalDate_ForReceivedTimestamp()
+    {
+        var sent = DateTimeOffset.Parse("2026-01-02T03:04:05+02:00");
+        var internalDate = new DateTime(2026, 1, 3, 4, 5, 6, DateTimeKind.Utc);
+        var message = SyncTestSeed.SimpleMessage("timestamps");
+        message.Date = sent;
+
+        var incoming = IncomingMailMapper.Map(message, 1, 7, AccountId, FolderId, Unseen, internalDate);
+
+        Assert.Equal(sent.UtcDateTime, incoming.SentAt);
+        Assert.Equal(internalDate, incoming.InternalDate);
+    }
+
+    [Fact]
     public void Map_Timestamps_AreSeparated()
     {
         var sent = DateTimeOffset.Parse("2026-01-02T03:04:05+02:00");

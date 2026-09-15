@@ -21,10 +21,10 @@ public sealed class ConversationService(AppDbContext db)
         var normalizedMessageId = ConversationEngine.NormalizeMessageId(mail.MessageId);
         var normalizedInReplyTo = ConversationEngine.NormalizeMessageId(mail.InReplyToMessageId);
 
-        var target = await FindByGraphAsync(mail, normalizedMessageId, normalizedInReplyTo, references, cancellationToken)
-            ?? await FindBySubjectFallbackAsync(mail, normalizedSubject, cancellationToken);
-
-        mail.ConversationId = target?.Id;
+        var graphTargets = await FindByGraphAsync(mail, normalizedMessageId, normalizedInReplyTo, references, cancellationToken);
+        var target = graphTargets.Count > 0
+            ? graphTargets[0]
+            : await FindBySubjectFallbackAsync(mail, normalizedSubject, cancellationToken);
 
         if (target is null)
         {
@@ -41,62 +41,83 @@ public sealed class ConversationService(AppDbContext db)
         }
         else
         {
+            mail.ConversationId = target.Id;
             target.NormalizedSubject = normalizedSubject;
-            var assigningSentAt = mail.SentAt;
-            target.StartedAt = target.StartedAt < assigningSentAt ? target.StartedAt : assigningSentAt;
-            target.LastMessageAt = target.LastMessageAt > assigningSentAt ? target.LastMessageAt : assigningSentAt;
+            if (graphTargets.Count > 1)
+                await MergeAsync(mail, target, graphTargets, cancellationToken);
+            else
+                WidenBounds(target, mail.SentAt);
         }
 
         await db.SaveChangesAsync(cancellationToken);
     }
 
-    private async Task<Conversation?> FindByGraphAsync(
+    private async Task MergeAsync(MailEntity mail, Conversation survivor, IReadOnlyList<Conversation> graphTargets, CancellationToken cancellationToken)
+    {
+        var loserIds = graphTargets.Skip(1).Select(item => item.Id).ToList();
+        var rebound = await db.Mails
+            .Where(item => item.MailAccountId == mail.MailAccountId
+                && item.ConversationId != null
+                && loserIds.Contains(item.ConversationId.Value))
+            .ToListAsync(cancellationToken);
+        foreach (var item in rebound)
+            item.ConversationId = survivor.Id;
+        db.Conversations.RemoveRange(graphTargets.Skip(1));
+        WidenBounds(survivor, mail.SentAt);
+        foreach (var loser in graphTargets.Skip(1))
+        {
+            WidenBounds(survivor, loser.StartedAt);
+            WidenBounds(survivor, loser.LastMessageAt);
+        }
+    }
+
+    private static void WidenBounds(Conversation target, DateTime sentAt)
+    {
+        if (sentAt < target.StartedAt)
+            target.StartedAt = sentAt;
+        if (sentAt > target.LastMessageAt)
+            target.LastMessageAt = sentAt;
+    }
+
+    private async Task<IReadOnlyList<Conversation>> FindByGraphAsync(
         MailEntity mail,
         string normalizedMessageId,
         string normalizedInReplyTo,
         IReadOnlyList<string> references,
         CancellationToken cancellationToken)
     {
-        if (normalizedInReplyTo.Length > 0
-            && await db.Mails
-                .Where(item => item.MailAccountId == mail.MailAccountId
-                    && item.Id != mail.Id
-                    && item.MessageId == normalizedInReplyTo
-                    && item.ConversationId != null)
-                .Select(item => item.ConversationId)
-                .FirstOrDefaultAsync(cancellationToken) is { } parentConversationId
-            && await FindConversationByIdAsync(parentConversationId, cancellationToken) is { } parent)
-            return parent;
-
-        if (references.Count > 0
-            && await db.Mails
-                .Where(item => item.MailAccountId == mail.MailAccountId
-                    && item.Id != mail.Id
-                    && references.Contains(item.MessageId)
-                    && item.ConversationId != null)
-                .Select(item => item.ConversationId)
-                .FirstOrDefaultAsync(cancellationToken) is { } ancestorConversationId
-            && await FindConversationByIdAsync(ancestorConversationId, cancellationToken) is { } ancestor)
-            return ancestor;
-
-        if (normalizedMessageId.Length > 0)
+        HashSet<string>? keys = null;
+        if (references.Count > 0 || normalizedInReplyTo.Length > 0)
         {
-            var childConversationId = await db.Mails
-                .Where(item => item.MailAccountId == mail.MailAccountId
-                    && item.Id != mail.Id
-                    && item.InReplyToMessageId == normalizedMessageId
-                    && item.ConversationId != null)
-                .Select(item => item.ConversationId)
-                .FirstOrDefaultAsync(cancellationToken);
-            if (childConversationId is { } childId)
-                return await FindConversationByIdAsync(childId, cancellationToken);
+            keys = new HashSet<string>(references, StringComparer.Ordinal);
+            if (normalizedInReplyTo.Length > 0)
+                keys.Add(normalizedInReplyTo);
         }
+        var hasChildLookup = normalizedMessageId.Length > 0;
+        if (keys is null && !hasChildLookup)
+            return [];
 
-        return null;
+        var scope = db.Mails.Where(item => item.MailAccountId == mail.MailAccountId
+            && item.Id != mail.Id
+            && item.ConversationId != null);
+        IQueryable<MailEntity> matches = keys is not null && hasChildLookup
+            ? scope.Where(item => keys.Contains(item.MessageId) || item.InReplyToMessageId == normalizedMessageId)
+            : keys is not null
+                ? scope.Where(item => keys.Contains(item.MessageId))
+                : scope.Where(item => item.InReplyToMessageId == normalizedMessageId);
+        var candidateIds = await matches
+            .Select(item => item.ConversationId!.Value)
+            .Distinct()
+            .ToListAsync(cancellationToken);
+        if (candidateIds.Count == 0)
+            return [];
+
+        return await db.Conversations
+            .Where(item => item.MailAccountId == mail.MailAccountId && candidateIds.Contains(item.Id))
+            .OrderBy(item => item.StartedAt)
+            .ThenBy(item => item.Id)
+            .ToListAsync(cancellationToken);
     }
-
-    private async Task<Conversation?> FindConversationByIdAsync(Guid conversationId, CancellationToken cancellationToken) =>
-        await db.Conversations.SingleOrDefaultAsync(item => item.Id == conversationId, cancellationToken);
 
     /// <summary>Subject fallback requires the same normalized subject AND a shared normalized participant address.</summary>
     private async Task<Conversation?> FindBySubjectFallbackAsync(MailEntity mail, string normalizedSubject, CancellationToken cancellationToken)
