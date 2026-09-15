@@ -13,6 +13,7 @@ using Microsoft.EntityFrameworkCore;
 namespace MailClient.Api.Endpoints;
 
 public sealed record ReadRequest(bool IsRead);
+public sealed record FolderOperationRequest(Guid FolderId);
 
 public static class MailEndpoints
 {
@@ -28,17 +29,23 @@ public static class MailEndpoints
             return Results.Ok(result);
         }).WithName("ListMails").WithSummary("List mailbox mail").WithDescription("Account-scoped list, newest first. Supports folderId, isRead, hasAttachments, search, page, pageSize (max 100).").Produces<MailListResponse>();
         api.MapGet("/mails/{id:guid}", async (Guid id, ICurrentMailAccount current, MailReadService reader, CancellationToken ct) => await reader.GetAsync(current.MailAccountId, id, ct) is { } mail ? Results.Ok(mail) : Results.NotFound()).WithName("GetMail").WithSummary("Get mailbox mail").Produces<MailDetailResponse>().Produces(404);
-        api.MapPatch("/mails/{id:guid}/read", async (Guid id, ReadRequest request, ICurrentMailAccount current, AppDbContext db, MailReadService reader, CorrelationContext correlation, CancellationToken ct) =>
+        api.MapPatch("/mails/{id:guid}/read", async (Guid id, ReadRequest request, ICurrentMailAccount current, CorrelationContext correlation, IMailOperationService operations, CancellationToken ct) =>
         {
-            var status = await db.MailAccounts.Where(x => x.Id == current.MailAccountId).Select(x => x.Status).SingleOrDefaultAsync(ct);
-            if (status == MailAccountStatus.NeedsReauthentication)
-                return Results.Problem(title: "Mailbox needs reauthentication.", statusCode: 409, extensions: new Dictionary<string, object?> { ["code"] = "mail_account_needs_reauthentication", ["correlationId"] = correlation.CorrelationId });
-            var outcome = await reader.SetReadAsync(current.MailAccountId, id, request.IsRead, correlation.CorrelationId, ct);
-            if (!outcome.Found) return Results.NotFound();
-            if (outcome.Conflict) return Results.Problem(title: "Mailbox folder changed.", statusCode: 409, extensions: new Dictionary<string, object?> { ["code"] = "mailbox_changed", ["correlationId"] = correlation.CorrelationId });
-            if (outcome.ProviderError) return Results.Problem(title: "Mail provider unavailable.", statusCode: 502, extensions: new Dictionary<string, object?> { ["code"] = "mail_provider_unavailable", ["correlationId"] = correlation.CorrelationId });
-            return Results.NoContent();
+            var result = await operations.ExecuteAsync(current.MailAccountId, new MailOperationRequest(id, request.IsRead ? MailOperationKind.Read : MailOperationKind.Unread), correlation.CorrelationId, ct);
+            return OperationResult(result, correlation.CorrelationId, legacyRead: true);
         }).WithName("SetMailReadState").WithSummary("Change mail read state").Produces(204).Produces(404).ProducesProblem(409).ProducesProblem(502);
+
+        MapOperation(api, "unread", MailOperationKind.Unread);
+        MapOperation(api, "read", MailOperationKind.Read);
+        MapOperation(api, "star", MailOperationKind.Star);
+        MapOperation(api, "unstar", MailOperationKind.Unstar);
+        MapOperation(api, "trash", MailOperationKind.Trash);
+        MapOperation(api, "restore", MailOperationKind.Restore);
+        MapOperation(api, "archive", MailOperationKind.Archive);
+        MapOperation(api, "spam", MailOperationKind.Spam);
+        MapOperation(api, "not-spam", MailOperationKind.NotSpam);
+        api.MapPost("/mails/{id:guid}/move", async (Guid id, FolderOperationRequest request, ICurrentMailAccount current, CorrelationContext correlation, IMailOperationService operations, CancellationToken ct) => OperationResult(await operations.ExecuteAsync(current.MailAccountId, new MailOperationRequest(id, MailOperationKind.Move, request.FolderId), correlation.CorrelationId, ct), correlation.CorrelationId));
+        api.MapPost("/mails/{id:guid}/copy", async (Guid id, FolderOperationRequest request, ICurrentMailAccount current, CorrelationContext correlation, IMailOperationService operations, CancellationToken ct) => OperationResult(await operations.ExecuteAsync(current.MailAccountId, new MailOperationRequest(id, MailOperationKind.Copy, request.FolderId), correlation.CorrelationId, ct), correlation.CorrelationId));
         api.MapGet("/mails/{mailId:guid}/attachments/{attachmentId:guid}", async (Guid mailId, Guid attachmentId, ICurrentMailAccount current, AppDbContext db, LocalAttachmentStorage storage, CancellationToken ct) =>
         {
             var attachment = await db.Attachments.SingleOrDefaultAsync(x => x.Id == attachmentId && x.MailId == mailId && x.MailAccountId == current.MailAccountId, ct);
@@ -64,5 +71,27 @@ public static class MailEndpoints
             var result = await sender.SendAsync(current.MailAccountId, command, request.HttpContext.RequestServices.GetRequiredService<CorrelationContext>().CorrelationId, ct);
             return Results.Ok(new { sent = result.Sent, sentCopySaved = result.SentCopySaved, warning = result.Warning });
         }).WithName("SendMail").WithSummary("Send mail idempotently").WithDescription("multipart/form-data: to, subject, bodyHtml and/or bodyText, up to 20 attachments. Idempotency-Key header is required.").Accepts<IFormCollection>("multipart/form-data").Produces(200).ProducesProblem(400).ProducesProblem(409).DisableAntiforgery();
+    }
+
+    private static void MapOperation(RouteGroupBuilder api, string route, MailOperationKind kind) =>
+        api.MapPost($"/mails/{{id:guid}}/{route}", async (Guid id, ICurrentMailAccount current, CorrelationContext correlation, IMailOperationService operations, CancellationToken ct) =>
+            OperationResult(await operations.ExecuteAsync(current.MailAccountId, new MailOperationRequest(id, kind), correlation.CorrelationId, ct), correlation.CorrelationId));
+
+    private static IResult OperationResult(MailOperationResult result, string correlationId, bool legacyRead = false)
+    {
+        if (result.Success)
+            return Results.NoContent();
+        var (status, title, code) = result.Error switch
+        {
+            MailOperationError.NotFound => (404, "Mail not found.", "mail_not_found"),
+            MailOperationError.FolderNotFound => (404, "Mail folder not found.", "mail_folder_not_found"),
+            MailOperationError.NeedsReauthentication => (409, "Mailbox needs reauthentication.", "mail_account_needs_reauthentication"),
+            MailOperationError.ProviderUnavailable => (502, "Mail provider unavailable.", "mail_provider_unavailable"),
+            MailOperationError.Conflict => (409, "Mailbox state changed.", "mail_operation_conflict"),
+            MailOperationError.MoveFailed => (502, "Mail move failed.", "mail_move_failed"),
+            MailOperationError.NotSupported => (422, "Mail operation is not supported.", "mail_operation_not_supported"),
+            _ => (500, "Mail operation failed.", "mail_operation_failed")
+        };
+        return Results.Problem(title: title, statusCode: status, extensions: new Dictionary<string, object?> { ["code"] = code, ["correlationId"] = correlationId });
     }
 }
