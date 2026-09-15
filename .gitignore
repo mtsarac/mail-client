@@ -93,3 +93,6 @@ FLUTTER_HANDOFF.md
 .worktrees/
 
 secrets/
+
+# Temporary backup before restructure
+.repo-backup/
