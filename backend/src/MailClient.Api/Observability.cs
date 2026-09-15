@@ -17,7 +17,6 @@ public sealed class CorrelationMiddleware(RequestDelegate next)
             : Guid.NewGuid().ToString("N"));
         context.Response.Headers[HeaderName] = correlation.CorrelationId;
         using (LogContext.PushProperty("CorrelationId", correlation.CorrelationId))
-        using (LogContext.PushProperty("MailAccountId", context.User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value))
         {
             await next(context);
         }
@@ -27,4 +26,25 @@ public sealed class CorrelationMiddleware(RequestDelegate next)
         !string.IsNullOrWhiteSpace(value)
         && value.Length <= MaxLength
         && value.Trim().All(character => char.IsLetterOrDigit(character) || character is '-' or '_');
+}
+
+public sealed class AuthenticatedLogEnrichmentMiddleware(RequestDelegate next)
+{
+    public async Task InvokeAsync(HttpContext context)
+    {
+        if (context.User.Identity?.IsAuthenticated == true)
+        {
+            var subject = context.User.FindFirst(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Sub)?.Value;
+            if (!string.IsNullOrEmpty(subject))
+            {
+                using (LogContext.PushProperty("MailAccountId", subject))
+                {
+                    await next(context);
+                    return;
+                }
+            }
+        }
+
+        await next(context);
+    }
 }

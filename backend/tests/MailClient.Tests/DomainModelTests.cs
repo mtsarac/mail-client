@@ -34,7 +34,7 @@ public sealed class DomainModelTests
             new FakeStrategy("srv", calls, Candidate("srv.example.test")),
             new FakeStrategy("autoconfig", calls, Candidate("unused.example.test"))
         ];
-        var service = new MailServerDiscoveryService(strategies, new AcceptingValidator());
+        var service = new MailServerDiscoveryService(strategies, new AcceptingValidator(), new MailDiscoveryOptions());
 
         var result = await service.DiscoverAsync("person@example.test", CancellationToken.None);
 

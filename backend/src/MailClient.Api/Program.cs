@@ -87,9 +87,13 @@ builder.Services.AddSingleton<IDnsResolver, SystemDnsResolver>();
 builder.Services.AddSingleton<OutboundHostValidator>();
 builder.Services.AddSingleton<DiscoveryStateStore>();
 builder.Services.AddSingleton(new DnsClient.LookupClient());
-builder.Services.AddHttpClient<AutoconfigDiscoveryStrategy>(client => client.Timeout = TimeSpan.FromSeconds(10))
+var mailDiscoveryOptions = builder.Configuration.GetSection("MailDiscovery").Get<MailDiscoveryOptions>() ?? new MailDiscoveryOptions();
+mailDiscoveryOptions.Validate();
+builder.Services.AddSingleton(mailDiscoveryOptions);
+builder.Services.Configure<MailDiscoveryOptions>(builder.Configuration.GetSection("MailDiscovery"));
+builder.Services.AddHttpClient<AutoconfigDiscoveryStrategy>()
     .ConfigurePrimaryHttpMessageHandler(sp => new SsrfSafeDiscoveryHttpHandler(sp.GetRequiredService<OutboundHostValidator>()));
-builder.Services.AddHttpClient<MicrosoftAutodiscoverStrategy>(client => client.Timeout = TimeSpan.FromSeconds(10))
+builder.Services.AddHttpClient<MicrosoftAutodiscoverStrategy>()
     .ConfigurePrimaryHttpMessageHandler(sp => new SsrfSafeDiscoveryHttpHandler(sp.GetRequiredService<OutboundHostValidator>()));
 builder.Services.AddSingleton<IMailDiscoveryStrategy, KnownProviderStrategy>();
 builder.Services.AddSingleton<IMailDiscoveryStrategy, DnsSrvDiscoveryStrategy>();
@@ -143,19 +147,44 @@ builder.Services.AddSingleton(new LocalAttachmentStorage(Path.Combine(builder.En
 builder.Services.AddSingleton<IFileStorage>(sp => sp.GetRequiredService<LocalAttachmentStorage>());
 var jwt = builder.Configuration.GetSection("Jwt").Get<JwtOptions>() ?? new("MailClient", "MailClient", "development-only-key-change-before-production-123456789", 15);
 if (jwt.Key.Length < 32) throw new InvalidOperationException("Jwt:Key must contain at least 32 characters.");
+if (!builder.Environment.IsDevelopment() && !builder.Environment.IsEnvironment("Test") && jwt.Key == JwtOptions.DevelopmentKey)
+    throw new InvalidOperationException("Jwt:Key must be provided via configuration in production; the development key is not allowed.");
 builder.Services.AddSingleton(jwt);
 builder.Services.AddSingleton<IJwtTokenIssuer, JwtTokenIssuer>();
 builder.Services.AddScoped<ICurrentMailAccount, CurrentMailAccount>();
-builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(options => options.TokenValidationParameters = new()
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(options =>
 {
-    ValidateIssuer = true,
-    ValidIssuer = jwt.Issuer,
-    ValidateAudience = true,
-    ValidAudience = jwt.Audience,
-    ValidateIssuerSigningKey = true,
-    IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwt.Key)),
-    ValidateLifetime = true,
-    NameClaimType = JwtRegisteredClaimNames.Sub
+    options.TokenValidationParameters = new()
+    {
+        ValidateIssuer = true,
+        ValidIssuer = jwt.Issuer,
+        ValidateAudience = true,
+        ValidAudience = jwt.Audience,
+        ValidateIssuerSigningKey = true,
+        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwt.Key)),
+        ValidateLifetime = true,
+        NameClaimType = JwtRegisteredClaimNames.Sub
+    };
+    options.Events = new JwtBearerEvents
+    {
+        OnTokenValidated = async context =>
+        {
+            var subject = context.Principal?.FindFirstValue(ClaimTypes.NameIdentifier)
+                ?? context.Principal?.FindFirstValue(JwtRegisteredClaimNames.Sub);
+            if (!Guid.TryParse(subject, out var mailAccountId))
+            {
+                context.Fail("JWT subject is not a mail account id.");
+                return;
+            }
+
+            var db = context.HttpContext.RequestServices.GetRequiredService<AppDbContext>();
+            var exists = await db.MailAccounts
+                .AsNoTracking()
+                .AnyAsync(account => account.Id == mailAccountId, context.HttpContext.RequestAborted);
+            if (!exists)
+                context.Fail("Mail account no longer exists.");
+        }
+    };
 });
 builder.Services.AddAuthorization();
 builder.Services.AddRateLimiter(options =>
@@ -218,6 +247,7 @@ if (!app.Environment.IsDevelopment() && !app.Environment.IsEnvironment("Test"))
 if (app.Environment.IsDevelopment())
     app.UseCors("DevelopmentLan");
 app.UseAuthentication();
+app.UseMiddleware<AuthenticatedLogEnrichmentMiddleware>();
 app.UseRateLimiter();
 app.UseAuthorization();
 if (app.Environment.IsDevelopment()) { app.UseSwagger(); app.UseSwaggerUI(options => options.SwaggerEndpoint("/swagger/v2/swagger.json", "Mail Client v2")); }
