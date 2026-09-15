@@ -153,7 +153,7 @@ public sealed class IncomingMailMapperTests
         var incoming = IncomingMailMapper.Map(message, 1, 7, AccountId, FolderId, Unseen);
 
         Assert.Equal(sent.UtcDateTime, incoming.SentAt);
-        Assert.NotEqual(incoming.SentAt, incoming.InternalDate);
+        Assert.Equal(sent.UtcDateTime, incoming.InternalDate);
     }
 
     [Fact]

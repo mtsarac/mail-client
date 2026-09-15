@@ -79,8 +79,10 @@ public static class IncomingMailMapper
                 headers.Add(new IncomingHeader(headerName, value.Trim()));
         }
 
-        var receivedAt = internalDate ?? DateTime.UtcNow;
-        var sentAt = message.Date == DateTimeOffset.MinValue ? receivedAt : message.Date.UtcDateTime;
+        var sentAt = message.Date == DateTimeOffset.MinValue
+            ? internalDate ?? DateTime.UnixEpoch
+            : message.Date.UtcDateTime;
+        var receivedAt = internalDate ?? sentAt;
 
         return new IncomingMail(
             accountId,
