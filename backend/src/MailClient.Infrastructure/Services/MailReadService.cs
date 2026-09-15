@@ -20,8 +20,62 @@ public sealed class MailReadService(
     AuditLogger audit,
     ILogger<MailReadService> logger)
 {
-    public Task<MailEntity?> GetAsync(Guid accountId, Guid mailId, CancellationToken cancellationToken) =>
-        db.Mails.AsNoTracking().SingleOrDefaultAsync(mail => mail.Id == mailId && mail.MailAccountId == accountId, cancellationToken);
+    public async Task<MailDetailResponse?> GetAsync(Guid accountId, Guid mailId, CancellationToken cancellationToken)
+    {
+        var mail = await db.Mails.AsNoTracking()
+            .Include(item => item.Attachments)
+            .Include(item => item.Participants)
+            .Include(item => item.Headers)
+            .SingleOrDefaultAsync(item => item.Id == mailId && item.MailAccountId == accountId, cancellationToken);
+        if (mail is null)
+            return null;
+
+        return new MailDetailResponse(
+            mail.Id,
+            mail.MailFolderId,
+            mail.MailAccountId,
+            mail.Uid,
+            mail.MessageId,
+            mail.InReplyToMessageId,
+            mail.References,
+            mail.Subject,
+            ToParticipantResponses(mail.Participants, ParticipantType.From),
+            ToParticipantResponses(mail.Participants, ParticipantType.To),
+            ToParticipantResponses(mail.Participants, ParticipantType.Cc),
+            ToParticipantResponses(mail.Participants, ParticipantType.Bcc),
+            ToParticipantResponses(mail.Participants, ParticipantType.ReplyTo),
+            mail.BodyText,
+            mail.BodyHtml,
+            mail.IsRead,
+            mail.Answered,
+            mail.Flagged,
+            mail.Draft,
+            mail.Deleted,
+            mail.Recent,
+            mail.HasAttachments,
+            mail.SentAt,
+            mail.ReceivedAt,
+            mail.InternalDate,
+            mail.Headers.OrderBy(header => header.Name).Select(header => new MailHeaderResponse(header.Name, header.Value)).ToList(),
+            mail.Attachments
+                .OrderBy(attachment => attachment.FileName)
+                .Select(attachment => new AttachmentResponse(
+                    attachment.Id,
+                    attachment.FileName,
+                    attachment.ContentType,
+                    attachment.SizeBytes,
+                    attachment.IsInline,
+                    attachment.ContentId,
+                    attachment.ContentDisposition))
+                .ToList());
+    }
+
+    private static List<MailParticipantResponse> ToParticipantResponses(IEnumerable<MailParticipant> participants, ParticipantType type) =>
+        participants
+            .Where(participant => participant.Type == type)
+            .OrderBy(participant => participant.SortOrder)
+            .Select(participant => new MailParticipantResponse(participant.Id, type.ToString(), participant.Address, participant.DisplayName, participant.SortOrder))
+            .ToList();
 
     public async Task<MailReadOutcome> SetReadAsync(
         Guid accountId,

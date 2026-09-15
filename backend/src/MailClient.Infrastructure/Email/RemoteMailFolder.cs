@@ -4,7 +4,15 @@ using MimeKit;
 
 namespace MailClient.Infrastructure.Email;
 
-public sealed record RemoteSummary(uint Size, bool IsSeen);
+public sealed record RemoteSummary(
+    uint Size,
+    bool IsSeen,
+    bool IsAnswered,
+    bool IsFlagged,
+    bool IsDraft,
+    bool IsDeleted,
+    bool IsRecent,
+    DateTime? InternalDate);
 
 public sealed record UidSearchResult(IList<UniqueId> Uids, uint ScannedUpTo);
 
@@ -91,14 +99,24 @@ public sealed class MailKitRemoteMailFolder(IMailFolder folder) : IRemoteMailFol
         if (uids.Count == 0)
             return new Dictionary<uint, RemoteSummary?>();
         var summaries = await folder.FetchAsync(
-            [.. uids], MessageSummaryItems.UniqueId | MessageSummaryItems.Size | MessageSummaryItems.Flags,
+            [.. uids],
+            MessageSummaryItems.UniqueId
+                | MessageSummaryItems.Size
+                | MessageSummaryItems.Flags
+                | MessageSummaryItems.InternalDate,
             cancellationToken);
         return summaries.ToDictionary(
             summary => summary.UniqueId.Id,
             summary => summary.Size is uint size
                 ? (RemoteSummary?)new RemoteSummary(
                     size,
-                    summary.Flags?.HasFlag(MessageFlags.Seen) == true)
+                    summary.Flags?.HasFlag(MessageFlags.Seen) == true,
+                    summary.Flags?.HasFlag(MessageFlags.Answered) == true,
+                    summary.Flags?.HasFlag(MessageFlags.Flagged) == true,
+                    summary.Flags?.HasFlag(MessageFlags.Draft) == true,
+                    summary.Flags?.HasFlag(MessageFlags.Deleted) == true,
+                    summary.Flags?.HasFlag(MessageFlags.Recent) == true,
+                    summary.InternalDate?.UtcDateTime)
                 : null);
     }
 
