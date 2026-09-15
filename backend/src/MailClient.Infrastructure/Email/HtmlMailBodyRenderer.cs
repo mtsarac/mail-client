@@ -30,8 +30,12 @@ public static class HtmlMailBodyRenderer
             .Where(host => TrackingSizeHeuristicsUrlSuffixes.Any(host.Contains))
             .ToList();
 
+        var safe = sanitized
+            .Replace("src=\"//", "src=\"https://", StringComparison.OrdinalIgnoreCase)
+            .Replace("href=\"//", "href=\"https://", StringComparison.OrdinalIgnoreCase);
+
         return new MailBodyContract(
-            sanitized,
+            safe,
             remoteHosts.Count > 0,
             remoteHosts.Distinct().ToList(),
             trackingHosts,

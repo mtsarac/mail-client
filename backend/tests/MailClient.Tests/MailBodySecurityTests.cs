@@ -83,6 +83,17 @@ public sealed class MailBodySecurityTests
     }
 
     [Fact]
+    public void Sanitize_RewritesProtocolRelativeSrcAndHrefToHttps()
+    {
+        var mail = CreateMail();
+
+        var contract = HtmlMailBodyRenderer.Render(mail, """<a href="//bad.example/landing">yönlendir</a>""");
+
+        Assert.Contains("href=\"https://bad.example/landing\"", contract.Html, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("href=\"//", contract.Html, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Sanitize_StripsStyleAttribute_RemovingCssUrlVector()
     {
         var mail = CreateMail();

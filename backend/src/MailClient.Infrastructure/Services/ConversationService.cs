@@ -119,7 +119,9 @@ public sealed class ConversationService(AppDbContext db)
         foreach (var candidateId in candidates)
         {
             var conversation = await db.Conversations
-                .SingleAsync(item => item.Id == candidateId, cancellationToken);
+                .SingleOrDefaultAsync(item => item.Id == candidateId, cancellationToken);
+            if (conversation is null)
+                continue;
             var shared = await db.Participants
                 .Where(participant => db.Mails.Any(item => item.Id == participant.MailId
                     && item.MailAccountId == mail.MailAccountId
