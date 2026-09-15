@@ -6,7 +6,10 @@ using Microsoft.IdentityModel.Tokens;
 
 namespace MailClient.Api.Auth;
 
-public sealed record JwtOptions(string Issuer, string Audience, string Key, int AccessTokenMinutes = 15);
+public sealed record JwtOptions(string Issuer, string Audience, string Key, int AccessTokenMinutes = 15)
+{
+    public const string DevelopmentKey = "development-only-key-change-before-production-123456789";
+}
 public sealed class JwtTokenIssuer(JwtOptions options) : IJwtTokenIssuer
 {
     public (string Token, DateTime ExpiresAt) Issue(Guid mailAccountId)

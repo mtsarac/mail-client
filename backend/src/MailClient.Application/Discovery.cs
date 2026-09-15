@@ -16,18 +16,22 @@ public interface IMailServerCandidateValidator
     Task<bool> ValidateAsync(MailServerCandidate candidate, CancellationToken cancellationToken);
 }
 
-public sealed class MailServerDiscoveryService(IEnumerable<IMailDiscoveryStrategy> strategies, IMailServerCandidateValidator validator)
+public sealed class MailServerDiscoveryService(IEnumerable<IMailDiscoveryStrategy> strategies, IMailServerCandidateValidator validator, MailDiscoveryOptions options)
 {
     public async Task<MailServerCandidate?> DiscoverAsync(string email, CancellationToken cancellationToken)
     {
+        using var overallCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        overallCts.CancelAfter(TimeSpan.FromSeconds(options.OverallTimeoutSeconds));
         foreach (var strategy in strategies.OrderBy(item => item.Order))
         {
             List<MailServerCandidate> candidates;
             try
             {
-                candidates = await strategy.DiscoverAsync(email, cancellationToken).ToListAsync(cancellationToken);
+                using var strategyCts = CancellationTokenSource.CreateLinkedTokenSource(overallCts.Token);
+                strategyCts.CancelAfter(TimeSpan.FromSeconds(options.StrategyTimeoutSeconds));
+                candidates = await strategy.DiscoverAsync(email, strategyCts.Token).ToListAsync(strategyCts.Token);
             }
-            catch (Exception) when (cancellationToken.IsCancellationRequested is false)
+            catch (Exception) when (cancellationToken.IsCancellationRequested is false && overallCts.Token.IsCancellationRequested is false)
             {
                 continue;
             }
@@ -37,9 +41,11 @@ public sealed class MailServerDiscoveryService(IEnumerable<IMailDiscoveryStrateg
                 bool valid;
                 try
                 {
-                    valid = await validator.ValidateAsync(candidate, cancellationToken);
+                    using var validationCts = CancellationTokenSource.CreateLinkedTokenSource(overallCts.Token);
+                    validationCts.CancelAfter(TimeSpan.FromSeconds(options.StrategyTimeoutSeconds));
+                    valid = await validator.ValidateAsync(candidate, validationCts.Token);
                 }
-                catch (Exception) when (cancellationToken.IsCancellationRequested is false)
+                catch (Exception) when (cancellationToken.IsCancellationRequested is false && overallCts.Token.IsCancellationRequested is false)
                 {
                     continue;
                 }
