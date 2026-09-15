@@ -20,6 +20,7 @@ public sealed class MailFolderSyncService(
     IFileStorage storage,
     MailSyncOptions options,
     IPushNotificationService push,
+    ConversationService conversations,
     ILogger<MailFolderSyncService> logger) : ISyncExecutor
 {
     public async Task SyncAllAsync(CancellationToken cancellationToken)
@@ -539,6 +540,7 @@ public sealed class MailFolderSyncService(
             try
             {
                 await db.SaveChangesAsync(cancellationToken);
+                await conversations.AssignAsync(mail.Id, cancellationToken);
             }
             catch
             {

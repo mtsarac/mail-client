@@ -199,7 +199,7 @@ public sealed class SyncServiceTests
             new FakeFileStorage(),
             options,
             push ?? new FakePushNotificationService(),
-            NullLogger<MailFolderSyncService>.Instance);
+            new MailClient.Infrastructure.Services.ConversationService(db), NullLogger<MailFolderSyncService>.Instance);
 
     private static AppDbContext CreateDb() => new(new DbContextOptionsBuilder<AppDbContext>()
         .UseInMemoryDatabase(Guid.NewGuid().ToString("N")).Options);

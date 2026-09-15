@@ -124,6 +124,7 @@ builder.Services.AddScoped<MailQueryService>();
 builder.Services.AddScoped<SendOperationStore>();
 builder.Services.AddScoped<MailSendService>();
 builder.Services.AddScoped<MailOperationsService>();
+builder.Services.AddScoped<ConversationService>();
 builder.Services.AddScoped<AuditLogger>();
 var firebaseOptions = builder.Configuration.GetSection("Firebase").Get<FirebaseOptions>() ?? new FirebaseOptions();
 firebaseOptions.Validate();
@@ -256,6 +257,7 @@ app.MapAccountEndpoints();
 app.MapAuthEndpoints();
 app.MapFolderEndpoints();
 app.MapMailEndpoints();
+app.MapConversationEndpoints();
 app.MapDeviceEndpoints();
 app.MapHealthEndpoints();
 
