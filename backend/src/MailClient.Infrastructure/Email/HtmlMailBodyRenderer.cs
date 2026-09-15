@@ -46,6 +46,7 @@ public static class HtmlMailBodyRenderer
         sanitizer.AllowedTags.Remove("form");
         sanitizer.AllowedTags.Remove("input");
         sanitizer.AllowedTags.Remove("button");
+        sanitizer.AllowedAttributes.Remove("style");
         return sanitizer;
     }
 
@@ -74,16 +75,20 @@ public static class HtmlMailBodyRenderer
         if (root is null)
             return hosts;
 
-        foreach (var element in root.QuerySelectorAll("img, [src], [href], [background]"))
+        foreach (var element in root.QuerySelectorAll("img, [src], [href], [background], video"))
         {
             var source = element.GetAttribute("src")
                 ?? element.GetAttribute("href")
-                ?? element.GetAttribute("background");
+                ?? element.GetAttribute("background")
+                ?? element.GetAttribute("poster");
             if (string.IsNullOrEmpty(source)
                 || source.StartsWith("cid:", StringComparison.OrdinalIgnoreCase)
                 || source.StartsWith('#')
-                || source.StartsWith('/'))
+                || (source.StartsWith('/') && !source.StartsWith("//")))
                 continue;
+
+            if (source.StartsWith("//", StringComparison.Ordinal))
+                source = "https:" + source;
 
             if (Uri.TryCreate(source, UriKind.Absolute, out var uri)
                 && uri.Scheme is "http" or "https"

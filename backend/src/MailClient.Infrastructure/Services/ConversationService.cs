@@ -58,12 +58,26 @@ public sealed class ConversationService(AppDbContext db)
         CancellationToken cancellationToken)
     {
         if (normalizedInReplyTo.Length > 0
-            && await FindConversationByMessageIdAsync(mail.MailAccountId, normalizedInReplyTo, mail.Id, cancellationToken) is { } parent)
+            && await db.Mails
+                .Where(item => item.MailAccountId == mail.MailAccountId
+                    && item.Id != mail.Id
+                    && item.MessageId == normalizedInReplyTo
+                    && item.ConversationId != null)
+                .Select(item => item.ConversationId)
+                .FirstOrDefaultAsync(cancellationToken) is { } parentConversationId
+            && await FindConversationByIdAsync(parentConversationId, cancellationToken) is { } parent)
             return parent;
 
-        foreach (var reference in references)
-            if (await FindConversationByMessageIdAsync(mail.MailAccountId, reference, mail.Id, cancellationToken) is { } ancestor)
-                return ancestor;
+        if (references.Count > 0
+            && await db.Mails
+                .Where(item => item.MailAccountId == mail.MailAccountId
+                    && item.Id != mail.Id
+                    && references.Contains(item.MessageId)
+                    && item.ConversationId != null)
+                .Select(item => item.ConversationId)
+                .FirstOrDefaultAsync(cancellationToken) is { } ancestorConversationId
+            && await FindConversationByIdAsync(ancestorConversationId, cancellationToken) is { } ancestor)
+            return ancestor;
 
         if (normalizedMessageId.Length > 0)
         {
@@ -75,12 +89,14 @@ public sealed class ConversationService(AppDbContext db)
                 .Select(item => item.ConversationId)
                 .FirstOrDefaultAsync(cancellationToken);
             if (childConversationId is { } childId)
-                return await db.Conversations
-                    .SingleAsync(item => item.Id == childId, cancellationToken);
+                return await FindConversationByIdAsync(childId, cancellationToken);
         }
 
         return null;
     }
+
+    private async Task<Conversation?> FindConversationByIdAsync(Guid conversationId, CancellationToken cancellationToken) =>
+        await db.Conversations.SingleOrDefaultAsync(item => item.Id == conversationId, cancellationToken);
 
     /// <summary>Subject fallback requires the same normalized subject AND a shared normalized participant address.</summary>
     private async Task<Conversation?> FindBySubjectFallbackAsync(MailEntity mail, string normalizedSubject, CancellationToken cancellationToken)
@@ -115,23 +131,5 @@ public sealed class ConversationService(AppDbContext db)
         }
 
         return null;
-    }
-
-    private async Task<Conversation?> FindConversationByMessageIdAsync(
-        Guid accountId,
-        string messageId,
-        Guid excludeMailId,
-        CancellationToken cancellationToken)
-    {
-        var conversationId = await db.Mails
-            .Where(item => item.MailAccountId == accountId
-                && item.Id != excludeMailId
-                && item.MessageId == messageId
-                && item.ConversationId != null)
-            .Select(item => item.ConversationId)
-            .FirstOrDefaultAsync(cancellationToken);
-        return conversationId is null
-            ? null
-            : await db.Conversations.SingleAsync(item => item.Id == conversationId, cancellationToken);
     }
 }

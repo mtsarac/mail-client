@@ -72,6 +72,29 @@ public sealed class MailBodySecurityTests
     }
 
     [Fact]
+    public void Sanitize_DetectsProtocolRelativeRemoteImages()
+    {
+        var mail = CreateMail();
+
+        var contract = HtmlMailBodyRenderer.Render(mail, """<img src="//tracker.example/pixel.png">""");
+
+        Assert.True(contract.HasRemoteContent);
+        Assert.Contains("tracker.example", contract.RemoteContentHosts);
+    }
+
+    [Fact]
+    public void Sanitize_StripsStyleAttribute_RemovingCssUrlVector()
+    {
+        var mail = CreateMail();
+
+        var contract = HtmlMailBodyRenderer.Render(mail, """<div style="background:url(https://track.test/px.png)">x</div>""");
+
+        Assert.DoesNotContain("style=", contract.Html, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("url(", contract.Html, StringComparison.OrdinalIgnoreCase);
+        Assert.False(contract.HasRemoteContent);
+    }
+
+    [Fact]
     public void Sanitize_PlainMailWithoutRemoteContent_HasNoRemoteContent()
     {
         var mail = CreateMail();
