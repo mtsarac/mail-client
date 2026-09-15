@@ -27,7 +27,7 @@ public static class MailEndpoints
                 ct);
             return Results.Ok(result);
         }).WithName("ListMails").WithSummary("List mailbox mail").WithDescription("Account-scoped list, newest first. Supports folderId, isRead, hasAttachments, search, page, pageSize (max 100).").Produces<MailListResponse>();
-        api.MapGet("/mails/{id:guid}", async (Guid id, ICurrentMailAccount current, MailReadService reader, CancellationToken ct) => await reader.GetAsync(current.MailAccountId, id, ct) is { } mail ? Results.Ok(mail) : Results.NotFound()).WithName("GetMail").WithSummary("Get mailbox mail").Produces<Mail>().Produces(404);
+        api.MapGet("/mails/{id:guid}", async (Guid id, ICurrentMailAccount current, MailReadService reader, CancellationToken ct) => await reader.GetAsync(current.MailAccountId, id, ct) is { } mail ? Results.Ok(mail) : Results.NotFound()).WithName("GetMail").WithSummary("Get mailbox mail").Produces<MailDetailResponse>().Produces(404);
         api.MapPatch("/mails/{id:guid}/read", async (Guid id, ReadRequest request, ICurrentMailAccount current, AppDbContext db, MailReadService reader, CorrelationContext correlation, CancellationToken ct) =>
         {
             var status = await db.MailAccounts.Where(x => x.Id == current.MailAccountId).Select(x => x.Status).SingleOrDefaultAsync(ct);

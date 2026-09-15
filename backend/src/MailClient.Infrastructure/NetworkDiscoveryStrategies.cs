@@ -1,11 +1,45 @@
 using System.Net.Http.Json;
+using System.Xml;
 using System.Xml.Linq;
 using DnsClient;
 using DnsClient.Protocol;
 using MailClient.Application.Discovery;
 using MailClient.Domain.Enums;
+using Microsoft.Extensions.Options;
 
 namespace MailClient.Infrastructure.Discovery;
+
+public sealed class DocumentLimits
+{
+    public static readonly XmlReaderSettings Xml = new()
+    {
+        DtdProcessing = DtdProcessing.Prohibit,
+        XmlResolver = null,
+        MaxCharactersInDocument = 256 * 1024,
+        Async = true
+    };
+
+    public static async Task<byte[]> ReadBoundedAsync(Stream source, int maxBytes, CancellationToken cancellationToken)
+    {
+        var buffer = new byte[8192];
+        using var output = new MemoryStream();
+        try
+        {
+            while (await source.ReadAsync(buffer, cancellationToken) is { } read and > 0)
+            {
+                if (output.Length + read > maxBytes)
+                    throw new InvalidOperationException("discovery_document_too_large");
+                await output.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
+            }
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "discovery_document_too_large")
+        {
+            throw;
+        }
+
+        return output.ToArray();
+    }
+}
 
 public class DnsSrvDiscoveryStrategy(LookupClient dns) : IMailDiscoveryStrategy
 {
@@ -41,7 +75,7 @@ public class DnsSrvDiscoveryStrategy(LookupClient dns) : IMailDiscoveryStrategy
     }
 }
 
-public sealed class AutoconfigDiscoveryStrategy(HttpClient http) : IMailDiscoveryStrategy
+public sealed class AutoconfigDiscoveryStrategy(HttpClient http, IOptions<MailDiscoveryOptions> options) : IMailDiscoveryStrategy
 {
     public int Order => 3;
 
@@ -57,10 +91,15 @@ public sealed class AutoconfigDiscoveryStrategy(HttpClient http) : IMailDiscover
         };
         foreach (var url in urls)
         {
-            using var response = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-            if (!response.IsSuccessStatusCode) continue;
-            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-            var document = await XDocument.LoadAsync(stream, LoadOptions.None, cancellationToken);
+            XDocument document;
+            using (var response = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken))
+            {
+                if (!response.IsSuccessStatusCode) continue;
+                await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+                var bytes = await DocumentLimits.ReadBoundedAsync(stream, options.Value.MaxDocumentBytes, cancellationToken);
+                using var reader = XmlReader.Create(new MemoryStream(bytes), DocumentLimits.Xml);
+                document = await XDocument.LoadAsync(reader, LoadOptions.None, cancellationToken);
+            }
             var incoming = document.Descendants("incomingServer").FirstOrDefault(x => (string?)x.Attribute("type") == "imap");
             var outgoing = document.Descendants("outgoingServer").FirstOrDefault(x => (string?)x.Attribute("type") == "smtp");
             if (Parse(incoming) is { } imap && Parse(outgoing) is { } smtp)
@@ -83,7 +122,7 @@ public sealed class AutoconfigDiscoveryStrategy(HttpClient http) : IMailDiscover
     }
 }
 
-public sealed class MicrosoftAutodiscoverStrategy(HttpClient http) : IMailDiscoveryStrategy
+public sealed class MicrosoftAutodiscoverStrategy(HttpClient http, IOptions<MailDiscoveryOptions> options) : IMailDiscoveryStrategy
 {
     public int Order => 4;
 
@@ -95,7 +134,12 @@ public sealed class MicrosoftAutodiscoverStrategy(HttpClient http) : IMailDiscov
         var url = $"https://autodiscover.{domain}/autodiscover/autodiscover.json?Email={Uri.EscapeDataString(email)}&Protocol=IMAP";
         using var response = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         if (!response.IsSuccessStatusCode) yield break;
-        var payload = await response.Content.ReadFromJsonAsync<AutodiscoverResponse>(cancellationToken);
+        AutodiscoverResponse? payload;
+        await using (var stream = await response.Content.ReadAsStreamAsync(cancellationToken))
+        {
+            var bytes = await DocumentLimits.ReadBoundedAsync(stream, options.Value.MaxDocumentBytes, cancellationToken);
+            payload = System.Text.Json.JsonSerializer.Deserialize<AutodiscoverResponse>(bytes);
+        }
         if (payload?.Url is null || !Uri.TryCreate(payload.Url, UriKind.Absolute, out var discovered) || discovered.Scheme != Uri.UriSchemeHttps) yield break;
         yield return new(MailProvider.Microsoft, new(discovered.Host, 993, MailSecurity.SslOnConnect), new(discovered.Host, 587, MailSecurity.StartTls), [AuthenticationMethod.Password, AuthenticationMethod.AppSpecificPassword], DiscoverySource.Autodiscover);
     }

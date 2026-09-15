@@ -4,6 +4,7 @@ using DnsClient;
 using MailClient.Application.Discovery;
 using MailClient.Domain.Enums;
 using MailClient.Infrastructure.Discovery;
+using Microsoft.Extensions.Options;
 
 namespace MailClient.Tests;
 
@@ -76,7 +77,7 @@ public sealed class DiscoveryStrategyTests
         var http = StubHttp(request => request.RequestUri!.Host == "autoconfig.example.test"
             ? Ok(xml, "application/xml")
             : new HttpResponseMessage(HttpStatusCode.NotFound));
-        var candidate = await SingleAsync(new AutoconfigDiscoveryStrategy(http), "person@example.test");
+        var candidate = await SingleAsync(new AutoconfigDiscoveryStrategy(http, Options.Create(new MailDiscoveryOptions())), "person@example.test");
 
         Assert.Equal("imap.example.test", candidate.Imap.Host);
         Assert.Equal(MailSecurity.SslOnConnect, candidate.Imap.Security);
@@ -106,20 +107,20 @@ public sealed class DiscoveryStrategyTests
             </clientConfig>
             """;
 
-        Assert.Empty(await CollectAsync(new AutoconfigDiscoveryStrategy(StubHttp(_ => Ok(xml, "application/xml"))), "person@example.test"));
+        Assert.Empty(await CollectAsync(new AutoconfigDiscoveryStrategy(StubHttp(_ => Ok(xml, "application/xml")), Options.Create(new MailDiscoveryOptions())), "person@example.test"));
     }
 
     [Fact]
     public async Task Autodiscover_HttpsUrl_ReturnsCandidate_HttpUrlIsRejected()
     {
-        var secure = new MicrosoftAutodiscoverStrategy(StubHttp(_ => Ok("""{"Protocol":"IMAP","Url":"https://outlook.office365.com:993/imap"}""", "application/json")));
+        var secure = new MicrosoftAutodiscoverStrategy(StubHttp(_ => Ok("""{"Protocol":"IMAP","Url":"https://outlook.office365.com:993/imap"}""", "application/json")), Options.Create(new MailDiscoveryOptions()));
         var candidate = await SingleAsync(secure, "person@example.test");
         Assert.Equal(MailProvider.Microsoft, candidate.Provider);
         Assert.Equal("outlook.office365.com", candidate.Imap.Host);
         Assert.Equal(DiscoverySource.Autodiscover, candidate.Source);
         Assert.Equal([AuthenticationMethod.Password, AuthenticationMethod.AppSpecificPassword], candidate.AuthenticationMethods);
 
-        var insecure = new MicrosoftAutodiscoverStrategy(StubHttp(_ => Ok("""{"Protocol":"IMAP","Url":"http://insecure.example.test/imap"}""", "application/json")));
+        var insecure = new MicrosoftAutodiscoverStrategy(StubHttp(_ => Ok("""{"Protocol":"IMAP","Url":"http://insecure.example.test/imap"}""", "application/json")), Options.Create(new MailDiscoveryOptions()));
         Assert.Empty(await CollectAsync(insecure, "person@example.test"));
     }
 
@@ -162,7 +163,7 @@ public sealed class DiscoveryStrategyTests
             new FakeStrategy(1, visited, "rejected.example.test"),
             new FakeStrategy(2, visited, "accepted.example.test")
         };
-        var service = new MailServerDiscoveryService(strategies, new AcceptedHostValidator("accepted.example.test"));
+        var service = new MailServerDiscoveryService(strategies, new AcceptedHostValidator("accepted.example.test"), new MailDiscoveryOptions());
 
         var candidate = await service.DiscoverAsync("person@example.test", CancellationToken.None);
 

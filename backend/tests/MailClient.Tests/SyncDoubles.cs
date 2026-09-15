@@ -58,7 +58,13 @@ internal sealed class FakeRemoteMailFolder(
                 uid => uid.Id,
                 uid => (RemoteSummary?)new RemoteSummary(
                     _sizes.GetValueOrDefault(uid.Id, 100u),
-                    _seenUids.Contains(uid.Id))));
+                    _seenUids.Contains(uid.Id),
+                    IsAnswered: false,
+                    IsFlagged: false,
+                    IsDraft: false,
+                    IsDeleted: false,
+                    IsRecent: false,
+                    InternalDate: null)));
 
     public Task<IReadOnlyDictionary<uint, bool>> GetFlagsAsync(
         IReadOnlyCollection<UniqueId> uids, CancellationToken cancellationToken) =>

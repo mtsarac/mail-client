@@ -200,7 +200,7 @@ public sealed class GreenMailIntegrationTests(GreenMailFixture greenmail)
             MaxMessageBytes = 100 * 1024 * 1024
         },
         new FakePushNotificationService(),
-        NullLogger<MailFolderSyncService>.Instance);
+        new MailClient.Infrastructure.Services.ConversationService(db), NullLogger<MailFolderSyncService>.Instance);
 
     private static AppDbContext NewDb() => new(new DbContextOptionsBuilder<AppDbContext>()
         .UseInMemoryDatabase(Guid.NewGuid().ToString("N")).Options);
