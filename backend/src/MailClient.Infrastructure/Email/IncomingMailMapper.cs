@@ -20,6 +20,7 @@ public sealed record IncomingMail(
     string BodyText,
     DateTime SentAt,
     DateTime InternalDate,
+    DateTime ReceivedAt,
     bool IsRead,
     bool Answered,
     bool Flagged,
@@ -82,7 +83,7 @@ public static class IncomingMailMapper
         var sentAt = message.Date == DateTimeOffset.MinValue
             ? internalDate ?? DateTime.UnixEpoch
             : message.Date.UtcDateTime;
-        var receivedAt = internalDate ?? sentAt;
+        var receivedAt = ParseReceivedAt(message) ?? internalDate ?? sentAt;
 
         return new IncomingMail(
             accountId,
@@ -99,6 +100,7 @@ public static class IncomingMailMapper
             message.HtmlBody ?? string.Empty,
             message.TextBody ?? string.Empty,
             sentAt,
+            internalDate ?? sentAt,
             receivedAt,
             flags.IsRead,
             flags.Answered,
@@ -109,6 +111,28 @@ public static class IncomingMailMapper
             participants,
             headers,
             attachments);
+    }
+
+    private static DateTime? ParseReceivedAt(MimeMessage message)
+    {
+        var timestamps = message.Headers
+            .Where(header => header.Id == HeaderId.Received)
+            .Select(header => header.Value)
+            .Select(ParseReceivedTimestamp)
+            .Where(timestamp => timestamp.HasValue)
+            .Select(timestamp => timestamp!.Value)
+            .ToList();
+        return timestamps.Count == 0 ? null : timestamps.Max();
+    }
+
+    private static DateTime? ParseReceivedTimestamp(string value)
+    {
+        var separator = value.LastIndexOf(';');
+        if (separator < 0)
+            return null;
+        return DateTimeOffset.TryParse(value[(separator + 1)..].Trim(), out var parsed)
+            ? parsed.UtcDateTime
+            : null;
     }
 
     public static List<MailClient.Domain.Entities.MailParticipant> ToEntityParticipants(Guid mailId, IReadOnlyList<IncomingParticipant> participants) =>
