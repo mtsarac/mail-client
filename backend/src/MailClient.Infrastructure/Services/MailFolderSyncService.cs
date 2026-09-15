@@ -446,7 +446,8 @@ public sealed class MailFolderSyncService(
                 remote.UidValidity,
                 accountId,
                 folderId,
-                new IncomingFlags(summary.IsSeen, summary.IsAnswered, summary.IsFlagged, summary.IsDraft, summary.IsDeleted, summary.IsRecent));
+                new IncomingFlags(summary.IsSeen, summary.IsAnswered, summary.IsFlagged, summary.IsDraft, summary.IsDeleted, summary.IsRecent),
+                summary.InternalDate);
             var mail = new MailEntity
             {
                 Id = Guid.NewGuid(),
@@ -465,7 +466,7 @@ public sealed class MailFolderSyncService(
                 BodyText = incoming.BodyText,
                 SentAt = incoming.SentAt,
                 ReceivedAt = incoming.InternalDate,
-                InternalDate = summary.InternalDate ?? incoming.SentAt,
+                InternalDate = incoming.InternalDate,
                 IsRead = incoming.IsRead,
                 Answered = incoming.Answered,
                 Flagged = incoming.Flagged,

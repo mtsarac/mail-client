@@ -30,9 +30,7 @@ public static class HtmlMailBodyRenderer
             .Where(host => TrackingSizeHeuristicsUrlSuffixes.Any(host.Contains))
             .ToList();
 
-        var safe = sanitized
-            .Replace("src=\"//", "src=\"https://", StringComparison.OrdinalIgnoreCase)
-            .Replace("href=\"//", "href=\"https://", StringComparison.OrdinalIgnoreCase);
+        var safe = NeutralizeRemoteResources(sanitized);
 
         return new MailBodyContract(
             safe,
@@ -72,6 +70,30 @@ public static class HtmlMailBodyRenderer
 
         return resolved;
     }
+
+    private static string NeutralizeRemoteResources(string html)
+    {
+        var document = new AngleSharp.Html.Parser.HtmlParser().ParseDocument(html);
+        foreach (var element in document.QuerySelectorAll("[src], [srcset], [href], [background], [poster], source, track, video, audio, link"))
+        {
+            foreach (var attribute in new[] { "src", "srcset", "href", "background", "poster" })
+            {
+                var value = element.GetAttribute(attribute);
+                if (string.IsNullOrWhiteSpace(value) || !IsRemoteResource(value, attribute))
+                    continue;
+                element.SetAttribute($"data-remote-{attribute}", value);
+                element.RemoveAttribute(attribute);
+            }
+        }
+
+        return document.Body?.InnerHtml ?? html;
+    }
+
+    private static bool IsRemoteResource(string value, string attribute) =>
+        value.StartsWith("//", StringComparison.Ordinal)
+        || (attribute == "srcset"
+            ? value.Split(',', StringSplitOptions.RemoveEmptyEntries).Any(candidate => IsRemoteResource(candidate.Trim().Split(' ', 2)[0], "src"))
+            : Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https");
 
     private static List<string> CollectRemoteHosts(AngleSharp.Dom.IElement? root)
     {
