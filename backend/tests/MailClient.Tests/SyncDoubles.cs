@@ -18,7 +18,7 @@ internal sealed class FakeDns(params IPAddress[] addresses) : IDnsResolver
     public Task<IPAddress[]> ResolveAsync(string host, CancellationToken cancellationToken) => Task.FromResult(addresses);
 }
 
-internal sealed class FakeRemoteMailFolder(
+internal class FakeRemoteMailFolder(
     uint uidValidity,
     Dictionary<uint, Func<MimeMessage>> messages,
     Dictionary<uint, uint>? sizes = null,
@@ -88,6 +88,9 @@ internal sealed class FakeRemoteMailFolder(
         return Task.CompletedTask;
     }
 
+    public virtual Task SetFlaggedAsync(UniqueId uid, bool flagged, CancellationToken cancellationToken) => Task.CompletedTask;
+    public virtual Task<UniqueId?> MoveAsync(UniqueId uid, string destinationFullName, CancellationToken cancellationToken) => Task.FromResult<UniqueId?>(null);
+    public Task<UniqueId?> CopyAsync(UniqueId uid, string destinationFullName, CancellationToken cancellationToken) => Task.FromResult<UniqueId?>(null);
     public Task AppendAsync(MimeMessage message, CancellationToken cancellationToken) => Task.CompletedTask;
 }
 
