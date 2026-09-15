@@ -77,6 +77,8 @@ public sealed class Mail
     public Guid Id { get; set; }
     public Guid MailAccountId { get; set; }
     public Guid MailFolderId { get; set; }
+    public Guid? PreviousMailFolderId { get; set; }
+    public bool NeedsReconciliation { get; set; }
     public Guid? ConversationId { get; set; }
     public uint Uid { get; set; }
     public uint UidValidity { get; set; }

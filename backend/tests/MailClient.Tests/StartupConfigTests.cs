@@ -8,38 +8,45 @@ public sealed class StartupConfigTests
     public void Production_MissingConnectionString_Throws()
     {
         Assert.Throws<InvalidOperationException>(() =>
-            StartupConfig.Validate(null, "/keys", true));
+            StartupConfig.Validate(null, "/keys", "/certificate.pfx", true));
     }
 
     [Fact]
     public void Production_EmptyConnectionString_Throws()
     {
         Assert.Throws<InvalidOperationException>(() =>
-            StartupConfig.Validate("  ", "/keys", true));
+            StartupConfig.Validate("  ", "/keys", "/certificate.pfx", true));
     }
 
     [Fact]
     public void Production_MissingKeyPath_Throws()
     {
         Assert.Throws<InvalidOperationException>(() =>
-            StartupConfig.Validate("Host=db;Database=mail", null, true));
+            StartupConfig.Validate("Host=db;Database=mail", null, "/certificate.pfx", true));
+    }
+
+    [Fact]
+    public void Production_MissingCertificatePath_Throws()
+    {
+        Assert.Throws<InvalidOperationException>(() =>
+            StartupConfig.Validate("Host=db;Database=mail", "/keys", null, true));
     }
 
     [Fact]
     public void Production_AllPresent_DoesNotThrow()
     {
-        StartupConfig.Validate("Host=db;Database=mail", "/keys", true);
+        StartupConfig.Validate("Host=db;Database=mail", "/keys", "/certificate.pfx", true);
     }
 
     [Fact]
     public void Development_MissingValues_Allowed()
     {
-        StartupConfig.Validate(null, null, false);
+        StartupConfig.Validate(null, null, null, false);
     }
 
     [Fact]
     public void Test_MissingValues_Allowed()
     {
-        StartupConfig.Validate(null, null, false);
+        StartupConfig.Validate(null, null, null, false);
     }
 }

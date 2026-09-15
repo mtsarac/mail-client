@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using MailClient.Application.Mail;
+using MailClient.Application.Sync;
 using MailClient.Domain.Entities;
 using MailClient.Domain.Enums;
 using MailClient.Infrastructure.Observability;
@@ -18,6 +19,7 @@ public sealed class MailOperationService(
     IMailFolderClient folders,
     MailReadService readService,
     AuditLogger audit,
+    InitialSyncQueue syncQueue,
     ILogger<MailOperationService> logger) : IMailOperationService
 {
     public async Task<MailOperationResult> ExecuteAsync(Guid accountId, MailOperationRequest request, string? correlationId, CancellationToken cancellationToken)
@@ -40,7 +42,14 @@ public sealed class MailOperationService(
             };
         }
         if (request.Kind == MailOperationKind.Restore)
-            return new(false, MailOperationError.NotSupported);
+        {
+            if (mail.PreviousMailFolderId is not { } previousFolderId)
+                return new(false, MailOperationError.NotSupported);
+            var previousFolder = await db.MailFolders.SingleOrDefaultAsync(folder => folder.Id == previousFolderId && folder.MailAccountId == accountId && folder.IsAvailable, cancellationToken);
+            if (previousFolder is null)
+                return new(false, MailOperationError.NotSupported);
+            request = request with { Kind = MailOperationKind.Move, DestinationFolderId = previousFolderId };
+        }
         if (request.Kind == MailOperationKind.Star && mail.Flagged || request.Kind == MailOperationKind.Unstar && !mail.Flagged)
             return new(true);
 
@@ -71,11 +80,20 @@ public sealed class MailOperationService(
 
             if (request.Kind is MailOperationKind.Move or MailOperationKind.Trash or MailOperationKind.Archive or MailOperationKind.Spam or MailOperationKind.NotSpam)
             {
-                if (remoteResult is not UniqueId destinationUid)
+                if (remoteResult is not RemoteMoveResult moveResult)
                     return new(false, MailOperationError.MoveFailed, true);
+                if (moveResult.DestinationUid is not { } destinationUid)
+                {
+                    mail.NeedsReconciliation = true;
+                    await syncQueue.EnqueueAsync(SyncRequest.Folder(accountId, target!.Id), cancellationToken);
+                    await db.SaveChangesAsync(cancellationToken);
+                    return await AuditSuccess(accountId, request.Kind, mail.Id, correlationId, cancellationToken, new(true, MailOperationError.None, true));
+                }
+                mail.PreviousMailFolderId = request.Kind is MailOperationKind.Trash or MailOperationKind.Spam ? mail.MailFolderId : mail.PreviousMailFolderId;
                 mail.MailFolderId = target!.Id;
                 mail.Uid = destinationUid.Id;
-                mail.UidValidity = target.UidValidity;
+                mail.UidValidity = moveResult.DestinationUidValidity;
+                mail.NeedsReconciliation = false;
             }
             else if (request.Kind is MailOperationKind.Read or MailOperationKind.Unread)
                 mail.IsRead = request.Kind == MailOperationKind.Read;
@@ -118,13 +136,13 @@ public sealed class MailOperationService(
             .FirstOrDefaultAsync(cancellationToken);
     }
 
-    private static async Task<UniqueId?> SetSeen(IRemoteMailFolder remote, UniqueId uid, bool value, CancellationToken cancellationToken)
+    private static async Task<RemoteMoveResult?> SetSeen(IRemoteMailFolder remote, UniqueId uid, bool value, CancellationToken cancellationToken)
     {
         await remote.SetSeenAsync(uid, value, cancellationToken);
         return null;
     }
 
-    private static async Task<UniqueId?> SetFlagged(IRemoteMailFolder remote, UniqueId uid, bool value, CancellationToken cancellationToken)
+    private static async Task<RemoteMoveResult?> SetFlagged(IRemoteMailFolder remote, UniqueId uid, bool value, CancellationToken cancellationToken)
     {
         await remote.SetFlaggedAsync(uid, value, cancellationToken);
         return null;
