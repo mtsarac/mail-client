@@ -76,7 +76,11 @@ builder.Services.AddSwaggerGen(options =>
     options.OperationFilter<IdempotencyKeyOperationFilter>();
 });
 var isProduction = !builder.Environment.IsDevelopment() && !builder.Environment.IsEnvironment("Test");
-StartupConfig.Validate(builder.Configuration.GetConnectionString("Default"), builder.Configuration["DataProtection:KeyPath"], builder.Configuration["DataProtection:CertificatePath"], isProduction);
+StartupConfig.Validate(
+    builder.Configuration.GetConnectionString("Default"),
+    builder.Configuration["DataProtection:KeyPath"],
+    builder.Configuration["DataProtection:CertificatePath"],
+    isProduction);
 var connection = builder.Configuration.GetConnectionString("Default") ?? "Host=localhost;Port=5432;Database=mailclient_v2;Username=postgres;Password=postgres";
 builder.Services.AddDbContext<AppDbContext>(options => options.UseNpgsql(connection));
 var keyPath = builder.Configuration["DataProtection:KeyPath"] ?? Path.Combine(builder.Environment.ContentRootPath, "data", "protection-keys");

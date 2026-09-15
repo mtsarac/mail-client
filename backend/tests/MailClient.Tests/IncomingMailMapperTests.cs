@@ -130,6 +130,20 @@ public sealed class IncomingMailMapperTests
     }
 
     [Fact]
+    public void Map_UsesNewestReceivedHeader_ForReceivedTimestamp()
+    {
+        var internalDate = new DateTime(2026, 1, 3, 4, 5, 6, DateTimeKind.Utc);
+        var message = SyncTestSeed.SimpleMessage("received headers");
+        message.Headers.Add(HeaderId.Received, "from a; Tue, 06 Jan 2026 03:00:00 +0000");
+        message.Headers.Add(HeaderId.Received, "from b; Tue, 06 Jan 2026 05:00:00 +0000");
+
+        var incoming = IncomingMailMapper.Map(message, 1, 7, AccountId, FolderId, Unseen, internalDate);
+
+        Assert.Equal(new DateTime(2026, 1, 6, 5, 0, 0, DateTimeKind.Utc), incoming.ReceivedAt);
+        Assert.Equal(internalDate, incoming.InternalDate);
+    }
+
+    [Fact]
     public void Map_UsesInjectedInternalDate_ForReceivedTimestamp()
     {
         var sent = DateTimeOffset.Parse("2026-01-02T03:04:05+02:00");
