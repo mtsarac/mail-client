@@ -465,7 +465,7 @@ public sealed class MailFolderSyncService(
                 BodyHtml = incoming.BodyHtml,
                 BodyText = incoming.BodyText,
                 SentAt = incoming.SentAt,
-                ReceivedAt = incoming.InternalDate,
+                ReceivedAt = incoming.ReceivedAt,
                 InternalDate = incoming.InternalDate,
                 IsRead = incoming.IsRead,
                 Answered = incoming.Answered,

@@ -8,6 +8,7 @@ namespace MailClient.Infrastructure.Services;
 
 public sealed class ConversationService(AppDbContext db)
 {
+    public static readonly TimeSpan SubjectFallbackWindow = TimeSpan.FromDays(30);
     /// <summary>Deterministic, idempotent conversation assignment. Safe to call repeatedly for the same mail.</summary>
     public async Task AssignAsync(Guid mailId, CancellationToken cancellationToken)
     {
@@ -131,7 +132,10 @@ public sealed class ConversationService(AppDbContext db)
 
         var candidates = await db.Conversations
             .AsNoTracking()
-            .Where(item => item.MailAccountId == mail.MailAccountId && item.NormalizedSubject == normalizedSubject)
+            .Where(item => item.MailAccountId == mail.MailAccountId
+                && item.NormalizedSubject == normalizedSubject
+                && item.LastMessageAt >= mail.SentAt - SubjectFallbackWindow
+                && item.LastMessageAt <= mail.SentAt + SubjectFallbackWindow)
             .OrderByDescending(item => item.LastMessageAt)
             .Take(20)
             .Select(item => item.Id)
