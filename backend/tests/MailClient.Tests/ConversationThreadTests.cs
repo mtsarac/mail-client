@@ -94,6 +94,51 @@ public sealed class ConversationThreadTests
     }
 
     [Fact]
+    public async Task SubjectFallback_InsideWindow_UsesSameConversation()
+    {
+        await using var db = CreateDb();
+        var (accountId, service) = await SeedAsync(db);
+        var first = await AddMailAsync(db, accountId, "Recurring report", "shared@example.test", sentAt: DateTime.UtcNow.AddDays(-2));
+        await service.AssignAsync(first.Id, CancellationToken.None);
+        var second = await AddMailAsync(db, accountId, "Re: Recurring report", "shared@example.test", sentAt: DateTime.UtcNow);
+        await service.AssignAsync(second.Id, CancellationToken.None);
+
+        Assert.Equal(
+            (await db.Mails.AsNoTracking().SingleAsync(item => item.Id == first.Id)).ConversationId,
+            (await db.Mails.AsNoTracking().SingleAsync(item => item.Id == second.Id)).ConversationId);
+    }
+
+    [Fact]
+    public async Task SubjectFallback_OutsideWindow_StartsNewConversation()
+    {
+        await using var db = CreateDb();
+        var (accountId, service) = await SeedAsync(db);
+        var first = await AddMailAsync(db, accountId, "Recurring report", "shared@example.test", sentAt: DateTime.UtcNow.AddDays(-31));
+        await service.AssignAsync(first.Id, CancellationToken.None);
+        var second = await AddMailAsync(db, accountId, "Re: Recurring report", "shared@example.test", sentAt: DateTime.UtcNow);
+        await service.AssignAsync(second.Id, CancellationToken.None);
+
+        Assert.NotEqual(
+            (await db.Mails.AsNoTracking().SingleAsync(item => item.Id == first.Id)).ConversationId,
+            (await db.Mails.AsNoTracking().SingleAsync(item => item.Id == second.Id)).ConversationId);
+    }
+
+    [Fact]
+    public async Task MessageIdGraph_MatchesOutsideSubjectWindow()
+    {
+        await using var db = CreateDb();
+        var (accountId, service) = await SeedAsync(db);
+        var first = await AddMailAsync(db, accountId, "Old thread", "one@example.test", messageId: "graph-root@x", sentAt: DateTime.UtcNow.AddDays(-180));
+        await service.AssignAsync(first.Id, CancellationToken.None);
+        var second = await AddMailAsync(db, accountId, "Different subject", "two@example.test", messageId: "graph-reply@x", inReplyTo: "graph-root@x", sentAt: DateTime.UtcNow);
+        await service.AssignAsync(second.Id, CancellationToken.None);
+
+        Assert.Equal(
+            (await db.Mails.AsNoTracking().SingleAsync(item => item.Id == first.Id)).ConversationId,
+            (await db.Mails.AsNoTracking().SingleAsync(item => item.Id == second.Id)).ConversationId);
+    }
+
+    [Fact]
     public async Task Reassigning_IsIdempotent()
     {
         await using var db = CreateDb();
@@ -230,6 +275,12 @@ public sealed class ConversationThreadTests
         Assert.Equal(foreignConv, foreignAfter.ConversationId);
         var foreignConvs = await db.Conversations.AsNoTracking().Where(item => item.MailAccountId == otherAccountId).ToListAsync();
         Assert.Single(foreignConvs);
+    }
+
+    [Fact]
+    public void SubjectFallbackWindow_IsThirtyDays()
+    {
+        Assert.Equal(TimeSpan.FromDays(30), ConversationService.SubjectFallbackWindow);
     }
 
     private static AppDbContext CreateDb() => new(new DbContextOptionsBuilder<AppDbContext>()
