@@ -120,6 +120,38 @@ public sealed class GreenMailIntegrationTests(GreenMailFixture greenmail)
         Assert.DoesNotContain(greenmail.Password, failure.Message);
     }
 
+    [Fact]
+    public async Task RealImap_Phase4RemoteFolder_SupportsFlagsCopyAndMove()
+    {
+        if (!IntegrationEnvironment.GreenMailEnabled) return;
+        var subject = $"phase4-{Guid.NewGuid():N}";
+        using var imap = await ConnectAsync();
+        var inbox = await imap.GetFolderAsync("INBOX", CancellationToken.None);
+        IMailFolder archive;
+        try
+        {
+            archive = await imap.GetFolderAsync("Phase4Archive", CancellationToken.None);
+        }
+        catch (FolderNotFoundException)
+        {
+            await imap.GetFolder(imap.PersonalNamespaces[0].Path).CreateAsync("Phase4Archive", true, CancellationToken.None);
+            archive = await imap.GetFolderAsync("Phase4Archive", CancellationToken.None);
+        }
+        var remote = new MailKitRemoteMailFolder(inbox, imap.GetFolderAsync);
+        await remote.OpenForUpdateAsync(CancellationToken.None);
+        await remote.AppendAsync(Message(subject), CancellationToken.None);
+        var sourceUid = Assert.Single(await inbox.SearchAsync(SearchQuery.SubjectContains(subject), CancellationToken.None));
+        await remote.SetSeenAsync(sourceUid, true, CancellationToken.None);
+        await remote.SetFlaggedAsync(sourceUid, true, CancellationToken.None);
+        var copy = await remote.CopyAsync(sourceUid, archive.FullName, CancellationToken.None);
+        var move = await remote.MoveAsync(sourceUid, archive.FullName, CancellationToken.None);
+        Assert.NotEqual(0u, copy.DestinationUid?.Id ?? 0u);
+        Assert.NotEqual(0u, move.DestinationUid?.Id ?? 0u);
+        Assert.NotEqual(0u, copy.DestinationUidValidity);
+        Assert.NotEqual(0u, move.DestinationUidValidity);
+        await imap.DisconnectAsync(true, CancellationToken.None);
+    }
+
     private async Task<ImapClient> ConnectAsync()
     {
         var imap = new ImapClient();
@@ -200,7 +232,7 @@ public sealed class GreenMailIntegrationTests(GreenMailFixture greenmail)
             MaxMessageBytes = 100 * 1024 * 1024
         },
         new FakePushNotificationService(),
-        new MailClient.Infrastructure.Services.ConversationService(db), NullLogger<MailFolderSyncService>.Instance);
+        new MailClient.Infrastructure.Services.ConversationService(db), new MailReconciliationService(db), NullLogger<MailFolderSyncService>.Instance);
 
     private static AppDbContext NewDb() => new(new DbContextOptionsBuilder<AppDbContext>()
         .UseInMemoryDatabase(Guid.NewGuid().ToString("N")).Options);

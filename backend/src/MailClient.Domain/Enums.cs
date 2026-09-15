@@ -8,3 +8,4 @@ public enum MailAccountStatus { Active, NeedsReauthentication, ConnectionError, 
 public enum SendOperationStatus { InProgress, Sent, SentWithCopy, FailedBeforeSend, DeliveryUnknown }
 public enum MailFolderType { Inbox, Sent, Drafts, Trash, Junk, Archive, Custom, Unknown }
 public enum ParticipantType { From, To, Cc, Bcc, ReplyTo }
+public enum MailReconciliationState { None, Pending }

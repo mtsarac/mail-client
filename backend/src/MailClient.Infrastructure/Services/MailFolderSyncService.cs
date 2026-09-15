@@ -21,6 +21,7 @@ public sealed class MailFolderSyncService(
     MailSyncOptions options,
     IPushNotificationService push,
     ConversationService conversations,
+    MailReconciliationService reconciliations,
     ILogger<MailFolderSyncService> logger) : ISyncExecutor
 {
     public async Task SyncAllAsync(CancellationToken cancellationToken)
@@ -440,6 +441,13 @@ public sealed class MailFolderSyncService(
             }
 
             var message = await remote.GetMessageAsync(uid, cancellationToken);
+            var incomingMessageId = MailFieldNormalizer.MessageId(message.MessageId);
+            if (await reconciliations.ReconcileAsync(accountId, folderId, incomingMessageId, uid.Id, remote.UidValidity, cancellationToken))
+            {
+                state.LastUid = uid.Id;
+                await db.SaveChangesAsync(cancellationToken);
+                return null;
+            }
             var incoming = IncomingMailMapper.Map(
                 message,
                 uid.Id,
