@@ -8,7 +8,7 @@ Flutter -> MailClient API -> PostgreSQL (mailclient_v2)
                          -> local attachment storage
 ```
 
-Current backend lives in `backend/`. Preserved reference implementation lives unchanged in `legacy-backend/`.
+Backend lives in `backend/`.
 
 ## Run
 
