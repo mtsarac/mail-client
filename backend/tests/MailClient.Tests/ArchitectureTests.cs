@@ -33,6 +33,7 @@ public sealed class ArchitectureTests
         Assert.Contains("MapMailEndpoints()", source);
         Assert.Contains("MapDeviceEndpoints()", source);
         Assert.Contains("MapHealthEndpoints()", source);
+        Assert.Contains("MapConversationEndpoints()", source);
     }
 
     private static string ReadApiSource(string fileName)

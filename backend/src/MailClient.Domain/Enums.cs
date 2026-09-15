@@ -7,3 +7,4 @@ public enum DiscoverySource { KnownProvider, DnsSrv, Autoconfig, Autodiscover, H
 public enum MailAccountStatus { Active, NeedsReauthentication, ConnectionError, Disabled }
 public enum SendOperationStatus { InProgress, Sent, SentWithCopy, FailedBeforeSend, DeliveryUnknown }
 public enum MailFolderType { Inbox, Sent, Drafts, Trash, Junk, Archive, Custom, Unknown }
+public enum ParticipantType { From, To, Cc, Bcc, ReplyTo }

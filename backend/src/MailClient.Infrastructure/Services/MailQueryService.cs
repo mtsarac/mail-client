@@ -50,7 +50,7 @@ public sealed class MailQueryService(AppDbContext db)
             .ThenByDescending(mail => mail.Uid)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
-            .Select(mail => new MailListItem(
+            .Select(mail => new MailListItemResponse(
                 mail.Id,
                 mail.MailFolderId,
                 mail.Subject,

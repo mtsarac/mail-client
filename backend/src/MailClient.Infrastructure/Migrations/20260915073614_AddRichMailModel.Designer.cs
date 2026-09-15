@@ -3,6 +3,7 @@ using System;
 using MailClient.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace MailClient.Infrastructure.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260915073614_AddRichMailModel")]
+    partial class AddRichMailModel
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -109,35 +112,6 @@ namespace MailClient.Infrastructure.Migrations
                     b.ToTable("AuditLogs");
                 });
 
-            modelBuilder.Entity("MailClient.Domain.Entities.Conversation", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime>("LastMessageAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid>("MailAccountId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("NormalizedSubject")
-                        .IsRequired()
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
-
-                    b.Property<DateTime>("StartedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("MailAccountId", "LastMessageAt");
-
-                    b.HasIndex("MailAccountId", "NormalizedSubject");
-
-                    b.ToTable("Conversations");
-                });
-
             modelBuilder.Entity("MailClient.Domain.Entities.DeviceToken", b =>
                 {
                     b.Property<Guid>("Id")
@@ -188,9 +162,6 @@ namespace MailClient.Infrastructure.Migrations
                     b.Property<string>("BodyText")
                         .IsRequired()
                         .HasColumnType("text");
-
-                    b.Property<Guid?>("ConversationId")
-                        .HasColumnType("uuid");
 
                     b.Property<bool>("Deleted")
                         .HasColumnType("boolean");
@@ -267,8 +238,6 @@ namespace MailClient.Infrastructure.Migrations
                         .HasColumnType("bigint");
 
                     b.HasKey("Id");
-
-                    b.HasIndex("ConversationId");
 
                     b.HasIndex("MailAccountId");
 
@@ -458,7 +427,7 @@ namespace MailClient.Infrastructure.Migrations
 
                     b.HasIndex("MailId", "Name");
 
-                    b.ToTable("MailHeaders");
+                    b.ToTable("MailHeader");
                 });
 
             modelBuilder.Entity("MailClient.Domain.Entities.MailParticipant", b =>
@@ -495,7 +464,7 @@ namespace MailClient.Infrastructure.Migrations
 
                     b.HasIndex("MailId", "Type", "SortOrder");
 
-                    b.ToTable("Participants");
+                    b.ToTable("MailParticipant");
                 });
 
             modelBuilder.Entity("MailClient.Domain.Entities.MailSession", b =>
@@ -673,17 +642,6 @@ namespace MailClient.Infrastructure.Migrations
                         .OnDelete(DeleteBehavior.SetNull);
                 });
 
-            modelBuilder.Entity("MailClient.Domain.Entities.Conversation", b =>
-                {
-                    b.HasOne("MailClient.Domain.Entities.MailAccount", "MailAccount")
-                        .WithMany()
-                        .HasForeignKey("MailAccountId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("MailAccount");
-                });
-
             modelBuilder.Entity("MailClient.Domain.Entities.DeviceToken", b =>
                 {
                     b.HasOne("MailClient.Domain.Entities.MailAccount", null)
@@ -695,11 +653,6 @@ namespace MailClient.Infrastructure.Migrations
 
             modelBuilder.Entity("MailClient.Domain.Entities.Mail", b =>
                 {
-                    b.HasOne("MailClient.Domain.Entities.Conversation", "Conversation")
-                        .WithMany("Mails")
-                        .HasForeignKey("ConversationId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
                     b.HasOne("MailClient.Domain.Entities.MailAccount", "MailAccount")
                         .WithMany("Mails")
                         .HasForeignKey("MailAccountId")
@@ -711,8 +664,6 @@ namespace MailClient.Infrastructure.Migrations
                         .HasForeignKey("MailFolderId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
-
-                    b.Navigation("Conversation");
 
                     b.Navigation("MailAccount");
 
@@ -809,11 +760,6 @@ namespace MailClient.Infrastructure.Migrations
                         .IsRequired();
 
                     b.Navigation("MailFolder");
-                });
-
-            modelBuilder.Entity("MailClient.Domain.Entities.Conversation", b =>
-                {
-                    b.Navigation("Mails");
                 });
 
             modelBuilder.Entity("MailClient.Domain.Entities.Mail", b =>

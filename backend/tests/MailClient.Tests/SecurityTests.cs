@@ -41,7 +41,7 @@ public sealed class SecurityTests
     {
         var service = new MailServerDiscoveryService(
             [new FailingStrategy(1), new FailingStrategy(2)],
-            new AcceptingValidator());
+            new AcceptingValidator(), new MailDiscoveryOptions());
 
         Assert.Null(await service.DiscoverAsync("person@example.test", CancellationToken.None));
     }
