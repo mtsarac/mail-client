@@ -35,7 +35,8 @@ public sealed class MailFolderClient(
             forUpdate ? "UpdateFlags" : "ReadFlags",
             async (client, ct) =>
             {
-                var remote = new MailKitRemoteMailFolder(await client.GetFolderAsync(fullName, ct));
+                var remoteFolder = await client.GetFolderAsync(fullName, ct);
+                var remote = new MailKitRemoteMailFolder(remoteFolder, client.GetFolderAsync);
                 if (forUpdate)
                     await remote.OpenForUpdateAsync(ct);
                 else
