@@ -22,7 +22,7 @@ JWT `sub`, MailAccountId değeridir; access süresi yapılandırılabilir. Refre
 
 ## Persistence ve migration
 
-Yeni backend tek temiz Initial EF Core migration kullanır ve varsayılan DB `mailclient_v2` olur. Legacy migration'lar `legacy-backend/` altında değişmeden kalır. Credential'lar Data Protection ile şifrelenir. Normalize e-posta, send idempotency, folder UID, device ownership ve session hash için DB uniqueness constraint'leri vardır.
+Yeni backend tek temiz Initial EF Core migration kullanır ve varsayılan DB `mailclient_v2` olur. Credential'lar Data Protection ile şifrelenir. Normalize e-posta, send idempotency, folder UID, device ownership ve session hash için DB uniqueness constraint'leri vardır.
 
 ## Posta ve sahiplik
 

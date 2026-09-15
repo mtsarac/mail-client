@@ -40,7 +40,7 @@ Manual setup bypasses discovery only. It still validates host syntax, DNS/IP saf
 
 ## Persistence
 
-New backend uses one clean Initial migration and defaults to database `mailclient_v2`. Legacy migrations remain under `legacy-backend/`.
+New backend uses one clean Initial migration and defaults to database `mailclient_v2`.
 
 Key constraints:
 
