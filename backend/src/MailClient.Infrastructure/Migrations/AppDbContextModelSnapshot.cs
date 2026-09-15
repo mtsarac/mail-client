@@ -231,6 +231,12 @@ namespace MailClient.Infrastructure.Migrations
                     b.Property<Guid>("MailFolderId")
                         .HasColumnType("uuid");
 
+                    b.Property<bool>("NeedsReconciliation")
+                        .HasColumnType("boolean");
+
+                    b.Property<Guid?>("PreviousMailFolderId")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("MessageId")
                         .IsRequired()
                         .HasMaxLength(998)
