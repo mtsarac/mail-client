@@ -127,11 +127,15 @@ public sealed class GreenMailIntegrationTests(GreenMailFixture greenmail)
         var subject = $"phase4-{Guid.NewGuid():N}";
         using var imap = await ConnectAsync();
         var inbox = await imap.GetFolderAsync("INBOX", CancellationToken.None);
-        var archive = imap.GetFolder(imap.PersonalNamespaces[0].Path).GetSubfolder("Phase4Archive");
-        if (!archive.Exists)
+        IMailFolder archive;
+        try
+        {
+            archive = await imap.GetFolderAsync("Phase4Archive", CancellationToken.None);
+        }
+        catch (FolderNotFoundException)
         {
             await imap.GetFolder(imap.PersonalNamespaces[0].Path).CreateAsync("Phase4Archive", true, CancellationToken.None);
-            archive = imap.GetFolder(imap.PersonalNamespaces[0].Path).GetSubfolder("Phase4Archive");
+            archive = await imap.GetFolderAsync("Phase4Archive", CancellationToken.None);
         }
         var remote = new MailKitRemoteMailFolder(inbox, imap.GetFolderAsync);
         await remote.OpenForUpdateAsync(CancellationToken.None);
