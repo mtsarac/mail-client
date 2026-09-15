@@ -445,7 +445,7 @@ public sealed class MailFolderSyncService(
                 remote.UidValidity,
                 accountId,
                 folderId,
-                summary.IsSeen);
+                new IncomingFlags(summary.IsSeen, summary.IsAnswered, summary.IsFlagged, summary.IsDraft, summary.IsDeleted, summary.IsRecent));
             var mail = new MailEntity
             {
                 Id = Guid.NewGuid(),
@@ -454,15 +454,34 @@ public sealed class MailFolderSyncService(
                 Uid = incoming.Uid,
                 UidValidity = incoming.UidValidity,
                 MessageId = incoming.MessageId,
+                InReplyToMessageId = incoming.InReplyToMessageId,
+                References = incoming.References,
                 Subject = incoming.Subject,
                 FromAddress = incoming.FromAddress,
                 FromDisplayName = incoming.FromDisplayName,
                 ToAddress = incoming.ToAddress,
                 BodyHtml = incoming.BodyHtml,
                 BodyText = incoming.BodyText,
-                ReceivedAt = incoming.ReceivedAt,
-                IsRead = incoming.IsRead
+                SentAt = incoming.SentAt,
+                ReceivedAt = incoming.InternalDate,
+                InternalDate = summary.InternalDate ?? incoming.SentAt,
+                IsRead = incoming.IsRead,
+                Answered = incoming.Answered,
+                Flagged = incoming.Flagged,
+                Draft = incoming.Draft,
+                Deleted = incoming.Deleted,
+                Recent = incoming.Recent
             };
+            mail.Participants = IncomingMailMapper.ToEntityParticipants(mail.Id, incoming.Participants);
+            mail.Headers = incoming.Headers
+                .Select(header => new MailHeader
+                {
+                    Id = Guid.NewGuid(),
+                    MailId = mail.Id,
+                    Name = header.Name,
+                    Value = header.Value
+                })
+                .ToList();
             var messageAttachmentBytes = 0L;
 
             foreach (var attachment in incoming.Attachments)

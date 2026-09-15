@@ -80,6 +80,8 @@ public sealed class Mail
     public uint Uid { get; set; }
     public uint UidValidity { get; set; }
     public string MessageId { get; set; } = "";
+    public string InReplyToMessageId { get; set; } = "";
+    public string References { get; set; } = "";
     public string Subject { get; set; } = "";
     public string FromAddress { get; set; } = "";
     public string FromDisplayName { get; set; } = "";
@@ -87,12 +89,41 @@ public sealed class Mail
     public string BodyText { get; set; } = "";
     public string BodyHtml { get; set; } = "";
     public bool IsRead { get; set; }
+    public bool Answered { get; set; }
+    public bool Flagged { get; set; }
+    public bool Draft { get; set; }
+    public bool Deleted { get; set; }
+    public bool Recent { get; set; }
     public bool HasAttachments { get; set; }
+    public DateTime SentAt { get; set; }
     public DateTime ReceivedAt { get; set; }
+    public DateTime InternalDate { get; set; }
     public MailAccount? MailAccount { get; set; }
     public MailFolder? MailFolder { get; set; }
     public ICollection<Attachment> Attachments { get; set; } = [];
+    public ICollection<MailParticipant> Participants { get; set; } = [];
+    public ICollection<MailHeader> Headers { get; set; } = [];
 }
+
+public sealed class MailParticipant
+{
+    public Guid Id { get; set; }
+    public Guid MailId { get; set; }
+    public ParticipantType Type { get; set; }
+    public string Address { get; set; } = "";
+    public string NormalizedAddress { get; set; } = "";
+    public string DisplayName { get; set; } = "";
+    public int SortOrder { get; set; }
+}
+
+public sealed class MailHeader
+{
+    public Guid Id { get; set; }
+    public Guid MailId { get; set; }
+    public string Name { get; set; } = "";
+    public string Value { get; set; } = "";
+}
+
 public sealed class Attachment
 {
     public Guid Id { get; set; }
@@ -104,6 +135,7 @@ public sealed class Attachment
     public long SizeBytes { get; set; }
     public bool IsInline { get; set; }
     public string ContentId { get; set; } = "";
+    public string ContentDisposition { get; set; } = "";
     public Mail? Mail { get; set; }
 }
 public sealed class SyncState
