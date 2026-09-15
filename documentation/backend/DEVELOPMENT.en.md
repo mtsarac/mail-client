@@ -45,8 +45,6 @@ dotnet ef migrations list --project backend/src/MailClient.Infrastructure --star
 dotnet ef migrations script --project backend/src/MailClient.Infrastructure --startup-project backend/src/MailClient.Api
 ```
 
-`legacy-backend/` is reference-only. Do not rewrite or apply its migrations as part of V2 work.
-
 ## Validation
 
 Before commit: build with warnings as errors, run tests and format, inspect OpenAPI in Development, search new `backend/` for obsolete User concepts, and confirm no frontend paths were introduced.

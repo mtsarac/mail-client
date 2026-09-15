@@ -40,7 +40,7 @@ Manuel kurulum yalnız discovery'yi atlar. Persistence öncesi host sözdizimi, 
 
 ## Persistence
 
-Yeni backend tek temiz Initial migration kullanır ve varsayılan DB adı `mailclient_v2` olur. Legacy migration'lar `legacy-backend/` altında değişmeden kalır.
+Yeni backend tek temiz Initial migration kullanır ve varsayılan DB adı `mailclient_v2` olur.
 
 Temel constraint'ler:
 

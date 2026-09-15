@@ -22,7 +22,7 @@ JWT `sub` is MailAccountId and access lifetime is configurable. Refresh tokens a
 
 ## Persistence and migration
 
-New backend has one clean Initial EF Core migration and uses `mailclient_v2` by default. Legacy migrations remain untouched in `legacy-backend/`. Credentials use Data Protection encryption. Normalized email, send idempotency, folder UID, device ownership, and session hashes have database uniqueness constraints.
+New backend has one clean Initial EF Core migration and uses `mailclient_v2` by default. Credentials use Data Protection encryption. Normalized email, send idempotency, folder UID, device ownership, and session hashes have database uniqueness constraints.
 
 ## Mail and ownership
 
