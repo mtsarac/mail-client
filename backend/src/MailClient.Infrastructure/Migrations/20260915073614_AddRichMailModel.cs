@@ -128,16 +128,6 @@ namespace MailClient.Infrastructure.Migrations
                 });
 
             migrationBuilder.CreateIndex(
-                name: "IX_SyncStates_MailAccountId",
-                table: "SyncStates",
-                column: "MailAccountId");
-
-            migrationBuilder.CreateIndex(
-                name: "IX_SyncSkippedUids_MailAccountId",
-                table: "SyncSkippedUids",
-                column: "MailAccountId");
-
-            migrationBuilder.CreateIndex(
                 name: "IX_Mails_MessageId",
                 table: "Mails",
                 column: "MessageId");
@@ -151,62 +141,6 @@ namespace MailClient.Infrastructure.Migrations
                 name: "IX_MailParticipant_MailId_Type_SortOrder",
                 table: "MailParticipant",
                 columns: new[] { "MailId", "Type", "SortOrder" });
-
-            migrationBuilder.AddForeignKey(
-                name: "FK_Attachments_MailAccounts_MailAccountId",
-                table: "Attachments",
-                column: "MailAccountId",
-                principalTable: "MailAccounts",
-                principalColumn: "Id",
-                onDelete: ReferentialAction.Cascade);
-
-            migrationBuilder.AddForeignKey(
-                name: "FK_AuditLogs_MailAccounts_MailAccountId",
-                table: "AuditLogs",
-                column: "MailAccountId",
-                principalTable: "MailAccounts",
-                principalColumn: "Id",
-                onDelete: ReferentialAction.SetNull);
-
-            migrationBuilder.AddForeignKey(
-                name: "FK_DeviceTokens_MailAccounts_MailAccountId",
-                table: "DeviceTokens",
-                column: "MailAccountId",
-                principalTable: "MailAccounts",
-                principalColumn: "Id",
-                onDelete: ReferentialAction.Cascade);
-
-            migrationBuilder.AddForeignKey(
-                name: "FK_SendOperations_MailAccounts_MailAccountId",
-                table: "SendOperations",
-                column: "MailAccountId",
-                principalTable: "MailAccounts",
-                principalColumn: "Id",
-                onDelete: ReferentialAction.Cascade);
-
-            migrationBuilder.AddForeignKey(
-                name: "FK_SyncSkippedUids_MailAccounts_MailAccountId",
-                table: "SyncSkippedUids",
-                column: "MailAccountId",
-                principalTable: "MailAccounts",
-                principalColumn: "Id",
-                onDelete: ReferentialAction.Cascade);
-
-            migrationBuilder.AddForeignKey(
-                name: "FK_SyncSkippedUids_MailFolders_MailFolderId",
-                table: "SyncSkippedUids",
-                column: "MailFolderId",
-                principalTable: "MailFolders",
-                principalColumn: "Id",
-                onDelete: ReferentialAction.Cascade);
-
-            migrationBuilder.AddForeignKey(
-                name: "FK_SyncStates_MailAccounts_MailAccountId",
-                table: "SyncStates",
-                column: "MailAccountId",
-                principalTable: "MailAccounts",
-                principalColumn: "Id",
-                onDelete: ReferentialAction.Cascade);
 
             migrationBuilder.Sql("""
                 INSERT INTO "MailParticipant" ("Id", "MailId", "Type", "Address", "NormalizedAddress", "DisplayName", "SortOrder")
@@ -225,33 +159,6 @@ namespace MailClient.Infrastructure.Migrations
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.DropForeignKey(
-                name: "FK_Attachments_MailAccounts_MailAccountId",
-                table: "Attachments");
-
-            migrationBuilder.DropForeignKey(
-                name: "FK_AuditLogs_MailAccounts_MailAccountId",
-                table: "AuditLogs");
-
-            migrationBuilder.DropForeignKey(
-                name: "FK_DeviceTokens_MailAccounts_MailAccountId",
-                table: "DeviceTokens");
-
-            migrationBuilder.DropForeignKey(
-                name: "FK_SendOperations_MailAccounts_MailAccountId",
-                table: "SendOperations");
-
-            migrationBuilder.DropForeignKey(
-                name: "FK_SyncSkippedUids_MailAccounts_MailAccountId",
-                table: "SyncSkippedUids");
-
-            migrationBuilder.DropForeignKey(
-                name: "FK_SyncSkippedUids_MailFolders_MailFolderId",
-                table: "SyncSkippedUids");
-
-            migrationBuilder.DropForeignKey(
-                name: "FK_SyncStates_MailAccounts_MailAccountId",
-                table: "SyncStates");
 
             migrationBuilder.DropTable(
                 name: "MailHeader");
@@ -259,13 +166,6 @@ namespace MailClient.Infrastructure.Migrations
             migrationBuilder.DropTable(
                 name: "MailParticipant");
 
-            migrationBuilder.DropIndex(
-                name: "IX_SyncStates_MailAccountId",
-                table: "SyncStates");
-
-            migrationBuilder.DropIndex(
-                name: "IX_SyncSkippedUids_MailAccountId",
-                table: "SyncSkippedUids");
 
             migrationBuilder.DropIndex(
                 name: "IX_Mails_MessageId",
