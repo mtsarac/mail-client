@@ -132,6 +132,7 @@ builder.Services.AddScoped<SendOperationStore>();
 builder.Services.AddScoped<MailSendService>();
 builder.Services.AddScoped<MailOperationsService>();
 builder.Services.AddScoped<IMailOperationService, MailOperationService>();
+builder.Services.AddScoped<MailReconciliationService>();
 builder.Services.AddScoped<ConversationService>();
 builder.Services.AddScoped<AuditLogger>();
 var firebaseOptions = builder.Configuration.GetSection("Firebase").Get<FirebaseOptions>() ?? new FirebaseOptions();
