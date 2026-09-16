@@ -33,6 +33,65 @@ public sealed class DraftServiceTests
     }
 
     [Fact]
+    public async Task CreateAsync_AllowsEmptyRecipientsAndBody()
+    {
+        await using var db = CreateDb();
+        var (accountId, _) = await SeedAsync(db);
+        var remote = new FakeRemoteMailFolder(31, new());
+        var service = CreateService(db, remote, new RecordingSyncExecutor());
+        var command = new DraftCommand(accountId, [], [], [], "", null, null, [], null);
+
+        var result = await service.CreateAsync(accountId, command, null, CancellationToken.None);
+
+        Assert.True(result.Created);
+        Assert.Equal(MailKit.MessageFlags.Draft, remote.LastAppendFlags);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_NoAppendUidAndSameMessageId_DoesNotResolveSourceDraft()
+    {
+        await using var db = CreateDb();
+        var (accountId, draftsId) = await SeedAsync(db);
+        var draftId = await SeedDraftAsync(db, accountId, draftsId);
+        var remote = new FakeRemoteMailFolder(31, new()) { AppendResult = new(null, 31) };
+        var sync = new RecordingSyncExecutor(async () =>
+        {
+            db.Mails.Add(new MailClient.Domain.Entities.Mail
+            {
+                Id = Guid.NewGuid(),
+                MailAccountId = accountId,
+                MailFolderId = draftsId,
+                Uid = 6,
+                UidValidity = 31,
+                Draft = true,
+                MessageId = "draft@example.test",
+                Subject = "replacement",
+                InternalDate = DateTime.UtcNow
+            });
+            db.Mails.Add(new MailClient.Domain.Entities.Mail
+            {
+                Id = Guid.NewGuid(),
+                MailAccountId = accountId,
+                MailFolderId = draftsId,
+                Uid = 7,
+                UidValidity = 31,
+                Draft = true,
+                MessageId = "draft@example.test",
+                Subject = "ambiguous",
+                InternalDate = DateTime.UtcNow
+            });
+            await db.SaveChangesAsync();
+        });
+        var service = CreateService(db, remote, sync);
+
+        var result = await service.UpdateAsync(accountId, draftId, Command(accountId), null, CancellationToken.None);
+
+        Assert.True(result.ReconciliationPending);
+        Assert.Null(result.MailId);
+        Assert.Empty(remote.Moved);
+    }
+
+    [Fact]
     public async Task UpdateAsync_AppendFailure_LeavesOriginalDraftUntouched()
     {
         await using var db = CreateDb();
@@ -110,14 +169,15 @@ public sealed class DraftServiceTests
         return id;
     }
 
-    private sealed class RecordingSyncExecutor : ISyncExecutor
+    private sealed class RecordingSyncExecutor(Func<Task>? onSync = null) : ISyncExecutor
     {
         public Guid? FolderId { get; private set; }
         public Task SyncAccountAsync(Guid accountId, CancellationToken cancellationToken) => Task.CompletedTask;
-        public Task SyncFolderAsync(Guid accountId, Guid folderId, CancellationToken cancellationToken)
+        public async Task SyncFolderAsync(Guid accountId, Guid folderId, CancellationToken cancellationToken)
         {
             FolderId = folderId;
-            return Task.CompletedTask;
+            if (onSync is not null)
+                await onSync();
         }
     }
 
