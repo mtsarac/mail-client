@@ -100,6 +100,8 @@ public sealed class MailOperationServiceTests
         Assert.Equal(folderId, restored.MailFolderId);
         Assert.Equal(12u, restored.Uid);
         Assert.Equal(9u, restored.UidValidity);
+        Assert.Null(restored.PreviousMailFolderId);
+        Assert.NotNull(await db.AuditLogs.SingleOrDefaultAsync(x => x.Action == "mail.restore"));
     }
 
     [Fact]
