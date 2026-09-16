@@ -98,10 +98,30 @@ public sealed class GreenMailIntegrationTests(GreenMailFixture greenmail)
         var remote = new MailKitRemoteMailFolder(inbox);
         await remote.OpenForUpdateAsync(CancellationToken.None);
 
-        await remote.AppendAsync(Message(subject), CancellationToken.None);
+        await remote.AppendAsync(Message(subject), MessageFlags.Seen, CancellationToken.None);
 
         var uids = await inbox.SearchAsync(SearchQuery.SubjectContains(subject), CancellationToken.None);
         Assert.Single(uids);
+    }
+
+    [Fact]
+    public async Task RealImap_DraftAppend_PreservesDraftFlagAndUidValidity()
+    {
+        if (!IntegrationEnvironment.GreenMailEnabled) return;
+        var subject = $"draft-{Guid.NewGuid():N}";
+        using var imap = await ConnectAsync();
+        var drafts = await GetOrCreateFolderAsync(imap, "Phase5Drafts");
+        var remote = new MailKitRemoteMailFolder(drafts);
+        await remote.OpenForUpdateAsync(CancellationToken.None);
+
+        var result = await remote.AppendAsync(Message(subject), MessageFlags.Draft, CancellationToken.None);
+
+        var uid = Assert.Single(await drafts.SearchAsync(SearchQuery.SubjectContains(subject), CancellationToken.None));
+        var summary = Assert.Single(await drafts.FetchAsync([uid], MessageSummaryItems.Flags, CancellationToken.None));
+        Assert.True(summary.Flags?.HasFlag(MessageFlags.Draft));
+        Assert.Equal(drafts.UidValidity, result.DestinationUidValidity);
+        if (result.DestinationUid is not null)
+            Assert.Equal(uid, result.DestinationUid.Value);
     }
 
     [Fact]
@@ -139,7 +159,7 @@ public sealed class GreenMailIntegrationTests(GreenMailFixture greenmail)
         }
         var remote = new MailKitRemoteMailFolder(inbox, imap.GetFolderAsync);
         await remote.OpenForUpdateAsync(CancellationToken.None);
-        await remote.AppendAsync(Message(subject), CancellationToken.None);
+        await remote.AppendAsync(Message(subject), MessageFlags.Seen, CancellationToken.None);
         var sourceUid = Assert.Single(await inbox.SearchAsync(SearchQuery.SubjectContains(subject), CancellationToken.None));
         await remote.SetSeenAsync(sourceUid, true, CancellationToken.None);
         await remote.SetFlaggedAsync(sourceUid, true, CancellationToken.None);
@@ -169,13 +189,26 @@ public sealed class GreenMailIntegrationTests(GreenMailFixture greenmail)
         return imap;
     }
 
+    private static async Task<IMailFolder> GetOrCreateFolderAsync(ImapClient imap, string fullName)
+    {
+        try
+        {
+            return await imap.GetFolderAsync(fullName, CancellationToken.None);
+        }
+        catch (FolderNotFoundException)
+        {
+            await imap.GetFolder(imap.PersonalNamespaces[0].Path).CreateAsync(fullName, true, CancellationToken.None);
+            return await imap.GetFolderAsync(fullName, CancellationToken.None);
+        }
+    }
+
     private async Task SeedMessageAsync(string subject, bool markSeen)
     {
         using var imap = await ConnectAsync();
         var inbox = await imap.GetFolderAsync("INBOX", CancellationToken.None);
         var remote = new MailKitRemoteMailFolder(inbox);
         await remote.OpenForUpdateAsync(CancellationToken.None);
-        await remote.AppendAsync(Message(subject), CancellationToken.None);
+        await remote.AppendAsync(Message(subject), MessageFlags.Seen, CancellationToken.None);
         var uids = await inbox.SearchAsync(SearchQuery.SubjectContains(subject), CancellationToken.None);
         if (markSeen)
             await inbox.AddFlagsAsync(uids[0], MessageFlags.Seen, true, CancellationToken.None);
