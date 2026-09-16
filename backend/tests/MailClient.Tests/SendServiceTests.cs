@@ -87,6 +87,65 @@ public sealed class SendServiceTests
     }
 
     [Fact]
+    public async Task SendAsync_ReplySource_DerivesThreadingHeaders()
+    {
+        await using var db = CreateDb();
+        var accountId = await SeedAccountAsync(db, saveSentCopy: false);
+        var sourceId = Guid.NewGuid();
+        db.Mails.Add(new Mail
+        {
+            Id = sourceId,
+            MailAccountId = accountId,
+            MailFolderId = Guid.NewGuid(),
+            MessageId = "source@example.test",
+            References = "prior@example.test"
+        });
+        await db.SaveChangesAsync();
+        var transport = new FakeMailTransport();
+        var command = new SendMailCommand(accountId, ["friend@example.test"], [], [], "Re: Hello", null, "body", [], sourceId)
+        {
+            IdempotencyKey = "reply-1"
+        };
+
+        await CreateService(db, transport).SendAsync(accountId, command, null, CancellationToken.None);
+
+        Assert.Equal("source@example.test", transport.Message!.InReplyTo);
+        Assert.Equal(["prior@example.test", "source@example.test"], transport.Message.References);
+        Assert.False(string.IsNullOrWhiteSpace(transport.Message.MessageId));
+    }
+
+    [Fact]
+    public async Task SendAsync_ReplySourceFromAnotherAccount_IsRejected()
+    {
+        await using var db = CreateDb();
+        var accountId = await SeedAccountAsync(db, saveSentCopy: false);
+        var otherId = Guid.NewGuid();
+        db.MailAccounts.Add(new MailAccount
+        {
+            Id = otherId,
+            EmailAddress = "other@example.test",
+            NormalizedEmailAddress = "OTHER@EXAMPLE.TEST",
+            Username = "other",
+            ImapHost = "imap.example.test",
+            ImapPort = 993,
+            SmtpHost = "smtp.example.test",
+            SmtpPort = 587,
+            Status = MailAccountStatus.Active
+        });
+        var sourceId = Guid.NewGuid();
+        db.Mails.Add(new Mail { Id = sourceId, MailAccountId = otherId, MailFolderId = Guid.NewGuid(), MessageId = "other@example.test" });
+        await db.SaveChangesAsync();
+        var command = new SendMailCommand(accountId, ["friend@example.test"], [], [], "Re: Hello", null, "body", [], sourceId)
+        {
+            IdempotencyKey = "reply-2"
+        };
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => CreateService(db, new FakeMailTransport()).SendAsync(accountId, command, null, CancellationToken.None));
+
+        Assert.Equal("mail_not_found", error.Message);
+    }
+
+    [Fact]
     public async Task SendAsync_InvalidRecipient_ThrowsContractCode()
     {
         await using var db = CreateDb();
@@ -147,10 +206,12 @@ public sealed class SendServiceTests
         public int SentCount { get; private set; }
         public int AppendCount { get; private set; }
         public Exception? SendFailure { get; init; }
+        public MimeMessage? Message { get; private set; }
 
         public Task SendAsync(MailAccount account, MimeMessage message, CancellationToken cancellationToken)
         {
             if (SendFailure is not null) throw SendFailure;
+            Message = message;
             SentCount++;
             return Task.CompletedTask;
         }
