@@ -89,9 +89,24 @@ internal class FakeRemoteMailFolder(
     }
 
     public virtual Task SetFlaggedAsync(UniqueId uid, bool flagged, CancellationToken cancellationToken) => Task.CompletedTask;
-    public virtual Task<RemoteMoveResult> MoveAsync(UniqueId uid, string destinationFullName, CancellationToken cancellationToken) => Task.FromResult(new RemoteMoveResult(null, UidValidity));
+    public virtual Task<RemoteMoveResult> MoveAsync(UniqueId uid, string destinationFullName, CancellationToken cancellationToken)
+    {
+        Moved.Add(uid.Id);
+        return Task.FromResult(new RemoteMoveResult(null, UidValidity));
+    }
     public Task<RemoteMoveResult> CopyAsync(UniqueId uid, string destinationFullName, CancellationToken cancellationToken) => Task.FromResult(new RemoteMoveResult(null, UidValidity));
-    public Task AppendAsync(MimeMessage message, CancellationToken cancellationToken) => Task.CompletedTask;
+    public RemoteAppendResult AppendResult { get; set; } = new(null, uidValidity);
+    public MessageFlags? LastAppendFlags { get; private set; }
+    public string? LastFolderName { get; set; }
+    public Exception? AppendFailure { get; set; }
+    public List<uint> Moved { get; } = [];
+
+    public Task<RemoteAppendResult> AppendAsync(MimeMessage message, MessageFlags flags, CancellationToken cancellationToken)
+    {
+        if (AppendFailure is not null) throw AppendFailure;
+        LastAppendFlags = flags;
+        return Task.FromResult(AppendResult);
+    }
 }
 
 internal sealed class FakeMailFolderClient(FakeRemoteMailFolder remote) : IMailFolderClient

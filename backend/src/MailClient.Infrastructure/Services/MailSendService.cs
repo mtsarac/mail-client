@@ -78,10 +78,12 @@ public sealed class MailSendService(
         if (command.IdempotencyKey.Length > SendOperationStore.MaxKeyLength)
             throw new InvalidOperationException("idempotency_key_too_long");
 
-        var threading = await ResolveThreadingAsync(account.Id, command.ReplySourceMailId, cancellationToken);
+        var threading = command.TrustedMessageId is not null
+            ? new ReplyThreading(command.TrustedInReplyToMessageId, command.TrustedReferences)
+            : await ResolveThreadingAsync(account.Id, command.ReplySourceMailId, cancellationToken);
         var hashed = await HashAttachmentsAsync(command.Attachments, cancellationToken);
         var fingerprintRecipients = string.Join(',', to.Select(x => x.Address).Concat(cc.Select(x => x.Address)).Concat(bcc.Select(x => x.Address)));
-        var fingerprint = SendOperationStore.Fingerprint(account.Id, $"{fingerprintRecipients}|{command.ReplySourceMailId}", subject, command.BodyHtml, command.BodyText, hashed);
+        var fingerprint = SendOperationStore.Fingerprint(account.Id, $"{fingerprintRecipients}|{command.ReplySourceMailId}|{command.TrustedMessageId}", subject, command.BodyHtml, command.BodyText, hashed);
         var claim = await operations.ClaimAsync(account.Id, command.IdempotencyKey, fingerprint, cancellationToken);
         return claim switch
         {
@@ -132,7 +134,7 @@ public sealed class MailSendService(
             message = MimeMessageBuilder.Build(
                 account.EmailAddress, account.DisplayName, to, cc, bcc,
                 subject, command.BodyHtml, command.BodyText, command.Attachments,
-                threading.InReplyToMessageId, threading.References);
+                threading.InReplyToMessageId, threading.References, command.TrustedMessageId);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

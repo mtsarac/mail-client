@@ -33,6 +33,9 @@ public sealed record SendMailCommand(
     }
 
     public string IdempotencyKey { get; init; } = "";
+    public string? TrustedMessageId { get; init; }
+    public string? TrustedInReplyToMessageId { get; init; }
+    public string? TrustedReferences { get; init; }
 }
 
 public sealed record NewMailNotification(Guid MailAccountId, Guid MailId, Guid FolderId, string Sender, string Subject);

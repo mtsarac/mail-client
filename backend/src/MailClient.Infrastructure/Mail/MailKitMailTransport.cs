@@ -59,7 +59,7 @@ public sealed class MailKitMailTransport(
             {
                 var remote = new MailKitRemoteMailFolder(await client.GetFolderAsync(sentFullName, ct));
                 await remote.OpenForUpdateAsync(ct);
-                await remote.AppendAsync(message, ct);
+                await remote.AppendAsync(message, MailKit.MessageFlags.Seen, ct);
                 return true;
             },
             cancellationToken);

@@ -29,6 +29,37 @@ public static class MailEndpoints
             return Results.Ok(result);
         }).WithName("ListMails").WithSummary("List mailbox mail").WithDescription("Account-scoped list, newest first. Supports folderId, isRead, hasAttachments, search, page, pageSize (max 100).").Produces<MailListResponse>();
         api.MapGet("/mails/{id:guid}", async (Guid id, ICurrentMailAccount current, MailReadService reader, CancellationToken ct) => await reader.GetAsync(current.MailAccountId, id, ct) is { } mail ? Results.Ok(mail) : Results.NotFound()).WithName("GetMail").WithSummary("Get mailbox mail").Produces<MailDetailResponse>().Produces(404);
+        api.MapGet("/drafts/{id:guid}", async (Guid id, ICurrentMailAccount current, DraftService drafts, CancellationToken ct) => await drafts.GetAsync(current.MailAccountId, id, ct) switch
+        {
+            { Draft: { } draft } => Results.Ok(draft),
+            { Error: DraftLookupError.NotDraft } => Results.Problem(statusCode: 422, extensions: new Dictionary<string, object?> { ["code"] = "mail_not_draft" }),
+            _ => Results.NotFound()
+        });
+        api.MapPost("/drafts", async (HttpRequest request, ICurrentMailAccount current, DraftService drafts, CorrelationContext correlation, CancellationToken ct) =>
+        {
+            var form = await request.ReadFormAsync(ct);
+            var command = DraftCommandFromForm(current.MailAccountId, form);
+            var result = await drafts.CreateAsync(current.MailAccountId, command, correlation.CorrelationId, ct);
+            return Results.Ok(result);
+        }).DisableAntiforgery();
+        api.MapPut("/drafts/{id:guid}", async (Guid id, HttpRequest request, ICurrentMailAccount current, DraftService drafts, CorrelationContext correlation, CancellationToken ct) =>
+        {
+            var form = await request.ReadFormAsync(ct);
+            var command = DraftCommandFromForm(current.MailAccountId, form);
+            return Results.Ok(await drafts.UpdateAsync(current.MailAccountId, id, command, correlation.CorrelationId, ct));
+        }).DisableAntiforgery();
+        api.MapDelete("/drafts/{id:guid}", async (Guid id, ICurrentMailAccount current, DraftService drafts, CorrelationContext correlation, CancellationToken ct) =>
+        {
+            await drafts.DeleteAsync(current.MailAccountId, id, correlation.CorrelationId, ct);
+            return Results.NoContent();
+        });
+        api.MapPost("/drafts/{id:guid}/send", async (Guid id, HttpRequest request, ICurrentMailAccount current, DraftService drafts, MailSendService sender, LocalAttachmentStorage storage, CorrelationContext correlation, CancellationToken ct) =>
+        {
+            var key = request.Headers["Idempotency-Key"].ToString();
+            var result = await drafts.SendAsync(current.MailAccountId, id, key, sender, storage, correlation.CorrelationId, ct);
+            return Results.Ok(result);
+        }).DisableAntiforgery();
+
         api.MapPatch("/mails/{id:guid}/read", async (Guid id, ReadRequest request, ICurrentMailAccount current, CorrelationContext correlation, IMailOperationService operations, CancellationToken ct) =>
         {
             var result = await operations.ExecuteAsync(current.MailAccountId, new MailOperationRequest(id, request.IsRead ? MailOperationKind.Read : MailOperationKind.Unread), correlation.CorrelationId, ct);
@@ -78,6 +109,24 @@ public static class MailEndpoints
             var result = await sender.SendAsync(current.MailAccountId, command, request.HttpContext.RequestServices.GetRequiredService<CorrelationContext>().CorrelationId, ct);
             return Results.Ok(new { sent = result.Sent, sentCopySaved = result.SentCopySaved, warning = result.Warning });
         }).WithName("SendMail").WithSummary("Send mail idempotently").WithDescription("multipart/form-data: to, subject, bodyHtml and/or bodyText, up to 20 attachments. Idempotency-Key header is required.").Accepts<IFormCollection>("multipart/form-data").Produces(200).ProducesProblem(400).ProducesProblem(409).DisableAntiforgery();
+    }
+
+    private static DraftCommand DraftCommandFromForm(Guid accountId, IFormCollection form)
+    {
+        static string? Optional(IFormCollection values, string name)
+        {
+            var value = values[name].ToString();
+            return string.IsNullOrWhiteSpace(value) ? null : value;
+        }
+
+        var attachments = form.Files
+            .Select(file => new SendMailAttachment(file.FileName, file.ContentType, file.OpenReadStream()))
+            .ToList();
+        var to = form["To"].Concat(form["to"]).Where(value => !string.IsNullOrWhiteSpace(value)).Select(value => value!).ToList();
+        var cc = form["Cc"].Where(value => !string.IsNullOrWhiteSpace(value)).Select(value => value!).ToList();
+        var bcc = form["Bcc"].Where(value => !string.IsNullOrWhiteSpace(value)).Select(value => value!).ToList();
+        Guid? replySourceMailId = Guid.TryParse(Optional(form, "replySourceMailId"), out var sourceMailId) ? sourceMailId : null;
+        return new(accountId, to, cc, bcc, form["subject"].ToString(), Optional(form, "bodyHtml"), Optional(form, "bodyText"), attachments, replySourceMailId);
     }
 
     private static async Task<IResult> ComposeResult(Task<ComposeContextResponse?> response) =>

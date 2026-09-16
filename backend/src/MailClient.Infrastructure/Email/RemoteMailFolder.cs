@@ -16,6 +16,7 @@ public sealed record RemoteSummary(
 
 public sealed record UidSearchResult(IList<UniqueId> Uids, uint ScannedUpTo);
 public sealed record RemoteMoveResult(UniqueId? DestinationUid, uint DestinationUidValidity);
+public sealed record RemoteAppendResult(UniqueId? DestinationUid, uint DestinationUidValidity);
 
 public interface IRemoteMailFolder
 {
@@ -30,7 +31,7 @@ public interface IRemoteMailFolder
     Task SetFlaggedAsync(UniqueId uid, bool flagged, CancellationToken cancellationToken);
     Task<RemoteMoveResult> MoveAsync(UniqueId uid, string destinationFullName, CancellationToken cancellationToken);
     Task<RemoteMoveResult> CopyAsync(UniqueId uid, string destinationFullName, CancellationToken cancellationToken);
-    Task AppendAsync(MimeMessage message, CancellationToken cancellationToken);
+    Task<RemoteAppendResult> AppendAsync(MimeMessage message, MessageFlags flags, CancellationToken cancellationToken);
 }
 
 public sealed class MailKitRemoteMailFolder(IMailFolder folder, Func<string, CancellationToken, Task<IMailFolder>>? resolveFolder = null) : IRemoteMailFolder
@@ -169,6 +170,12 @@ public sealed class MailKitRemoteMailFolder(IMailFolder folder, Func<string, Can
         return new(result, destination.UidValidity);
     }
 
-    public Task AppendAsync(MimeMessage message, CancellationToken cancellationToken) =>
-        folder.AppendAsync(message, MessageFlags.Seen, cancellationToken);
+    public async Task<RemoteAppendResult> AppendAsync(
+        MimeMessage message,
+        MessageFlags flags,
+        CancellationToken cancellationToken)
+    {
+        var uid = await folder.AppendAsync(message, flags, cancellationToken);
+        return new(uid, folder.UidValidity);
+    }
 }

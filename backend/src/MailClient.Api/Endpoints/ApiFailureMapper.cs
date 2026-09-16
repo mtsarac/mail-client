@@ -25,7 +25,9 @@ internal static class ApiFailureMapper
             or "invalid_email" => 400,
         "mail_server_unsafe" or "unsupported_authentication_method"
             or "oauth_not_implemented" or "discovery_invalid" => 422,
-        "mail_account_not_found" or "mail_not_found" => 404,
+        "mail_account_not_found" or "mail_not_found" or "draft_not_found" => 404,
+        "drafts_folder_unavailable" or "trash_folder_unavailable" or "mail_not_draft" => 422,
+        "draft_delete_failed" => 502,
         "idempotency_conflict" or "send_in_progress" or "delivery_unknown" or "mailbox_changed"
             or "credential_missing" or "mail_account_needs_reauthentication" => 409,
         "mail_account_disabled" => 403,
