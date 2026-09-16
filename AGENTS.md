@@ -64,6 +64,12 @@
 * Keep changes scoped to the requested task.
 * Do not use subagents unless explicitly requested.
 
+## Pull request text
+
+* Write PR summaries, descriptions, and comments as real Markdown.
+* Use actual line breaks, headings, bullets, and fenced code blocks; never send literal `\\n` escape sequences as visible text.
+* Verify rendered formatting with `gh pr view` or the relevant GitHub API response before reporting the PR URL.
+
 ## Before finishing
 
 * Review the diff for scope creep, dead code, duplicated logic, unnecessary tests, and accidental secrets.
