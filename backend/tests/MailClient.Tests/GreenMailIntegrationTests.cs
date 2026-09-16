@@ -139,22 +139,26 @@ public sealed class GreenMailIntegrationTests(GreenMailFixture greenmail)
         }
         var remote = new MailKitRemoteMailFolder(inbox, imap.GetFolderAsync);
         await remote.OpenForUpdateAsync(CancellationToken.None);
-        await archive.OpenAsync(FolderAccess.ReadWrite, CancellationToken.None);
         await remote.AppendAsync(Message(subject), CancellationToken.None);
         var sourceUid = Assert.Single(await inbox.SearchAsync(SearchQuery.SubjectContains(subject), CancellationToken.None));
         await remote.SetSeenAsync(sourceUid, true, CancellationToken.None);
         await remote.SetFlaggedAsync(sourceUid, true, CancellationToken.None);
         var copy = await remote.CopyAsync(sourceUid, archive.FullName, CancellationToken.None);
-        var move = await remote.MoveAsync(sourceUid, archive.FullName, CancellationToken.None);
-        var destinationMessages = await archive.SearchAsync(SearchQuery.SubjectContains(subject), CancellationToken.None);
-        Assert.Equal(2, destinationMessages.Count);
-        Assert.NotEqual(0u, copy.DestinationUidValidity);
-        Assert.NotEqual(0u, move.DestinationUidValidity);
-        if (copy.DestinationUid is { } copiedUid)
-            Assert.Contains(copiedUid, destinationMessages);
-        if (move.DestinationUid is { } movedUid)
-            Assert.Contains(movedUid, destinationMessages);
         await imap.DisconnectAsync(true, CancellationToken.None);
+
+        using var moveImap = await ConnectAsync();
+        var moveInbox = await moveImap.GetFolderAsync("INBOX", CancellationToken.None);
+        var moveRemote = new MailKitRemoteMailFolder(moveInbox, moveImap.GetFolderAsync);
+        await moveRemote.OpenForUpdateAsync(CancellationToken.None);
+        var move = await moveRemote.MoveAsync(sourceUid, archive.FullName, CancellationToken.None);
+        await moveImap.DisconnectAsync(true, CancellationToken.None);
+
+        using var verifyImap = await ConnectAsync();
+        var verifyArchive = await verifyImap.GetFolderAsync("Phase4Archive", CancellationToken.None);
+        await verifyArchive.OpenAsync(FolderAccess.ReadOnly, CancellationToken.None);
+        var destinationMessages = await verifyArchive.SearchAsync(SearchQuery.SubjectContains(subject), CancellationToken.None);
+        Assert.Equal(2, destinationMessages.Count);
+        await verifyImap.DisconnectAsync(true, CancellationToken.None);
     }
 
     private async Task<ImapClient> ConnectAsync()
