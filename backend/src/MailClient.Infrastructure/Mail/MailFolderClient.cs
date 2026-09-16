@@ -31,7 +31,7 @@ public sealed class MailFolderClient(
         return await connections.WithImapAsync(
             endpoint,
             resolved.Username,
-            resolved.Password,
+            resolved.Secret,
             forUpdate ? "UpdateFlags" : "ReadFlags",
             async (client, ct) =>
             {
@@ -43,6 +43,7 @@ public sealed class MailFolderClient(
                     await remote.OpenAsync(ct);
                 return await action(remote, ct);
             },
-            cancellationToken);
+            cancellationToken,
+            resolved.AuthenticationMethod);
     }
 }

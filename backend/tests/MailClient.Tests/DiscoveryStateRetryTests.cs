@@ -21,6 +21,8 @@ public sealed class ToggleMailValidator : IMailConnectionValidator, IMailServerC
     public Task<bool> ValidateCandidateAsync(MailServerCandidate candidate, CancellationToken cancellationToken) => Task.FromResult(true);
     public Task ValidateCredentialsAsync(MailServerCandidate candidate, string username, string password, CancellationToken cancellationToken) =>
         AcceptCredentials ? Task.CompletedTask : throw new MailConnectionException(MailConnectionFailure.Authentication, "rejected");
+    public Task ValidateOAuthCredentialsAsync(MailServerCandidate candidate, string username, string accessToken, CancellationToken cancellationToken) =>
+        AcceptCredentials ? Task.CompletedTask : throw new MailConnectionException(MailConnectionFailure.Authentication, "rejected");
 }
 
 public sealed class DiscoveryRetryApiFactory : WebApplicationFactory<Program>

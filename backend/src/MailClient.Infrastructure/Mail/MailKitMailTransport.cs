@@ -23,7 +23,7 @@ public sealed class MailKitMailTransport(
         await connections.WithSmtpAsync(
             endpoint,
             resolved.Username,
-            resolved.Password,
+            resolved.Secret,
             "SendMail",
             async (client, ct) =>
             {
@@ -42,7 +42,8 @@ public sealed class MailKitMailTransport(
 
                 return true;
             },
-            cancellationToken);
+            cancellationToken,
+            resolved.AuthenticationMethod);
     }
 
     public async Task AppendToSentAsync(
@@ -53,7 +54,7 @@ public sealed class MailKitMailTransport(
         await connections.WithImapAsync(
             endpoint,
             resolved.Username,
-            resolved.Password,
+            resolved.Secret,
             "AppendSent",
             async (client, ct) =>
             {
@@ -62,6 +63,7 @@ public sealed class MailKitMailTransport(
                 await remote.AppendAsync(message, MailKit.MessageFlags.Seen, ct);
                 return true;
             },
-            cancellationToken);
+            cancellationToken,
+            resolved.AuthenticationMethod);
     }
 }

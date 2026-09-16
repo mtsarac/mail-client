@@ -24,6 +24,8 @@ internal sealed class StubMailValidator(bool accept) : IMailConnectionValidator,
         Task.FromResult(accept);
     public Task ValidateCredentialsAsync(MailServerCandidate candidate, string username, string password, CancellationToken cancellationToken) =>
         accept ? Task.CompletedTask : throw new InvalidOperationException("mail_server_unsafe");
+    public Task ValidateOAuthCredentialsAsync(MailServerCandidate candidate, string username, string accessToken, CancellationToken cancellationToken) =>
+        accept ? Task.CompletedTask : throw new InvalidOperationException("mail_server_unsafe");
 }
 
 public class MailClientApiFactory : WebApplicationFactory<Program>

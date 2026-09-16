@@ -1,5 +1,6 @@
 using MailClient.Application.Discovery;
 using MailClient.Application.Mail;
+using MailClient.Domain.Enums;
 using MailClient.Infrastructure.Email;
 using MailKit;
 using MailKit.Net.Imap;
@@ -14,11 +15,12 @@ public sealed class MailKitFolderExplorer(MailConnectionHelper connections)
         MailServerEndpoint endpoint,
         string username,
         string password,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        AuthenticationMethod authenticationMethod = AuthenticationMethod.Password)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(username);
         ArgumentException.ThrowIfNullOrWhiteSpace(password);
-        return await connections.WithImapAsync(endpoint, username, password, "ExploreFolders", CollectAsync, cancellationToken);
+        return await connections.WithImapAsync(endpoint, username, password, "ExploreFolders", CollectAsync, cancellationToken, authenticationMethod);
     }
 
     private static async Task<IReadOnlyList<DiscoveredMailFolder>> CollectAsync(ImapClient imap, CancellationToken cancellationToken)
