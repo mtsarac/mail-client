@@ -1,5 +1,6 @@
 using MailClient.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
+using NpgsqlTypes;
 
 namespace MailClient.Infrastructure.Persistence;
 
@@ -41,6 +42,13 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         model.Entity<MailClient.Domain.Entities.Mail>().Property(x => x.InReplyToMessageId).HasMaxLength(998);
         model.Entity<MailClient.Domain.Entities.Mail>().Property(x => x.References).HasMaxLength(4096);
         model.Entity<MailClient.Domain.Entities.Mail>().HasIndex(x => x.MessageId);
+        if (Database.IsNpgsql())
+        {
+            model.Entity<MailClient.Domain.Entities.Mail>()
+                .Property<NpgsqlTsVector>("SearchVector")
+                .IsGeneratedTsVectorColumn("simple", nameof(MailClient.Domain.Entities.Mail.Subject), nameof(MailClient.Domain.Entities.Mail.BodyText), nameof(MailClient.Domain.Entities.Mail.FromAddress), nameof(MailClient.Domain.Entities.Mail.FromDisplayName), nameof(MailClient.Domain.Entities.Mail.ToAddress), nameof(MailClient.Domain.Entities.Mail.MessageId));
+            model.Entity<MailClient.Domain.Entities.Mail>().HasIndex("SearchVector").HasMethod("GIN");
+        }
         model.Entity<MailClient.Domain.Entities.Mail>().HasOne(x => x.MailAccount).WithMany(x => x.Mails).HasForeignKey(x => x.MailAccountId).OnDelete(DeleteBehavior.Cascade);
         model.Entity<MailClient.Domain.Entities.Mail>().HasOne(x => x.MailFolder).WithMany(x => x.Mails).HasForeignKey(x => x.MailFolderId).OnDelete(DeleteBehavior.Cascade);
         model.Entity<MailClient.Domain.Entities.Mail>().HasOne(x => x.Conversation).WithMany(x => x.Mails).HasForeignKey(x => x.ConversationId).OnDelete(DeleteBehavior.SetNull);

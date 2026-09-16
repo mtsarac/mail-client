@@ -20,6 +20,11 @@ public static class MailEndpoints
     public static void MapMailEndpoints(this WebApplication app)
     {
         var api = app.MapGroup("/api").RequireAuthorization();
+        api.MapGet("/search", async (string? q, Guid? folderId, Guid? conversationId, string? from, string? to, DateTime? fromDate, DateTime? toDate, bool? isRead, bool? flagged, bool? hasAttachment, int? page, int? pageSize, ICurrentMailAccount current, MailSearchService search, CancellationToken ct) =>
+        {
+            var result = await search.SearchAsync(current.MailAccountId, new MailSearchRequest(q, folderId, conversationId, from, to, fromDate, toDate, isRead, flagged, hasAttachment, page ?? 1, pageSize ?? 0), ct);
+            return Results.Ok(result);
+        }).WithName("SearchMails").WithSummary("Search account mailbox").WithDescription("Supports q, folderId, conversationId, from, to, fromDate, toDate, isRead, flagged, hasAttachment, page, pageSize.").Produces<MailListResponse>();
         api.MapGet("/mails", async (Guid? folderId, bool? isRead, bool? hasAttachments, string? search, int? page, int? pageSize, ICurrentMailAccount current, MailQueryService query, CancellationToken ct) =>
         {
             var result = await query.ListAsync(

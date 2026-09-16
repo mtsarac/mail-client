@@ -49,6 +49,20 @@ public sealed record MailListResponse(
     int PageSize,
     int Total);
 
+public sealed record MailSearchRequest(
+    string? Query,
+    Guid? FolderId,
+    Guid? ConversationId,
+    string? From,
+    string? To,
+    DateTime? FromDate,
+    DateTime? ToDate,
+    bool? IsRead,
+    bool? Flagged,
+    bool? HasAttachment,
+    int Page,
+    int PageSize);
+
 public sealed record MailDetailResponse(
     Guid Id,
     Guid FolderId,
