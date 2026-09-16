@@ -30,7 +30,7 @@ public sealed class DraftService(
         var message = await BuildAsync(account, command, null, cancellationToken);
         var append = await AppendAsync(account, folder, message, cancellationToken);
         var messageId = message.MessageId ?? throw new InvalidOperationException("message_not_constructible");
-        var mailId = await ReconcileAndFindAsync(accountId, folder, messageId, append, cancellationToken);
+        var mailId = await ReconcileAndFindAsync(accountId, folder, messageId, append, null, cancellationToken);
         await audit.WriteAsync(accountId, "draft.created", "Mail", mailId?.ToString(), null, correlationId, cancellationToken);
         return new(true, mailId, mailId is null, null);
     }
@@ -42,7 +42,7 @@ public sealed class DraftService(
         var message = await BuildAsync(account, command, source, cancellationToken);
         var append = await AppendAsync(account, folder, message, cancellationToken);
         var messageId = message.MessageId ?? throw new InvalidOperationException("message_not_constructible");
-        var replacementId = await ReconcileAndFindAsync(accountId, folder, messageId, append, cancellationToken);
+        var replacementId = await ReconcileAndFindAsync(accountId, folder, messageId, append, draftId, cancellationToken);
         if (replacementId is null)
             return new(false, null, true, "Draft replacement stored; refresh Drafts before retrying cleanup.");
         await MoveToTrashAsync(accountId, draftId, correlationId, cancellationToken);
@@ -144,9 +144,7 @@ public sealed class DraftService(
 
     private async Task<MimeMessage> BuildAsync(MailAccount account, DraftCommand command, MailClient.Domain.Entities.Mail? existing, CancellationToken cancellationToken)
     {
-        var recipients = MailRecipientResolver.Parse(command.To, command.Cc, command.Bcc);
-        if (string.IsNullOrWhiteSpace(command.BodyHtml) && string.IsNullOrWhiteSpace(command.BodyText))
-            throw new InvalidOperationException("body_required");
+        var recipients = ParseDraftRecipients(command);
         var threading = existing is null
             ? await ResolveThreadingAsync(account.Id, command.ReplySourceMailId, cancellationToken)
             : new(existing.InReplyToMessageId, existing.References);
@@ -168,15 +166,37 @@ public sealed class DraftService(
     private async Task<RemoteAppendResult> AppendAsync(MailAccount account, MailFolderEntity folder, MimeMessage message, CancellationToken cancellationToken) =>
         await folders.UseFolderAsync(account, folder.FullName, true, (remote, ct) => remote.AppendAsync(message, MessageFlags.Draft, ct), cancellationToken);
 
-    private async Task<Guid?> ReconcileAndFindAsync(Guid accountId, MailFolderEntity folder, string messageId, RemoteAppendResult append, CancellationToken cancellationToken)
+    private async Task<Guid?> ReconcileAndFindAsync(Guid accountId, MailFolderEntity folder, string messageId, RemoteAppendResult append, Guid? sourceDraftId, CancellationToken cancellationToken)
     {
         await sync.SyncFolderAsync(accountId, folder.Id, cancellationToken);
-        return await db.Mails.AsNoTracking()
-            .Where(mail => mail.MailAccountId == accountId && mail.MailFolderId == folder.Id && mail.MessageId == messageId
-                && (!append.DestinationUid.HasValue || (mail.Uid == append.DestinationUid.Value.Id && mail.UidValidity == append.DestinationUidValidity)))
+        var query = db.Mails.AsNoTracking()
+            .Where(mail => mail.MailAccountId == accountId && mail.MailFolderId == folder.Id && mail.MessageId == messageId);
+        if (sourceDraftId is not null)
+            query = query.Where(mail => mail.Id != sourceDraftId.Value);
+        if (append.DestinationUid.HasValue)
+        {
+            var uid = append.DestinationUid.Value.Id;
+            return await query
+                .Where(mail => mail.Uid == uid && mail.UidValidity == append.DestinationUidValidity)
+                .Select(mail => (Guid?)mail.Id)
+                .SingleOrDefaultAsync(cancellationToken);
+        }
+
+        var candidates = await query
             .OrderByDescending(mail => mail.InternalDate)
-            .Select(mail => (Guid?)mail.Id)
-            .FirstOrDefaultAsync(cancellationToken);
+            .ThenByDescending(mail => mail.ReceivedAt)
+            .ThenByDescending(mail => mail.Uid)
+            .ThenByDescending(mail => mail.Id)
+            .Select(mail => mail.Id)
+            .Take(2)
+            .ToListAsync(cancellationToken);
+        return candidates.Count == 1 ? candidates[0] : null;
+    }
+
+    private static ResolvedRecipients ParseDraftRecipients(DraftCommand command)
+    {
+        var hasRecipients = command.To.Concat(command.Cc).Concat(command.Bcc).Any(value => !string.IsNullOrWhiteSpace(value));
+        return hasRecipients ? MailRecipientResolver.Parse(command.To, command.Cc, command.Bcc) : ResolvedRecipients.Empty;
     }
 
     private async Task MoveToTrashAsync(Guid accountId, Guid draftId, string? correlationId, CancellationToken cancellationToken)
