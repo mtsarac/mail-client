@@ -1,0 +1,79 @@
+# Repository instructions
+
+## Project shape
+
+* Backend is a .NET 10 solution in `backend/MailClient.slnx`.
+* Projects are layered as `MailClient.Api`, `MailClient.Application`, `MailClient.Domain`, and `MailClient.Infrastructure`.
+* Tests live in `backend/tests/MailClient.Tests`.
+* API wiring and middleware order live in `backend/src/MailClient.Api/Program.cs`; endpoint groups are under `backend/src/MailClient.Api/Endpoints/`.
+* `backend/Directory.Build.props` enables nullable reference types, implicit usings, and treats warnings as errors.
+* Preserve the existing layered architecture and avoid unnecessary abstractions or large unrelated refactors.
+
+## Local configuration
+
+* Copy `.env.example` to `.env` for local values.
+* Never commit `.env`, credentials, certificates, generated data-protection keys, local database/runtime data, or other secrets.
+* API defaults to PostgreSQL.
+* Runtime attachment storage and data-protection keys are written under `data/`; logs are written under `logs/` and are ignored.
+
+## Commands
+
+* Restore: `dotnet restore backend/MailClient.slnx`
+* Build: `dotnet build backend/MailClient.slnx --configuration Release --no-restore`
+* Tests: `dotnet test backend/MailClient.slnx --configuration Release --no-build --verbosity normal`
+* Formatting check: `dotnet format backend/MailClient.slnx --verify-no-changes`
+* Vulnerability audit: `dotnet list backend/MailClient.slnx package --vulnerable --include-transitive`
+* Run one test: `dotnet test backend/tests/MailClient.Tests/MailClient.Tests.csproj --filter 'FullyQualifiedName~TestName'`
+
+## Integration tests
+
+* Plain `dotnet test` skips external-service scenarios unless their opt-in environment variables are set.
+* PostgreSQL integration tests require `MAILCLIENT_TEST_POSTGRES_ADMIN`.
+* GreenMail tests require `MAILCLIENT_TEST_GREENMAIL=1` or explicit `MAILCLIENT_TEST_GREENMAIL_*` variables.
+* CI runs PostgreSQL and GreenMail and executes restore, Release build, vulnerability audit, tests, and format verification.
+* Keep integration tests focused on behavior that actually depends on PostgreSQL, MailKit, IMAP, or SMTP. Do not add tests only to increase coverage.
+
+## EF Core migrations
+
+* Create and remove migrations using `dotnet ef migrations add/remove`.
+* Do not manually create migration files or edit generated migration `.Designer.cs` files or `AppDbContextModelSnapshot.cs`.
+* Manual edits inside generated `Up()` / `Down()` methods are acceptable when needed for backfills or SQL that EF cannot generate correctly.
+* Do not modify migrations already merged to `master`; create a new migration.
+* For schema changes, verify migrations on a fresh PostgreSQL database when practical.
+
+## Backend conventions
+
+* `MailAccount` is the account/security scope. Keep account-owned operations isolated to the authenticated account.
+* Keep provider-specific MailKit/IMAP/SMTP implementation details in Infrastructure.
+* Preserve existing security safeguards around authentication, SSRF, credentials, logging, HTML/mail content, and attachment storage.
+* Mail mutations should remain remote-first and respect IMAP UID/UIDVALIDITY semantics.
+* Preserve existing API contracts and stable error codes unless the task explicitly changes them.
+
+## Code and test quality
+
+* Prefer simple, readable C# and focused services over clever architecture.
+* Avoid duplicated state, unnecessary wrappers, and growing large services with unrelated responsibilities.
+* Do not refactor unrelated areas while fixing a focused issue.
+* Prefer a small number of meaningful tests over repetitive or brittle tests.
+* Do not remove or skip a failing test only to make CI pass; determine whether it exposed a real bug first.
+
+## Change boundaries
+
+* Keep secrets and private planning artifacts out of commits; `docs/`, `backend/docs/`, `secrets/`, `.omo/`, and `.worktrees/` are intentionally ignored.
+* Do not touch frontend/Flutter unless explicitly requested.
+* Keep changes scoped to the requested task.
+* Do not use subagents unless explicitly requested.
+
+## Pull request text
+
+* Write PR summaries, descriptions, and comments as real Markdown.
+* Use actual line breaks, headings, bullets, and fenced code blocks; never send literal `\\n` escape sequences as visible text.
+* Verify rendered formatting with `gh pr view` or the relevant GitHub API response before reporting the PR URL.
+
+## Before finishing
+
+* Review the diff for scope creep, dead code, duplicated logic, unnecessary tests, and accidental secrets.
+* Run formatting, Release build, and the relevant tests.
+* For schema changes, verify PostgreSQL migrations.
+* For IMAP/SMTP changes, run the relevant GreenMail tests.
+* If committing and opening a PR, use a conventional commit and report the commit SHA and PR URL.
