@@ -89,6 +89,7 @@ public sealed class MailOperationService(
                         mail.PreviousMailFolderId = mail.MailFolderId;
                     mail.ExpectedMailFolderId = target!.Id;
                     mail.ReconciliationState = MailReconciliationState.Pending;
+                    mail.IsRestoreReconciliation = auditKind == MailOperationKind.Restore;
                     await syncQueue.EnqueueAsync(SyncRequest.Folder(accountId, target.Id), cancellationToken);
                     await db.SaveChangesAsync(cancellationToken);
                     return await AuditSuccess(accountId, auditKind, mail.Id, correlationId, cancellationToken, new(true, MailOperationError.None, true));
@@ -99,7 +100,9 @@ public sealed class MailOperationService(
                 mail.MailFolderId = target!.Id;
                 mail.Uid = destinationUid.Id;
                 mail.UidValidity = moveResult.DestinationUidValidity;
-                mail.NeedsReconciliation = false;
+                mail.ReconciliationState = MailReconciliationState.None;
+                mail.ExpectedMailFolderId = null;
+                mail.IsRestoreReconciliation = false;
             }
             else if (request.Kind is MailOperationKind.Read or MailOperationKind.Unread)
                 mail.IsRead = request.Kind == MailOperationKind.Read;

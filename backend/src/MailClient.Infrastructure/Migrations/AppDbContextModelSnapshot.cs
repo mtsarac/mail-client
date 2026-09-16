@@ -198,6 +198,9 @@ namespace MailClient.Infrastructure.Migrations
                     b.Property<bool>("Draft")
                         .HasColumnType("boolean");
 
+                    b.Property<Guid?>("ExpectedMailFolderId")
+                        .HasColumnType("uuid");
+
                     b.Property<bool>("Flagged")
                         .HasColumnType("boolean");
 
@@ -225,34 +228,31 @@ namespace MailClient.Infrastructure.Migrations
                     b.Property<bool>("IsRead")
                         .HasColumnType("boolean");
 
+                    b.Property<bool>("IsRestoreReconciliation")
+                        .HasColumnType("boolean");
+
                     b.Property<Guid>("MailAccountId")
                         .HasColumnType("uuid");
 
                     b.Property<Guid>("MailFolderId")
                         .HasColumnType("uuid");
 
-                    b.Property<Guid?>("ExpectedMailFolderId")
-                        .HasColumnType("uuid");
-
-                    b.Property<bool>("NeedsReconciliation")
-                        .HasColumnType("boolean");
-
-                    b.Property<Guid?>("PreviousMailFolderId")
-                        .HasColumnType("uuid");
-
-                    b.Property<int>("ReconciliationState")
-                        .HasColumnType("integer");
-
                     b.Property<string>("MessageId")
                         .IsRequired()
                         .HasMaxLength(998)
                         .HasColumnType("character varying(998)");
+
+                    b.Property<Guid?>("PreviousMailFolderId")
+                        .HasColumnType("uuid");
 
                     b.Property<DateTime>("ReceivedAt")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<bool>("Recent")
                         .HasColumnType("boolean");
+
+                    b.Property<int>("ReconciliationState")
+                        .HasColumnType("integer");
 
                     b.Property<string>("References")
                         .IsRequired()

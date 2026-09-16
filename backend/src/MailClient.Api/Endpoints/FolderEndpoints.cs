@@ -26,7 +26,7 @@ public static class FolderEndpoints
                 new Dictionary<string, string?> { ["folders"] = count.ToString() }, correlation.CorrelationId, ct);
             return Results.Accepted(value: new { folders = count });
         }).WithName("RefreshFolders").WithSummary("Refresh mailbox folders").Produces(202).ProducesProblem(409).ProducesProblem(502);
-        api.MapPost("/folders/{id:guid}/sync", async (Guid id, ICurrentMailAccount current, MailOperationsService service, InitialSyncQueue queue, AuditLogger audit, CorrelationContext correlation, CancellationToken ct) =>
+        api.MapPost("/folders/{id:guid}/sync", async (Guid id, ICurrentMailAccount current, MailFolderAccessService service, InitialSyncQueue queue, AuditLogger audit, CorrelationContext correlation, CancellationToken ct) =>
         {
             var folder = await service.GetFolderSyncAvailabilityAsync(current.MailAccountId, id, ct);
             if (folder is null) return Results.NotFound();

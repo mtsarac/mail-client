@@ -119,7 +119,7 @@ public sealed class MailOperationServiceTests
         Assert.True(result.Success);
         Assert.True(result.ReconciliationPending);
         var mail = await db.Mails.SingleAsync(x => x.Id == mailId);
-        Assert.True(mail.NeedsReconciliation);
+        Assert.Equal(MailReconciliationState.Pending, mail.ReconciliationState);
         Assert.NotEqual(destinationId, mail.MailFolderId);
     }
 

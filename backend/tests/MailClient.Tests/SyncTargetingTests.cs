@@ -118,7 +118,7 @@ public sealed class SyncTargetingTests
             IsAvailable = true
         });
         await db.SaveChangesAsync();
-        var service = new MailOperationsService(db);
+        var service = new MailFolderAccessService(db);
 
         Assert.True(await service.OwnsFolderAsync(owner, folderId, CancellationToken.None));
         Assert.False(await service.OwnsFolderAsync(Guid.NewGuid(), folderId, CancellationToken.None));
