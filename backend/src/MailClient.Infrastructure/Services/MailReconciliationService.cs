@@ -27,6 +27,9 @@ public sealed class MailReconciliationService(AppDbContext db)
         mail.UidValidity = destinationUidValidity;
         mail.ExpectedMailFolderId = null;
         mail.ReconciliationState = MailReconciliationState.None;
+        if (mail.IsRestoreReconciliation)
+            mail.PreviousMailFolderId = null;
+        mail.IsRestoreReconciliation = false;
         await db.SaveChangesAsync(cancellationToken);
         return true;
     }

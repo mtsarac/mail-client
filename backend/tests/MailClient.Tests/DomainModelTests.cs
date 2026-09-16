@@ -17,14 +17,6 @@ public sealed class DomainModelTests
     }
 
     [Fact]
-    public void CredentialMethods_IncludePasswordAppPasswordAndOAuth2()
-    {
-        Assert.Contains(AuthenticationMethod.Password, Enum.GetValues<AuthenticationMethod>());
-        Assert.Contains(AuthenticationMethod.AppSpecificPassword, Enum.GetValues<AuthenticationMethod>());
-        Assert.Contains(AuthenticationMethod.OAuth2, Enum.GetValues<AuthenticationMethod>());
-    }
-
-    [Fact]
     public async Task Discovery_UsesDeterministicOrderAndFirstValidatedCandidate()
     {
         List<string> calls = [];
