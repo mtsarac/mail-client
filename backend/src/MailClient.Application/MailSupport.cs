@@ -16,8 +16,22 @@ public sealed class SmtpDeliveryException(string message, Exception? inner = nul
 
 public sealed record SendMailAttachment(string FileName, string ContentType, Stream Content);
 
-public sealed record SendMailCommand(Guid AccountId, string ToAddress, string Subject, string? BodyHtml, string? BodyText, IReadOnlyList<SendMailAttachment> Attachments)
+public sealed record SendMailCommand(
+    Guid AccountId,
+    IReadOnlyList<string> To,
+    IReadOnlyList<string> Cc,
+    IReadOnlyList<string> Bcc,
+    string Subject,
+    string? BodyHtml,
+    string? BodyText,
+    IReadOnlyList<SendMailAttachment> Attachments,
+    Guid? ReplySourceMailId = null)
 {
+    public SendMailCommand(Guid accountId, string toAddress, string subject, string? bodyHtml, string? bodyText, IReadOnlyList<SendMailAttachment> attachments)
+        : this(accountId, [toAddress], [], [], subject, bodyHtml, bodyText, attachments)
+    {
+    }
+
     public string IdempotencyKey { get; init; } = "";
 }
 
