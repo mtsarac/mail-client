@@ -145,10 +145,14 @@ public sealed class GreenMailIntegrationTests(GreenMailFixture greenmail)
         await remote.SetFlaggedAsync(sourceUid, true, CancellationToken.None);
         var copy = await remote.CopyAsync(sourceUid, archive.FullName, CancellationToken.None);
         var move = await remote.MoveAsync(sourceUid, archive.FullName, CancellationToken.None);
-        Assert.NotEqual(0u, copy.DestinationUid?.Id ?? 0u);
-        Assert.NotEqual(0u, move.DestinationUid?.Id ?? 0u);
+        var destinationMessages = await archive.SearchAsync(SearchQuery.SubjectContains(subject), CancellationToken.None);
+        Assert.Equal(2, destinationMessages.Count);
         Assert.NotEqual(0u, copy.DestinationUidValidity);
         Assert.NotEqual(0u, move.DestinationUidValidity);
+        if (copy.DestinationUid is { } copiedUid)
+            Assert.Contains(copiedUid, destinationMessages);
+        if (move.DestinationUid is { } movedUid)
+            Assert.Contains(movedUid, destinationMessages);
         await imap.DisconnectAsync(true, CancellationToken.None);
     }
 
