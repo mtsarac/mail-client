@@ -139,6 +139,7 @@ public sealed class GreenMailIntegrationTests(GreenMailFixture greenmail)
         }
         var remote = new MailKitRemoteMailFolder(inbox, imap.GetFolderAsync);
         await remote.OpenForUpdateAsync(CancellationToken.None);
+        await archive.OpenAsync(FolderAccess.ReadWrite, CancellationToken.None);
         await remote.AppendAsync(Message(subject), CancellationToken.None);
         var sourceUid = Assert.Single(await inbox.SearchAsync(SearchQuery.SubjectContains(subject), CancellationToken.None));
         await remote.SetSeenAsync(sourceUid, true, CancellationToken.None);
