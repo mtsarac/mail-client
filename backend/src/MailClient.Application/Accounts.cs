@@ -12,6 +12,9 @@ public sealed record TokenResponse(string AccessToken, string RefreshToken, Guid
 public sealed record RefreshRequest(string RefreshToken);
 public sealed record LogoutRequest(string RefreshToken);
 public sealed record AccountResponse(Guid Id, string EmailAddress, string DisplayName, MailProvider Provider, MailAccountStatus Status);
+public sealed record OAuthStartRequest(string Email, string? DeviceIdentifier = null);
+public sealed record OAuthStartResponse(string AuthorizationUrl, string State);
+public sealed record OAuthCompleteRequest(string State, string Code);
 
 public interface ICredentialProtector
 {
