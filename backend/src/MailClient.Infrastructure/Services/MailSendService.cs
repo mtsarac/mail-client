@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.Security.Cryptography;
+using MailClient.Application.Conversations;
 using MailClient.Application.Mail;
 using MailClient.Application.Sync;
 using MailClient.Domain.Entities;
@@ -48,8 +49,10 @@ public sealed class MailSendService(
         string? correlationId,
         CancellationToken cancellationToken)
     {
-        if (!MailboxAddress.TryParse(command.ToAddress.Trim(), out var to) || !HasLocalAndDomain(to.Address))
-            throw new InvalidOperationException("invalid_recipient");
+        var recipients = MailRecipientResolver.Parse(command.To, command.Cc, command.Bcc);
+        var to = recipients.To.Select(recipient => new MailboxAddress(recipient.DisplayName, recipient.Address)).ToList();
+        var cc = recipients.Cc.Select(recipient => new MailboxAddress(recipient.DisplayName, recipient.Address)).ToList();
+        var bcc = recipients.Bcc.Select(recipient => new MailboxAddress(recipient.DisplayName, recipient.Address)).ToList();
         if (string.IsNullOrWhiteSpace(command.BodyHtml) && string.IsNullOrWhiteSpace(command.BodyText))
             throw new InvalidOperationException("body_required");
         if ((command.BodyHtml?.Length ?? 0) > options.MaxSendBodyChars
@@ -75,32 +78,37 @@ public sealed class MailSendService(
         if (command.IdempotencyKey.Length > SendOperationStore.MaxKeyLength)
             throw new InvalidOperationException("idempotency_key_too_long");
 
+        var threading = await ResolveThreadingAsync(account.Id, command.ReplySourceMailId, cancellationToken);
         var hashed = await HashAttachmentsAsync(command.Attachments, cancellationToken);
-        var fingerprint = SendOperationStore.Fingerprint(account.Id, to.Address, subject, command.BodyHtml, command.BodyText, hashed);
+        var fingerprintRecipients = string.Join(',', to.Select(x => x.Address).Concat(cc.Select(x => x.Address)).Concat(bcc.Select(x => x.Address)));
+        var fingerprint = SendOperationStore.Fingerprint(account.Id, $"{fingerprintRecipients}|{command.ReplySourceMailId}", subject, command.BodyHtml, command.BodyText, hashed);
         var claim = await operations.ClaimAsync(account.Id, command.IdempotencyKey, fingerprint, cancellationToken);
         return claim switch
         {
             SendOperationStore.Replay replay => new SendMailResult(true, replay.Operation.SentCopySaved, replay.Operation.Warning),
             SendOperationStore.Denied denied => throw new InvalidOperationException(denied.Reason.Contains("different request") ? "idempotency_conflict" : "send_in_progress"),
-            SendOperationStore.Proceed proceed => await SendAndAuditAsync(account, to, subject, command, proceed.Operation, correlationId, cancellationToken),
+            SendOperationStore.Proceed proceed => await SendAndAuditAsync(account, to, cc, bcc, subject, command, threading, proceed.Operation, correlationId, cancellationToken),
             _ => throw new InvalidOperationException("idempotency_key_required")
         };
     }
 
     private async Task<SendMailResult> SendAndAuditAsync(
         MailAccount account,
-        MailboxAddress to,
+        IReadOnlyList<MailboxAddress> to,
+        IReadOnlyList<MailboxAddress> cc,
+        IReadOnlyList<MailboxAddress> bcc,
         string subject,
         SendMailCommand command,
+        ReplyThreading threading,
         SendOperation? operation,
         string? correlationId,
         CancellationToken cancellationToken)
     {
-        var result = await SendAndStoreAsync(account, to, subject, command, operation, cancellationToken);
+        var result = await SendAndStoreAsync(account, to, cc, bcc, subject, command, threading, operation, cancellationToken);
         if (result.Sent)
         {
             await audit.WriteAsync(account.Id, "mail.sent", "MailAccount", account.Id.ToString(),
-                new Dictionary<string, string?> { ["toAddress"] = to.Address, ["sentCopySaved"] = result.SentCopySaved.ToString() },
+                new Dictionary<string, string?> { ["toAddress"] = string.Join(',', to.Select(x => x.Address)), ["sentCopySaved"] = result.SentCopySaved.ToString() },
                 correlationId, cancellationToken);
         }
 
@@ -109,9 +117,12 @@ public sealed class MailSendService(
 
     private async Task<SendMailResult> SendAndStoreAsync(
         MailAccount account,
-        MailboxAddress to,
+        IReadOnlyList<MailboxAddress> to,
+        IReadOnlyList<MailboxAddress> cc,
+        IReadOnlyList<MailboxAddress> bcc,
         string subject,
         SendMailCommand command,
+        ReplyThreading threading,
         SendOperation? operation,
         CancellationToken cancellationToken)
     {
@@ -119,8 +130,9 @@ public sealed class MailSendService(
         try
         {
             message = MimeMessageBuilder.Build(
-                account.EmailAddress, account.DisplayName, to,
-                subject, command.BodyHtml, command.BodyText, command.Attachments);
+                account.EmailAddress, account.DisplayName, to, cc, bcc,
+                subject, command.BodyHtml, command.BodyText, command.Attachments,
+                threading.InReplyToMessageId, threading.References);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -217,6 +229,21 @@ public sealed class MailSendService(
         {
             logger.LogWarning(ex, "Could not persist uncertain SMTP delivery state for send operation {OperationId}.", operation.Id);
         }
+    }
+
+    private sealed record ReplyThreading(string? InReplyToMessageId, string? References);
+
+    private async Task<ReplyThreading> ResolveThreadingAsync(Guid accountId, Guid? sourceMailId, CancellationToken cancellationToken)
+    {
+        if (sourceMailId is not { } id)
+            return new(null, null);
+        var source = await db.Mails.AsNoTracking().SingleOrDefaultAsync(x => x.Id == id && x.MailAccountId == accountId, cancellationToken)
+            ?? throw new InvalidOperationException("mail_not_found");
+        var references = ConversationEngine.ParseReferences(source.References)
+            .Append(ConversationEngine.NormalizeMessageId(source.MessageId))
+            .Where(x => x.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+        return new(ConversationEngine.NormalizeMessageId(source.MessageId), string.Join(' ', references));
     }
 
     private static async Task<IReadOnlyList<(string FileName, string ContentType, long SizeBytes, string ContentHash)>> HashAttachmentsAsync(

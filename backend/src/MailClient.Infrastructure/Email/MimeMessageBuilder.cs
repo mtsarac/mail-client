@@ -12,14 +12,34 @@ public static class MimeMessageBuilder
         string subject,
         string? bodyHtml,
         string? bodyText,
-        IReadOnlyList<SendMailAttachment> attachments)
+        IReadOnlyList<SendMailAttachment> attachments) =>
+        Build(fromAddress, fromDisplayName, [to], [], [], subject, bodyHtml, bodyText, attachments, null, null);
+
+    public static MimeMessage Build(
+        string fromAddress,
+        string fromDisplayName,
+        IReadOnlyList<MailboxAddress> to,
+        IReadOnlyList<MailboxAddress> cc,
+        IReadOnlyList<MailboxAddress> bcc,
+        string subject,
+        string? bodyHtml,
+        string? bodyText,
+        IReadOnlyList<SendMailAttachment> attachments,
+        string? inReplyTo,
+        string? references)
     {
         var message = new MimeMessage();
         message.From.Add(new MailboxAddress(fromDisplayName, fromAddress));
-        message.To.Add(to);
+        message.To.AddRange(to);
+        message.Cc.AddRange(cc);
+        message.Bcc.AddRange(bcc);
         message.Subject = subject;
         message.Date = DateTimeOffset.UtcNow;
         message.MessageId = $"{Guid.NewGuid():N}@mailclient";
+        if (!string.IsNullOrWhiteSpace(inReplyTo))
+            message.InReplyTo = inReplyTo;
+        if (!string.IsNullOrWhiteSpace(references))
+            message.References.AddRange(references.Split(' ', StringSplitOptions.RemoveEmptyEntries));
 
         MimeEntity body = (bodyHtml, bodyText) switch
         {
