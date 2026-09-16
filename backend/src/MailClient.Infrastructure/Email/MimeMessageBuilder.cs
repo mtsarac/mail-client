@@ -26,7 +26,8 @@ public static class MimeMessageBuilder
         string? bodyText,
         IReadOnlyList<SendMailAttachment> attachments,
         string? inReplyTo,
-        string? references)
+        string? references,
+        string? messageId = null)
     {
         var message = new MimeMessage();
         message.From.Add(new MailboxAddress(fromDisplayName, fromAddress));
@@ -35,7 +36,7 @@ public static class MimeMessageBuilder
         message.Bcc.AddRange(bcc);
         message.Subject = subject;
         message.Date = DateTimeOffset.UtcNow;
-        message.MessageId = $"{Guid.NewGuid():N}@mailclient";
+        message.MessageId = string.IsNullOrWhiteSpace(messageId) ? $"{Guid.NewGuid():N}@mailclient" : messageId;
         if (!string.IsNullOrWhiteSpace(inReplyTo))
             message.InReplyTo = inReplyTo;
         if (!string.IsNullOrWhiteSpace(references))
