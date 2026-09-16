@@ -130,6 +130,7 @@ builder.Services.AddScoped<MailReadService>();
 builder.Services.AddScoped<MailQueryService>();
 builder.Services.AddScoped<SendOperationStore>();
 builder.Services.AddScoped<MailSendService>();
+builder.Services.AddScoped<DraftService>();
 builder.Services.AddScoped<ComposeContextService>();
 builder.Services.AddScoped<MailFolderAccessService>();
 builder.Services.AddScoped<IMailOperationService, MailOperationService>();
