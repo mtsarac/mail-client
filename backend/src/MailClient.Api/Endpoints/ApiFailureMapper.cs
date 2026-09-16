@@ -19,13 +19,13 @@ internal static class ApiFailureMapper
     internal static int? StatusFor(string code) => code switch
     {
         "mail_authentication_failed" or "mail_smtp_authentication_failed" => 401,
-        "invalid_recipient" or "body_required" or "body_too_large" or "too_many_attachments"
+        "invalid_recipient" or "recipient_required" or "body_required" or "body_too_large" or "too_many_attachments"
             or "attachment_too_large" or "message_not_constructible" or "idempotency_key_required"
             or "idempotency_key_too_long" or "invalid_mail_header" or "manual_setup_invalid"
             or "invalid_email" => 400,
         "mail_server_unsafe" or "unsupported_authentication_method"
             or "oauth_not_implemented" or "discovery_invalid" => 422,
-        "mail_account_not_found" => 404,
+        "mail_account_not_found" or "mail_not_found" => 404,
         "idempotency_conflict" or "send_in_progress" or "delivery_unknown" or "mailbox_changed"
             or "credential_missing" or "mail_account_needs_reauthentication" => 409,
         "mail_account_disabled" => 403,

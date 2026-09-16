@@ -51,6 +51,9 @@ public static class MailEndpoints
             var attachment = await db.Attachments.SingleOrDefaultAsync(x => x.Id == attachmentId && x.MailId == mailId && x.MailAccountId == current.MailAccountId, ct);
             return attachment is null ? Results.NotFound() : Results.File(await storage.OpenReadAsync(attachment.StoragePath, ct), attachment.ContentType, attachment.FileName);
         }).WithName("DownloadAttachment").WithSummary("Download account-owned attachment").Produces(200).Produces(404);
+        api.MapGet("/mails/{id:guid}/compose/reply", async (Guid id, ICurrentMailAccount current, ComposeContextService service, CancellationToken ct) => await ComposeResult(service.GetAsync(current.MailAccountId, id, ComposeMode.Reply, ct)));
+        api.MapGet("/mails/{id:guid}/compose/reply-all", async (Guid id, ICurrentMailAccount current, ComposeContextService service, CancellationToken ct) => await ComposeResult(service.GetAsync(current.MailAccountId, id, ComposeMode.ReplyAll, ct)));
+        api.MapGet("/mails/{id:guid}/compose/forward", async (Guid id, ICurrentMailAccount current, ComposeContextService service, CancellationToken ct) => await ComposeResult(service.GetAsync(current.MailAccountId, id, ComposeMode.Forward, ct)));
         api.MapPost("/mails/send", async (HttpRequest request, ICurrentMailAccount current, MailSendService sender, CancellationToken ct) =>
         {
             var key = request.Headers["Idempotency-Key"].ToString();
@@ -64,7 +67,11 @@ public static class MailEndpoints
             var attachments = new List<SendMailAttachment>();
             foreach (var file in form.Files)
                 attachments.Add(new SendMailAttachment(file.FileName, file.ContentType, file.OpenReadStream()));
-            var command = new SendMailCommand(current.MailAccountId, form["to"].ToString(), form["subject"].ToString(), Optional(form, "bodyHtml"), Optional(form, "bodyText"), attachments)
+            var to = form["To"].Concat(form["to"]).Where(value => !string.IsNullOrWhiteSpace(value)).Select(value => value!).ToList();
+            var cc = form["Cc"].Where(value => !string.IsNullOrWhiteSpace(value)).Select(value => value!).ToList();
+            var bcc = form["Bcc"].Where(value => !string.IsNullOrWhiteSpace(value)).Select(value => value!).ToList();
+            Guid? replySourceMailId = Guid.TryParse(Optional(form, "replySourceMailId"), out var sourceMailId) ? sourceMailId : null;
+            var command = new SendMailCommand(current.MailAccountId, to, cc, bcc, form["subject"].ToString(), Optional(form, "bodyHtml"), Optional(form, "bodyText"), attachments, replySourceMailId)
             {
                 IdempotencyKey = key
             };
@@ -72,6 +79,9 @@ public static class MailEndpoints
             return Results.Ok(new { sent = result.Sent, sentCopySaved = result.SentCopySaved, warning = result.Warning });
         }).WithName("SendMail").WithSummary("Send mail idempotently").WithDescription("multipart/form-data: to, subject, bodyHtml and/or bodyText, up to 20 attachments. Idempotency-Key header is required.").Accepts<IFormCollection>("multipart/form-data").Produces(200).ProducesProblem(400).ProducesProblem(409).DisableAntiforgery();
     }
+
+    private static async Task<IResult> ComposeResult(Task<ComposeContextResponse?> response) =>
+        await response is { } context ? Results.Ok(context) : Results.NotFound();
 
     private static void MapOperation(RouteGroupBuilder api, string route, MailOperationKind kind) =>
         api.MapPost($"/mails/{{id:guid}}/{route}", async (Guid id, ICurrentMailAccount current, CorrelationContext correlation, IMailOperationService operations, CancellationToken ct) =>
