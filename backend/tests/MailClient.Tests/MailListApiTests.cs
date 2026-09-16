@@ -61,6 +61,19 @@ public sealed class MailListApiTests(AcceptingApiFactory factory) : IClassFixtur
     }
 
     [Fact]
+    public async Task Search_ReturnsMatchingMails()
+    {
+        var (client, accountId) = await ConnectAsync();
+        await SeedAsync(accountId, "searchable subject", fromAddress: "query@corp.example");
+
+        var response = await client.GetAsync("/api/search?q=searchable");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var result = await ReadAsync(response);
+        Assert.Equal("searchable subject", Assert.Single(result.Items).Subject);
+    }
+
+    [Fact]
     public async Task List_Paginates_WithTotal_AndCapsPageSize()
     {
         var (client, accountId) = await ConnectAsync();

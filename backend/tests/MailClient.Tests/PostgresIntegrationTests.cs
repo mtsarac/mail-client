@@ -151,7 +151,8 @@ public sealed class PostgresIntegrationTests(PostgresFixture fixture)
         if (!IntegrationEnvironment.PostgresEnabled) return;
         var accountId = await SeedAccountAsync();
         await using var db = fixture.CreateDb();
-        db.Mails.Add(new Domain.Entities.Mail { Id = Guid.NewGuid(), MailAccountId = accountId, MailFolderId = Guid.NewGuid(), Uid = 100, Subject = "quarterly report", BodyText = "unusual orchid", FromAddress = "sender@example.test", ReceivedAt = DateTime.UtcNow });
+        var folderId = await SeedFolderAsync(db, accountId);
+        db.Mails.Add(new Domain.Entities.Mail { Id = Guid.NewGuid(), MailAccountId = accountId, MailFolderId = folderId, Uid = 100, Subject = "quarterly report", BodyText = "unusual orchid", FromAddress = "sender@example.test", ReceivedAt = DateTime.UtcNow });
         await db.SaveChangesAsync();
         var service = new MailSearchService(db);
 
@@ -167,7 +168,8 @@ public sealed class PostgresIntegrationTests(PostgresFixture fixture)
         var accountId = await SeedAccountAsync();
         await using var db = fixture.CreateDb();
         var mailId = Guid.NewGuid();
-        db.Mails.Add(new Domain.Entities.Mail { Id = mailId, MailAccountId = accountId, MailFolderId = Guid.NewGuid(), Uid = 101, Subject = "plain", FromAddress = "sender@example.test", ReceivedAt = DateTime.UtcNow });
+        var folderId = await SeedFolderAsync(db, accountId);
+        db.Mails.Add(new Domain.Entities.Mail { Id = mailId, MailAccountId = accountId, MailFolderId = folderId, Uid = 101, Subject = "plain", FromAddress = "sender@example.test", ReceivedAt = DateTime.UtcNow });
         db.Participants.Add(new MailParticipant { Id = Guid.NewGuid(), MailId = mailId, Type = ParticipantType.Cc, Address = "cc-search@example.test", DisplayName = "CC" });
         db.Participants.Add(new MailParticipant { Id = Guid.NewGuid(), MailId = mailId, Type = ParticipantType.ReplyTo, Address = "reply-search@example.test", DisplayName = "Reply" });
         db.Attachments.Add(new Attachment { Id = Guid.NewGuid(), MailAccountId = accountId, MailId = mailId, FileName = "invoice-search.pdf", StoragePath = "x" });
@@ -184,10 +186,12 @@ public sealed class PostgresIntegrationTests(PostgresFixture fixture)
         if (!IntegrationEnvironment.PostgresEnabled) return;
         var accountId = await SeedAccountAsync();
         var otherAccountId = await SeedAccountAsync();
-        var folderId = Guid.NewGuid();
-        var otherFolderId = Guid.NewGuid();
         await using var db = fixture.CreateDb();
-        db.Mails.Add(new Domain.Entities.Mail { Id = Guid.NewGuid(), MailAccountId = accountId, MailFolderId = folderId, ConversationId = Guid.NewGuid(), Uid = 201, Subject = "needle alpha", BodyText = "body", FromAddress = "person@example.test", ToAddress = "to@example.test", IsRead = false, Flagged = true, HasAttachments = true, ReceivedAt = DateTime.UtcNow.AddMinutes(-2) });
+        var folderId = await SeedFolderAsync(db, accountId);
+        var otherFolderId = await SeedFolderAsync(db, otherAccountId);
+        var conversationId = Guid.NewGuid();
+        db.Conversations.Add(new Conversation { Id = conversationId, MailAccountId = accountId, NormalizedSubject = "needle", StartedAt = DateTime.UtcNow, LastMessageAt = DateTime.UtcNow });
+        db.Mails.Add(new Domain.Entities.Mail { Id = Guid.NewGuid(), MailAccountId = accountId, MailFolderId = folderId, ConversationId = conversationId, Uid = 201, Subject = "needle alpha", BodyText = "body", FromAddress = "person@example.test", ToAddress = "to@example.test", IsRead = false, Flagged = true, HasAttachments = true, ReceivedAt = DateTime.UtcNow.AddMinutes(-2) });
         db.Mails.Add(new Domain.Entities.Mail { Id = Guid.NewGuid(), MailAccountId = accountId, MailFolderId = folderId, Uid = 202, Subject = "needle beta", BodyText = "body", FromAddress = "person@example.test", ToAddress = "to@example.test", IsRead = false, Flagged = true, HasAttachments = true, ReceivedAt = DateTime.UtcNow.AddMinutes(-1) });
         db.Mails.Add(new Domain.Entities.Mail { Id = Guid.NewGuid(), MailAccountId = otherAccountId, MailFolderId = otherFolderId, Uid = 203, Subject = "needle other", BodyText = "body", FromAddress = "person@example.test", ToAddress = "to@example.test", IsRead = false, Flagged = true, HasAttachments = true, ReceivedAt = DateTime.UtcNow });
         await db.SaveChangesAsync();
@@ -210,7 +214,8 @@ public sealed class PostgresIntegrationTests(PostgresFixture fixture)
         if (!IntegrationEnvironment.PostgresEnabled) return;
         var accountId = await SeedAccountAsync();
         await using var db = fixture.CreateDb();
-        db.Mails.Add(new Domain.Entities.Mail { Id = Guid.NewGuid(), MailAccountId = accountId, MailFolderId = Guid.NewGuid(), Uid = 301, Subject = "migrated zebra", FromAddress = "sender@example.test", ReceivedAt = DateTime.UtcNow });
+        var folderId = await SeedFolderAsync(db, accountId);
+        db.Mails.Add(new Domain.Entities.Mail { Id = Guid.NewGuid(), MailAccountId = accountId, MailFolderId = folderId, Uid = 301, Subject = "migrated zebra", FromAddress = "sender@example.test", ReceivedAt = DateTime.UtcNow });
         await db.SaveChangesAsync();
         db.ChangeTracker.Clear();
         var service = new MailSearchService(db);
@@ -305,6 +310,23 @@ public sealed class PostgresIntegrationTests(PostgresFixture fixture)
         db.MailAccounts.Add(account);
         await db.SaveChangesAsync();
         return account.Id;
+    }
+
+    private static async Task<Guid> SeedFolderAsync(AppDbContext db, Guid accountId)
+    {
+        var folder = new MailFolder
+        {
+            Id = Guid.NewGuid(),
+            MailAccountId = accountId,
+            Name = "INBOX",
+            FullName = "INBOX",
+            FolderType = MailFolderType.Inbox,
+            IsSyncEnabled = true,
+            IsAvailable = true
+        };
+        db.MailFolders.Add(folder);
+        await db.SaveChangesAsync();
+        return folder.Id;
     }
 
     private static MailAccount Account(string email) => new()
