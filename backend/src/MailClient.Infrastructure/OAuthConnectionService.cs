@@ -4,6 +4,7 @@ using System.Text.Json;
 using MailClient.Application.Accounts;
 using MailClient.Application.Discovery;
 using MailClient.Application.Mail;
+using MailClient.Application.Runtime;
 using MailClient.Application.Sync;
 using MailClient.Domain;
 using MailClient.Domain.Entities;
@@ -28,12 +29,14 @@ public sealed class OAuthConnectionService(
     IJwtTokenIssuer jwt,
     InitialSyncQueue syncQueue,
     MailKitFolderExplorer explorer,
+    IRuntimePolicyProvider runtimePolicy,
     ILogger<OAuthConnectionService> logger)
 {
-    public OAuthStartResponse Start(MailProvider provider, OAuthStartRequest request)
+    public async Task<OAuthStartResponse> StartAsync(MailProvider provider, OAuthStartRequest request, CancellationToken cancellationToken)
     {
         var oauthProvider = oauthProviders.SingleOrDefault(p => p.Provider == provider && p.IsConfigured)
             ?? throw new InvalidOperationException("oauth_provider_not_configured");
+        (await runtimePolicy.GetAsync(cancellationToken)).EnsureNewAccountAllowed(provider, AuthenticationMethod.OAuth2);
         var email = NormalizeEmail(request.Email);
         var redirectUri = oauthProvider.PrimaryRedirectUri;
         var (verifier, challenge) = OAuthStateProtector.CreatePkce();
@@ -65,7 +68,7 @@ public sealed class OAuthConnectionService(
         OAuthStatePayload payload;
         try
         {
-            payload = states.Consume(request.State);
+            payload = await states.ConsumeAsync(request.State, cancellationToken);
         }
         catch (InvalidOperationException ex) when (ex.Message == "oauth_state_invalid")
         {
@@ -73,6 +76,7 @@ public sealed class OAuthConnectionService(
         }
         if (payload.Provider != provider)
             throw new InvalidOperationException("oauth_state_invalid");
+        (await runtimePolicy.GetAsync(cancellationToken)).EnsureNewAccountAllowed(provider, AuthenticationMethod.OAuth2);
         var oauthProvider = oauthProviders.SingleOrDefault(p => p.Provider == provider && p.IsConfigured)
             ?? throw new InvalidOperationException("oauth_provider_not_configured");
         OAuthToken token;

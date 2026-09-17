@@ -17,7 +17,7 @@ public static class OAuthEndpoints
         {
             if (!TryParseProvider(provider, out var mailProvider))
                 return Results.Problem(statusCode: 422, extensions: new Dictionary<string, object?> { ["code"] = "oauth_provider_not_configured" });
-            var result = service.Start(mailProvider, request);
+            var result = await service.StartAsync(mailProvider, request, ct);
             await audit.WriteAsync(null, AuditActions.MailAccountOAuthStarted, "MailAccount", null,
                 new Dictionary<string, string?> { ["provider"] = mailProvider.ToString() }, correlation.CorrelationId, ct);
             return Results.Ok(result);
