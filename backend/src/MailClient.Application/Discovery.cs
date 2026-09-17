@@ -1,3 +1,4 @@
+using MailClient.Application.Runtime;
 using MailClient.Domain.Enums;
 
 namespace MailClient.Application.Discovery;
@@ -16,12 +17,13 @@ public interface IMailServerCandidateValidator
     Task<bool> ValidateAsync(MailServerCandidate candidate, CancellationToken cancellationToken);
 }
 
-public sealed class MailServerDiscoveryService(IEnumerable<IMailDiscoveryStrategy> strategies, IMailServerCandidateValidator validator, MailDiscoveryOptions options)
+public sealed class MailServerDiscoveryService(IEnumerable<IMailDiscoveryStrategy> strategies, IMailServerCandidateValidator validator, MailDiscoveryOptions options, IRuntimePolicyProvider? runtimePolicy = null)
 {
     public async Task<MailServerCandidate?> DiscoverAsync(string email, CancellationToken cancellationToken)
     {
         using var overallCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         overallCts.CancelAfter(TimeSpan.FromSeconds(options.OverallTimeoutSeconds));
+        var policy = runtimePolicy is null ? null : await runtimePolicy.GetAsync(cancellationToken);
         foreach (var strategy in strategies.OrderBy(item => item.Order))
         {
             List<MailServerCandidate> candidates;
@@ -38,12 +40,20 @@ public sealed class MailServerDiscoveryService(IEnumerable<IMailDiscoveryStrateg
 
             foreach (var candidate in candidates)
             {
+                var effectiveCandidate = policy is null
+                    ? candidate
+                    : candidate with { AuthenticationMethods = policy.GetAuthenticationMethods(candidate.Provider) };
+                if (effectiveCandidate.AuthenticationMethods.Count == 0)
+                {
+                    continue;
+                }
+
                 bool valid;
                 try
                 {
                     using var validationCts = CancellationTokenSource.CreateLinkedTokenSource(overallCts.Token);
                     validationCts.CancelAfter(TimeSpan.FromSeconds(options.StrategyTimeoutSeconds));
-                    valid = await validator.ValidateAsync(candidate, validationCts.Token);
+                    valid = await validator.ValidateAsync(effectiveCandidate, validationCts.Token);
                 }
                 catch (Exception) when (cancellationToken.IsCancellationRequested is false && overallCts.Token.IsCancellationRequested is false)
                 {
@@ -51,7 +61,7 @@ public sealed class MailServerDiscoveryService(IEnumerable<IMailDiscoveryStrateg
                 }
 
                 if (valid)
-                    return candidate;
+                    return effectiveCandidate;
             }
         }
 

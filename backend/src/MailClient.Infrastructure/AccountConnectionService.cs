@@ -1,6 +1,7 @@
 using MailClient.Application.Accounts;
 using MailClient.Application.Discovery;
 using MailClient.Application.Mail;
+using MailClient.Application.Runtime;
 using MailClient.Application.Sync;
 using MailClient.Domain.Entities;
 using MailClient.Domain.Enums;
@@ -23,6 +24,7 @@ public sealed class AccountConnectionService(
     InitialSyncQueue syncQueue,
     MailKitFolderExplorer explorer,
     MailCredentialResolver credentialResolver,
+    IRuntimePolicyProvider runtimePolicy,
     ILogger<AccountConnectionService> logger)
 {
     public async Task<TokenResponse> ConnectAsync(DiscoveryState state, AuthenticationInput authentication, string? deviceIdentifier, CancellationToken cancellationToken) =>
@@ -37,6 +39,7 @@ public sealed class AccountConnectionService(
     private async Task<TokenResponse> ConnectCoreAsync(string email, string username, string? displayName, MailServerCandidate candidate, AuthenticationInput authentication, string? deviceIdentifier, CancellationToken cancellationToken)
     {
         if (authentication.Type is not (AuthenticationMethod.Password or AuthenticationMethod.AppSpecificPassword) || string.IsNullOrWhiteSpace(authentication.Password)) throw new InvalidOperationException("unsupported_authentication_method");
+        (await runtimePolicy.GetAsync(cancellationToken)).EnsureNewAccountAllowed(candidate.Provider, authentication.Type);
         if (!email.Contains('@', StringComparison.Ordinal)) throw new InvalidOperationException("invalid_email");
         var local = email[..email.IndexOf('@')];
         var usernames = new[] { username, email, local }.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase);

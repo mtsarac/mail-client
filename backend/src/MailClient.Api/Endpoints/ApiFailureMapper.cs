@@ -32,6 +32,9 @@ internal static class ApiFailureMapper
         "draft_delete_failed" => 502,
         "idempotency_conflict" or "send_in_progress" or "delivery_unknown" or "mailbox_changed"
             or "credential_missing" or "mail_account_needs_reauthentication" => 409,
+        "provider_disabled" or "provider_existing_accounts_disabled" or "provider_new_accounts_disabled" or "authentication_method_disabled" => 403,
+        "runtime_settings_conflict" => 409,
+        "runtime_settings_invalid" or "management_unauthorized" => 400,
         "mail_account_disabled" => 403,
         _ => null
     };
