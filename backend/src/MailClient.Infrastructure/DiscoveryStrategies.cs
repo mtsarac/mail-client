@@ -1,10 +1,15 @@
 using MailClient.Application.Discovery;
 using MailClient.Domain.Enums;
+using MailClient.Infrastructure.OAuth;
 
 namespace MailClient.Infrastructure.Discovery;
 
-public sealed class KnownProviderStrategy : IMailDiscoveryStrategy
+public sealed class KnownProviderStrategy(IEnumerable<IOAuthProvider> oauthProviders) : IMailDiscoveryStrategy
 {
+    public KnownProviderStrategy() : this(Array.Empty<IOAuthProvider>())
+    {
+    }
+
     public int Order => 1;
     public async IAsyncEnumerable<MailServerCandidate> DiscoverAsync(string email, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
     {
@@ -20,7 +25,13 @@ public sealed class KnownProviderStrategy : IMailDiscoveryStrategy
         if (candidate is not null) yield return candidate;
         await Task.CompletedTask;
     }
-    private static MailServerCandidate Candidate(MailProvider provider, string imap, string smtp, int smtpPort = 465, MailSecurity smtpSecurity = MailSecurity.SslOnConnect) => new(provider, new(imap, 993, MailSecurity.SslOnConnect), new(smtp, smtpPort, smtpSecurity), [AuthenticationMethod.Password, AuthenticationMethod.AppSpecificPassword], DiscoverySource.KnownProvider);
+    private MailServerCandidate Candidate(MailProvider provider, string imap, string smtp, int smtpPort = 465, MailSecurity smtpSecurity = MailSecurity.SslOnConnect)
+    {
+        var methods = new List<AuthenticationMethod> { AuthenticationMethod.Password, AuthenticationMethod.AppSpecificPassword };
+        if (oauthProviders.Any(p => p.Provider == provider && p.IsConfigured))
+            methods.Add(AuthenticationMethod.OAuth2);
+        return new(provider, new(imap, 993, MailSecurity.SslOnConnect), new(smtp, smtpPort, smtpSecurity), methods, DiscoverySource.KnownProvider);
+    }
 }
 
 public sealed class HeuristicDiscoveryStrategy : IMailDiscoveryStrategy

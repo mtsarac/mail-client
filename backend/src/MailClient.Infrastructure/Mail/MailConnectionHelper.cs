@@ -48,11 +48,12 @@ public sealed class MailConnectionHelper(
         string password,
         string operation,
         Func<ImapClient, CancellationToken, Task<T>> action,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        AuthenticationMethod authenticationMethod = AuthenticationMethod.Password)
     {
         using var client = new ImapClient { Timeout = OperationTimeoutMs };
         return await RunAsync(client, endpoint, username, password, operation,
-            (service, ct) => action((ImapClient)service, ct), cancellationToken);
+            (service, ct) => action((ImapClient)service, ct), cancellationToken, authenticationMethod);
     }
 
     public async Task<T> WithSmtpAsync<T>(
@@ -61,11 +62,12 @@ public sealed class MailConnectionHelper(
         string password,
         string operation,
         Func<SmtpClient, CancellationToken, Task<T>> action,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        AuthenticationMethod authenticationMethod = AuthenticationMethod.Password)
     {
         using var client = new SmtpClient { Timeout = OperationTimeoutMs };
         return await RunAsync(client, endpoint, username, password, operation,
-            (service, ct) => action((SmtpClient)service, ct), cancellationToken);
+            (service, ct) => action((SmtpClient)service, ct), cancellationToken, authenticationMethod);
     }
 
     private async Task<T> RunAsync<T>(
@@ -75,7 +77,8 @@ public sealed class MailConnectionHelper(
         string? password,
         string operation,
         Func<MailService, CancellationToken, Task<T>> action,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        AuthenticationMethod authenticationMethod = AuthenticationMethod.Password)
     {
         try
         {
@@ -85,7 +88,12 @@ public sealed class MailConnectionHelper(
             await client.ConnectAsync(socket, endpoint.Host, endpoint.Port,
                 ToSocketOptions(endpoint.Security), cancellationToken);
             if (username is not null && password is not null)
-                await client.AuthenticateAsync(username, password, cancellationToken);
+            {
+                if (authenticationMethod == AuthenticationMethod.OAuth2)
+                    await client.AuthenticateAsync(new SaslMechanismOAuth2(username, password), cancellationToken);
+                else
+                    await client.AuthenticateAsync(username, password, cancellationToken);
+            }
             return await action(client, cancellationToken);
         }
         catch (OperationCanceledException ex)

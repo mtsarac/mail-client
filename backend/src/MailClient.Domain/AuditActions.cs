@@ -7,6 +7,7 @@ public static class AuditActions
     public const string MailAccountManualSetupAttempted = "mail-account.manual-setup-attempted";
     public const string MailAccountManualSetupSucceeded = "mail-account.manual-setup-succeeded";
     public const string MailAccountConnected = "mail-account.connected";
+    public const string MailAccountOAuthStarted = "mail-account.oauth-started";
     public const string MailAccountAuthenticationFailed = "mail-account.authentication-failed";
     public const string MailAccountReauthenticationRequired = "mail-account.reauthentication-required";
     public const string MailSessionCreated = "mail-session.created";

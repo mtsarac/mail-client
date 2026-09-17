@@ -24,6 +24,7 @@ using MailClient.Infrastructure.Discovery;
 using MailClient.Infrastructure.Mail;
 using MailClient.Infrastructure.Network;
 using MailClient.Infrastructure.Observability;
+using MailClient.Infrastructure.OAuth;
 using MailClient.Infrastructure.Persistence;
 using MailClient.Infrastructure.Push;
 using MailClient.Infrastructure.Security;
@@ -117,6 +118,17 @@ builder.Services.AddSingleton(sessionOptions);
 builder.Services.AddSingleton<MailConnectionHelper>();
 builder.Services.AddScoped<MailKitFolderExplorer>();
 builder.Services.AddScoped<MailCredentialResolver>();
+var oauthOptions = new OAuthOptions
+{
+    Google = builder.Configuration.GetSection("OAuth:Google").Get<OAuthProviderOptions>() ?? new(),
+    Microsoft = builder.Configuration.GetSection("OAuth:Microsoft").Get<OAuthProviderOptions>() ?? new()
+};
+builder.Services.AddSingleton(oauthOptions);
+builder.Services.AddHttpClient("OAuth");
+builder.Services.AddSingleton<IOAuthProvider>(sp => new GoogleOAuthProvider(sp.GetRequiredService<IHttpClientFactory>().CreateClient("OAuth"), oauthOptions.Google));
+builder.Services.AddSingleton<IOAuthProvider>(sp => new MicrosoftOAuthProvider(sp.GetRequiredService<IHttpClientFactory>().CreateClient("OAuth"), oauthOptions.Microsoft));
+builder.Services.AddSingleton<OAuthStateProtector>(sp => new OAuthStateProtector(sp.GetRequiredService<IDataProtectionProvider>(), TimeSpan.FromMinutes(oauthOptions.StateLifetimeMinutes)));
+builder.Services.AddScoped<OAuthConnectionService>();
 builder.Services.AddSingleton<IMailConnectionValidator, MailKitConnectionValidator>();
 builder.Services.AddSingleton<IMailServerCandidateValidator>(sp => (MailKitConnectionValidator)sp.GetRequiredService<IMailConnectionValidator>());
 builder.Services.AddScoped<ICredentialProtector, DataProtectionCredentialProtector>();
@@ -268,6 +280,7 @@ app.UseAuthorization();
 if (app.Environment.IsDevelopment()) { app.UseSwagger(); app.UseSwaggerUI(options => options.SwaggerEndpoint("/swagger/v2/swagger.json", "Mail Client v2")); }
 
 app.MapAccountEndpoints();
+app.MapOAuthEndpoints();
 app.MapAuthEndpoints();
 app.MapFolderEndpoints();
 app.MapMailEndpoints();

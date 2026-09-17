@@ -31,8 +31,6 @@ public sealed class MailSearchService(AppDbContext db)
         if (useTs)
         {
             var plain = queryText!;
-            // ponytail: participant/attachment fragments stay ILIKE so prefix/fragment search works regardless of tokenization;
-            // adopt a dedicated tsvector column over these tables if fragments need ranking.
             query = query.Where(mail => EF.Property<NpgsqlTsVector>(mail, "SearchVector").Matches(EF.Functions.WebSearchToTsQuery("simple", plain))
                 || db.Participants.Any(participant => participant.MailId == mail.Id && (EF.Functions.ILike(participant.Address, $"%{plain}%") || EF.Functions.ILike(participant.DisplayName, $"%{plain}%")))
                 || db.Attachments.Any(attachment => attachment.MailId == mail.Id && EF.Functions.ILike(attachment.FileName, $"%{plain}%")));
