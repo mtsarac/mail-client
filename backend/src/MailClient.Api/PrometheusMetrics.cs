@@ -11,5 +11,5 @@ internal static class PrometheusMetrics
     public static void AddExporter(MeterProviderBuilder metrics) => metrics.AddPrometheusExporter();
 
     public static void MapScrapingEndpoint(WebApplication app) =>
-        app.MapPrometheusScrapingEndpoint(PrometheusOptions.ScrapePath);
+        app.MapPrometheusScrapingEndpoint(PrometheusOptions.ScrapePath).DisableRateLimiting();
 }

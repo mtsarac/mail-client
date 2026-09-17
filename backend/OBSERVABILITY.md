@@ -41,7 +41,7 @@ Standard `OTEL_*` variables (for example `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_RES
 | `GET /health/ready` | Can this instance serve core API traffic now? | `postgres` (lightweight `CanConnect`), `storage` (attachment root exists and is writable) |
 | `GET /health` | Compatibility alias of `/health/live`. | None |
 
-Readiness never contacts customer IMAP/SMTP servers, OAuth providers or Firebase. Each check has a 5 second timeout.
+Readiness never contacts customer IMAP/SMTP servers, OAuth providers or Firebase. Each check has a 5 second timeout. Health endpoints bypass the user/API traffic rate limiter, so probes never receive `429`.
 
 Status codes: `Healthy` and `Degraded` → `200`, `Unhealthy` → `503`. Response body:
 
@@ -66,7 +66,7 @@ readinessProbe:
 
 - It uses `OpenTelemetry.Exporter.Prometheus.AspNetCore`, which is a **prerelease** package. Its use is isolated to `src/MailClient.Api/PrometheusMetrics.cs` and runs only when enabled. OTLP is the stable, production-neutral export path; prefer scraping an OpenTelemetry Collector if prerelease dependencies are not acceptable.
 - Prometheus metrics come from the same `Meter` instrumentation as OTLP; there is no separate metrics model.
-- The endpoint is **unauthenticated** and does not use mailbox JWTs or the Management API key. Restrict it at the reverse proxy or network layer to trusted monitoring infrastructure (for example, allow `/metrics` only from the Prometheus network and deny it on the public ingress).
+- The endpoint is **unauthenticated**, does not use mailbox JWTs or the Management API key, and bypasses the user/API traffic rate limiter so scrapes never receive `429`. Restrict it at the reverse proxy or network layer to trusted monitoring infrastructure (for example, allow `/metrics` only from the Prometheus network and deny it on the public ingress).
 
 Example scrape configuration:
 
