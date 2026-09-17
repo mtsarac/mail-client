@@ -53,6 +53,22 @@ public sealed class OAuthApiTests
         Assert.Contains("offline_access", authUrl);
     }
 
+    [Theory]
+    [InlineData("missing-at-sign")]
+    [InlineData("victim@example.com\r\nattacker@example.com")]
+    [InlineData("victim@example.com attacker@example.com")]
+    public async Task StartGoogle_InvalidEmail_400(string email)
+    {
+        using var factory = new OAuthAcceptingApiFactory();
+        using var client = factory.CreateClient();
+
+        var response = await client.PostAsJsonAsync("/api/accounts/oauth/google/start", new { email });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("invalid_email", body.GetProperty("code").GetString());
+    }
+
     [Fact]
     public async Task StartGoogle_NotConfigured_422()
     {

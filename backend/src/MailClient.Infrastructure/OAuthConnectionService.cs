@@ -1,3 +1,4 @@
+using System.Net.Mail;
 using System.Security.Cryptography;
 using System.Text.Json;
 using MailClient.Application.Accounts;
@@ -33,14 +34,30 @@ public sealed class OAuthConnectionService(
     {
         var oauthProvider = oauthProviders.SingleOrDefault(p => p.Provider == provider && p.IsConfigured)
             ?? throw new InvalidOperationException("oauth_provider_not_configured");
-        if (!request.Email.Contains('@', StringComparison.Ordinal))
-            throw new InvalidOperationException("invalid_email");
+        var email = NormalizeEmail(request.Email);
         var redirectUri = oauthProvider.PrimaryRedirectUri;
         var (verifier, challenge) = OAuthStateProtector.CreatePkce();
-        var payload = new OAuthStatePayload(provider, request.Email.Trim(), redirectUri, verifier, request.DeviceIdentifier, Convert.ToHexString(RandomNumberGenerator.GetBytes(16)));
+        var payload = new OAuthStatePayload(provider, email, redirectUri, verifier, request.DeviceIdentifier, Convert.ToHexString(RandomNumberGenerator.GetBytes(16)));
         var state = states.Protect(payload);
-        var url = oauthProvider.CreateAuthorizationUrl(request.Email, redirectUri, state, challenge);
+        var url = oauthProvider.CreateAuthorizationUrl(email, redirectUri, state, challenge);
         return new OAuthStartResponse(url, state);
+    }
+
+    private static string NormalizeEmail(string email)
+    {
+        if (string.IsNullOrWhiteSpace(email) || email.Length > 320 || email.Any(char.IsControl))
+            throw new InvalidOperationException("invalid_email");
+        try
+        {
+            var parsed = new MailAddress(email.Trim());
+            return string.Equals(parsed.Address, email.Trim(), StringComparison.OrdinalIgnoreCase)
+                ? parsed.Address
+                : throw new InvalidOperationException("invalid_email");
+        }
+        catch (FormatException)
+        {
+            throw new InvalidOperationException("invalid_email");
+        }
     }
 
     public async Task<TokenResponse> CompleteAsync(MailProvider provider, OAuthCompleteRequest request, CancellationToken cancellationToken)
