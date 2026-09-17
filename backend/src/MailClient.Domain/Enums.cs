@@ -9,3 +9,4 @@ public enum SendOperationStatus { InProgress, Sent, SentWithCopy, FailedBeforeSe
 public enum MailFolderType { Inbox, Sent, Drafts, Trash, Junk, Archive, Custom, Unknown }
 public enum ParticipantType { From, To, Cc, Bcc, ReplyTo }
 public enum MailReconciliationState { None, Pending }
+public enum SyncFailureCategory { Transient, Authentication, Configuration, Permanent }

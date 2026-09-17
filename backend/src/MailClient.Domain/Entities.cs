@@ -165,6 +165,12 @@ public sealed class SyncState
     public long NextUidScanStart { get; set; } = 1;
     public DateTime? LastNewMailSyncAt { get; set; }
     public DateTime? LastFlagSyncAt { get; set; }
+    public int ConsecutiveFailures { get; set; }
+    public SyncFailureCategory? LastFailureCategory { get; set; }
+    public DateTime? LastFailureAt { get; set; }
+    public DateTime? NextRetryAt { get; set; }
+    public DateTime? LastSuccessfulSyncAt { get; set; }
+    public DateTime? LastErrorNotifiedAt { get; set; }
     public MailFolder? MailFolder { get; set; }
 }
 public sealed class SyncSkippedUid { public Guid Id { get; set; } public Guid MailAccountId { get; set; } public Guid MailFolderId { get; set; } public uint Uid { get; set; } public string Reason { get; set; } = ""; public DateTime SkippedAt { get; set; } }
