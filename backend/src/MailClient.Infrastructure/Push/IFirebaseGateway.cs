@@ -6,10 +6,10 @@ public sealed record FirebaseSendResult(Guid DbId, bool Succeeded, bool RemoveTo
 
 public interface IFirebaseGateway
 {
-    Task<IReadOnlyList<FirebaseSendResult>> SendNewMailAsync(
+    Task<IReadOnlyList<FirebaseSendResult>> SendAsync(
         IReadOnlyList<FirebaseRecipient> recipients,
-        string title,
-        string body,
+        string? title,
+        string? body,
         IReadOnlyDictionary<string, string> data,
         CancellationToken cancellationToken);
 }

@@ -28,11 +28,13 @@ public sealed class FirebaseMessageSender(ILogger<FirebaseMessageSender> logger)
         var outgoing = chunk.Select(message => new Message
         {
             Token = message.PushToken,
-            Notification = new Notification
-            {
-                Title = message.Title,
-                Body = message.Body
-            },
+            Notification = message.Title is null && message.Body is null
+                ? null
+                : new Notification
+                {
+                    Title = message.Title ?? string.Empty,
+                    Body = message.Body ?? string.Empty
+                },
             Data = new Dictionary<string, string>(message.Data)
         }).ToList();
 #pragma warning restore CS0618

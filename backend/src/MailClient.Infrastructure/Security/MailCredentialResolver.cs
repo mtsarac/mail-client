@@ -1,12 +1,14 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
 using MailClient.Application.Accounts;
+using MailClient.Application.Mail;
 using MailClient.Application.Runtime;
 using MailClient.Domain.Entities;
 using MailClient.Domain.Enums;
 using MailClient.Infrastructure.OAuth;
 using MailClient.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace MailClient.Infrastructure.Security;
 
@@ -20,7 +22,9 @@ public sealed class MailCredentialResolver(
     AppDbContext db,
     ICredentialProtector protector,
     IEnumerable<IOAuthProvider> oauthProviders,
-    IRuntimePolicyProvider runtimePolicy)
+    IRuntimePolicyProvider runtimePolicy,
+    IPushNotificationService? push = null,
+    ILogger<MailCredentialResolver>? logger = null)
 {
     public MailCredentialResolver(AppDbContext db, ICredentialProtector protector)
         : this(db, protector, [], new DefaultRuntimePolicyProvider())
@@ -110,9 +114,26 @@ public sealed class MailCredentialResolver(
 
     private async Task<ResolvedCredential> RequireReauthenticationAsync(MailAccount account, CancellationToken cancellationToken)
     {
+        var transitioned = account.Status != MailAccountStatus.NeedsReauthentication;
         account.Status = MailAccountStatus.NeedsReauthentication;
         account.UpdatedAt = DateTime.UtcNow;
         await db.SaveChangesAsync(cancellationToken);
+        if (transitioned && push is not null)
+        {
+            try
+            {
+                await push.NotifyAsync(new PushEvent(PushEventType.AccountReauthenticationRequired, account.Id), cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                logger?.LogWarning(ex, "Reauthentication push failed. Credential state is unaffected.");
+            }
+        }
+
         throw new InvalidOperationException("mail_account_needs_reauthentication");
     }
 }

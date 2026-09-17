@@ -7,10 +7,10 @@ public sealed class FirebaseAdminGateway(
     IFirebaseMessageSender sender,
     ILogger<FirebaseAdminGateway> logger) : IFirebaseGateway
 {
-    public async Task<IReadOnlyList<FirebaseSendResult>> SendNewMailAsync(
+    public async Task<IReadOnlyList<FirebaseSendResult>> SendAsync(
         IReadOnlyList<FirebaseRecipient> recipients,
-        string title,
-        string body,
+        string? title,
+        string? body,
         IReadOnlyDictionary<string, string> data,
         CancellationToken cancellationToken)
     {
@@ -35,6 +35,9 @@ public sealed class FirebaseAdminGateway(
         return outcomes.Select(outcome => new FirebaseSendResult(
             outcome.DbId,
             outcome.Succeeded,
-            !outcome.Succeeded && outcome.ErrorCode == MessagingErrorCode.Unregistered)).ToList();
+            !outcome.Succeeded && IsPermanent(outcome.ErrorCode))).ToList();
     }
+
+    private static bool IsPermanent(MessagingErrorCode? errorCode) => errorCode is
+        MessagingErrorCode.Unregistered or MessagingErrorCode.InvalidArgument;
 }

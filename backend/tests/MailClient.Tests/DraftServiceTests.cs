@@ -137,7 +137,7 @@ public sealed class DraftServiceTests
         var folders = new RecordingMailFolderClient(remote);
         var audit = new AuditLogger(db);
         var reader = new MailReadService(db, folders, audit, NullLogger<MailReadService>.Instance);
-        var operations = new MailOperationService(db, folders, reader, audit, new InitialSyncQueue(), NullLogger<MailOperationService>.Instance);
+        var operations = new MailOperationService(db, folders, reader, audit, new InitialSyncQueue(), NullLogger<MailOperationService>.Instance, new FakePushNotificationService());
         return new(db, folders, sync, reader, operations, audit, NullLogger<DraftService>.Instance);
     }
 

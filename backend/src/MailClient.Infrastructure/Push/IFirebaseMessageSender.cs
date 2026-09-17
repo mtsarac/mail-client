@@ -5,8 +5,8 @@ namespace MailClient.Infrastructure.Push;
 public sealed record FirebaseOutgoingMessage(
     Guid DbId,
     string PushToken,
-    string Title,
-    string Body,
+    string? Title,
+    string? Body,
     IReadOnlyDictionary<string, string> Data);
 
 public sealed record FirebaseDeliveryOutcome(

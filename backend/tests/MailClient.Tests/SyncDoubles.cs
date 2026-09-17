@@ -142,10 +142,10 @@ internal sealed class FakeFileStorage : IFileStorage
 
 internal sealed class FakePushNotificationService : IPushNotificationService
 {
-    public List<NewMailNotification> Notifications { get; } = [];
-    public Task NotifyNewMailAsync(NewMailNotification notification, CancellationToken cancellationToken)
+    public List<PushEvent> Notifications { get; } = [];
+    public Task NotifyAsync(PushEvent pushEvent, CancellationToken cancellationToken)
     {
-        Notifications.Add(notification);
+        Notifications.Add(pushEvent);
         return Task.CompletedTask;
     }
 }
