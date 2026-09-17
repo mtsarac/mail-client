@@ -32,6 +32,7 @@ using MailClient.Infrastructure.Runtime;
 using MailClient.Infrastructure.Security;
 using MailClient.Infrastructure.Services;
 using MailClient.Infrastructure.Storage;
+using MailClient.Infrastructure.Sync;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.DataProtection;
@@ -168,9 +169,23 @@ else
     builder.Services.AddScoped<IPushNotificationService, NoOpPushNotificationService>();
 }
 
-builder.Services.AddSingleton<InitialSyncQueue>();
-builder.Services.AddHostedService<InitialSyncWorker>();
-builder.Services.AddHostedService<MailSyncService>();
+builder.Services.AddSingleton<ISyncClock, SystemSyncClock>();
+builder.Services.AddSingleton(new SyncScheduleQueue(1000));
+builder.Services.AddSingleton<SyncCoordinator>();
+builder.Services.AddSingleton<ISyncScheduler>(sp => sp.GetRequiredService<SyncCoordinator>());
+if (!builder.Environment.IsEnvironment("Test"))
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<SyncCoordinator>());
+builder.Services.AddScoped<ISyncLockProvider>(sp =>
+{
+    var configuration = sp.GetRequiredService<IConfiguration>();
+    var connection = configuration.GetConnectionString("Default");
+    var logger = sp.GetRequiredService<ILogger<PostgresSyncLockProvider>>();
+    return string.IsNullOrWhiteSpace(connection)
+        ? new InMemorySyncLockProvider()
+        : new PostgresSyncLockProvider(connection, logger);
+});
+if (!builder.Environment.IsEnvironment("Test"))
+    builder.Services.AddHostedService<MailSyncService>();
 builder.Services.AddSingleton(new LocalAttachmentStorage(Path.Combine(builder.Environment.ContentRootPath, "data")));
 builder.Services.AddSingleton<IFileStorage>(sp => sp.GetRequiredService<LocalAttachmentStorage>());
 var jwt = builder.Configuration.GetSection("Jwt").Get<JwtOptions>() ?? new("MailClient", "MailClient", "development-only-key-change-before-production-123456789", 15);
