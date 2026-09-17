@@ -2,6 +2,7 @@ using MailClient.Api.Auth;
 using MailClient.Application;
 using MailClient.Application.Accounts;
 using MailClient.Application.Discovery;
+using MailClient.Application.Mail;
 using MailClient.Domain;
 using MailClient.Infrastructure.Accounts;
 using MailClient.Infrastructure.Authentication;
@@ -65,7 +66,16 @@ public static class AccountEndpoints
 
         var api = app.MapGroup("/api").RequireAuthorization();
         api.MapGet("/account", async (ICurrentMailAccount current, AppDbContext db, CancellationToken ct) => await db.MailAccounts.Where(x => x.Id == current.MailAccountId).Select(x => new AccountResponse(x.Id, x.EmailAddress, x.DisplayName, x.Provider, x.Status)).SingleOrDefaultAsync(ct) is { } account ? Results.Ok(account) : Results.NotFound()).WithName("GetCurrentAccount").WithSummary("Get current mailbox account").Produces<AccountResponse>().Produces(404);
-        api.MapDelete("/account", async (ICurrentMailAccount current, AppDbContext db, LocalAttachmentStorage storage, ILogger<Program> logger, CancellationToken ct) =>
+        api.MapPost("/account/reconnect", async (AccountReconnectRequest request, ICurrentMailAccount current, AccountConnectionService service, AuditLogger audit, CorrelationContext correlation, CancellationToken ct) =>
+        {
+            var account = await service.ReconnectAsync(current.MailAccountId, request, ct);
+            await audit.WriteAsync(current.MailAccountId, AuditActions.MailAccountConnected, "MailAccount", current.MailAccountId.ToString(),
+                new Dictionary<string, string?> { ["provider"] = account.Provider.ToString(), ["authentication"] = account.AuthenticationMethod.ToString() }, correlation.CorrelationId, ct);
+            return Results.Ok(new AccountResponse(account.Id, account.EmailAddress, account.DisplayName, account.Provider, account.Status));
+        }).WithName("ReconnectCurrentAccount").WithSummary("Update credentials or server settings for the signed-in mailbox")
+            .WithDescription("Account-scoped credential/server update. Anonymous connect endpoints only create new accounts.")
+            .Produces<AccountResponse>().Produces(401).ProducesProblem(422);
+        api.MapDelete("/account", async (ICurrentMailAccount current, AppDbContext db, IFileStorage storage, ILogger<Program> logger, CancellationToken ct) =>
         {
             var account = await db.MailAccounts.FindAsync([current.MailAccountId], ct);
             if (account is null) return Results.NotFound();

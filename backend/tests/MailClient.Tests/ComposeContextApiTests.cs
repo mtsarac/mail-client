@@ -18,8 +18,8 @@ public sealed class ComposeContextApiTests(AcceptingApiFactory factory) : IClass
     [Fact]
     public async Task ReplyContext_IsScopedToOwningAccount()
     {
-        var owner = await ConnectAsync("owner@example.test");
-        var other = await ConnectAsync("other@example.test");
+        var owner = await ConnectAsync($"owner-{Guid.NewGuid():N}@example.test");
+        var other = await ConnectAsync($"other-{Guid.NewGuid():N}@example.test");
         var mailId = await SeedMailAsync(owner.AccountId);
 
         var response = await other.Client.GetAsync($"/api/mails/{mailId}/compose/reply");
@@ -51,7 +51,7 @@ public sealed class ComposeContextApiTests(AcceptingApiFactory factory) : IClass
     [Fact]
     public async Task ForwardContext_ReturnsMetadataAndAttachmentMetadataOnly()
     {
-        var owner = await ConnectAsync("me@example.test");
+        var owner = await ConnectAsync($"me-{Guid.NewGuid():N}@example.test");
         var mailId = await SeedMailAsync(owner.AccountId, includeAttachment: true);
 
         var response = await owner.Client.GetAsync($"/api/mails/{mailId}/compose/forward");

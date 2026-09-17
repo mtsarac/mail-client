@@ -21,16 +21,28 @@ public sealed class JwtTokenIssuer(JwtOptions options) : IJwtTokenIssuer
     }
 }
 
+/// <summary>
+/// Single source of truth for reading the authenticated MailAccount id. JWT inbound claim mapping is
+/// disabled (see Program.cs), so the account id is always the raw "sub" claim.
+/// </summary>
+public static class MailAccountClaims
+{
+    public const string AccountIdClaimType = JwtRegisteredClaimNames.Sub;
+
+    public static bool TryGetAccountId(ClaimsPrincipal? principal, out Guid mailAccountId)
+    {
+        mailAccountId = Guid.Empty;
+        return principal?.Identity?.IsAuthenticated == true
+            && Guid.TryParse(principal.FindFirstValue(AccountIdClaimType), out mailAccountId);
+    }
+
+    public static string? GetAccountIdOrNull(ClaimsPrincipal? principal) =>
+        TryGetAccountId(principal, out var mailAccountId) ? mailAccountId.ToString() : null;
+}
+
 public sealed class CurrentMailAccount(IHttpContextAccessor accessor) : ICurrentMailAccount
 {
-    public Guid MailAccountId
-    {
-        get
-        {
-            var user = accessor.HttpContext?.User;
-            var subject = user?.FindFirstValue(ClaimTypes.NameIdentifier)
-                ?? user?.FindFirstValue(JwtRegisteredClaimNames.Sub);
-            return Guid.TryParse(subject, out var id) ? id : throw new UnauthorizedAccessException();
-        }
-    }
+    public Guid MailAccountId => MailAccountClaims.TryGetAccountId(accessor.HttpContext?.User, out var id)
+        ? id
+        : throw new UnauthorizedAccessException();
 }

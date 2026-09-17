@@ -1,4 +1,4 @@
-using System.IdentityModel.Tokens.Jwt;
+using MailClient.Api.Auth;
 using MailClient.Application;
 using Serilog.Context;
 
@@ -32,16 +32,12 @@ public sealed class AuthenticatedLogEnrichmentMiddleware(RequestDelegate next)
 {
     public async Task InvokeAsync(HttpContext context)
     {
-        if (context.User.Identity?.IsAuthenticated == true)
+        if (MailAccountClaims.GetAccountIdOrNull(context.User) is { } mailAccountId)
         {
-            var subject = context.User.FindFirst(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Sub)?.Value;
-            if (!string.IsNullOrEmpty(subject))
+            using (LogContext.PushProperty("MailAccountId", mailAccountId))
             {
-                using (LogContext.PushProperty("MailAccountId", subject))
-                {
-                    await next(context);
-                    return;
-                }
+                await next(context);
+                return;
             }
         }
 

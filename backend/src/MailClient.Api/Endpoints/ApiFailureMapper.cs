@@ -30,7 +30,7 @@ internal static class ApiFailureMapper
         "mail_account_not_found" or "mail_not_found" or "draft_not_found" => 404,
         "drafts_folder_unavailable" or "trash_folder_unavailable" or "mail_not_draft" => 422,
         "draft_delete_failed" => 502,
-        "idempotency_conflict" or "send_in_progress" or "delivery_unknown" or "mailbox_changed"
+        "mail_account_already_exists" or "idempotency_conflict" or "send_in_progress" or "delivery_unknown" or "mailbox_changed"
             or "credential_missing" or "mail_account_needs_reauthentication" => 409,
         "provider_disabled" or "provider_existing_accounts_disabled" or "provider_new_accounts_disabled" or "authentication_method_disabled" => 403,
         "runtime_settings_conflict" => 409,
