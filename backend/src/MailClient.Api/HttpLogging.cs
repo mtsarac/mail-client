@@ -13,7 +13,7 @@ public sealed class HttpLoggingOptions
     public bool Enabled { get; set; } = true;
     public int MaxRequestBodyBytes { get; set; } = 65536;
     public int MaxResponseBodyBytes { get; set; } = 65536;
-    public string[] ExcludedPaths { get; set; } = ["/health", "/swagger"];
+    public string[] ExcludedPaths { get; set; } = ["/health", "/metrics", "/swagger"];
 }
 
 internal sealed record CapturedBody(object? Value, bool Truncated)

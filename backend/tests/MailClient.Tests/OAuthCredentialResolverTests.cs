@@ -1,10 +1,13 @@
 using System.Text.Json;
 using MailClient.Application.Accounts;
+using MailClient.Application.Runtime;
+using MailClient.Application.Sync;
 using MailClient.Domain.Entities;
 using MailClient.Domain.Enums;
 using MailClient.Infrastructure.OAuth;
 using MailClient.Infrastructure.Persistence;
 using MailClient.Infrastructure.Security;
+using MailClient.Infrastructure.Sync;
 using Microsoft.EntityFrameworkCore;
 
 namespace MailClient.Tests;
@@ -42,6 +45,63 @@ public sealed class OAuthCredentialResolverTests
 
         Assert.Equal("mail_account_needs_reauthentication", error.Message);
         Assert.Equal(MailAccountStatus.NeedsReauthentication, (await db.MailAccounts.SingleAsync(x => x.Id == accountId)).Status);
+    }
+
+    [Fact]
+    public async Task ResolveAsync_Refresh_RecordsSuccessFailureAndReauthenticationMetrics()
+    {
+        using var capture = new MetricsCapture();
+        var db = Db();
+        var success = await SeedOAuthAsync(db, DateTime.UtcNow.AddMinutes(1), "old-access", "old-refresh");
+        await Resolver(db, new FakeOAuthProvider(new OAuthToken("new-access", null, DateTime.UtcNow.AddHours(1), "scope")), capture)
+            .ResolveAsync(success, CancellationToken.None);
+
+        var reauth = await SeedOAuthAsync(db, DateTime.UtcNow.AddMinutes(1), "old-access", "old-refresh");
+        await Assert.ThrowsAsync<InvalidOperationException>(() => Resolver(db, FakeOAuthProvider.InvalidGrant(), capture).ResolveAsync(reauth, CancellationToken.None));
+
+        var failure = await SeedOAuthAsync(db, DateTime.UtcNow.AddMinutes(1), "old-access", "old-refresh");
+        await Assert.ThrowsAsync<HttpRequestException>(() => Resolver(db, FakeOAuthProvider.Unreachable(), capture).ResolveAsync(failure, CancellationToken.None));
+
+        Assert.Equal(1, capture.Sum("mailclient.oauth.token.refresh", ("provider", "google"), ("result", "success")));
+        Assert.Equal(1, capture.Sum("mailclient.oauth.token.refresh", ("provider", "google"), ("result", "reauthentication_required")));
+        Assert.Equal(1, capture.Sum("mailclient.oauth.token.refresh", ("provider", "google"), ("result", "failure")));
+        Assert.Equal(1, capture.Sum("mailclient.oauth.reauthentication.required", ("provider", "google")));
+        Assert.Equal(3, capture.For("mailclient.oauth.token.refresh.duration").Count);
+        Assert.DoesNotContain(capture.All.SelectMany(item => item.Tags.Values), value => Convert.ToString(value)!.Contains("refresh", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ResolveAsync_LockInfrastructureFailure_FailsWithoutUnlockedRefresh()
+    {
+        var db = Db();
+        var accountId = await SeedOAuthAsync(db, DateTime.UtcNow.AddMinutes(1), "old-access", "old-refresh");
+        var provider = new FakeOAuthProvider(new OAuthToken("new-access", "new-refresh", DateTime.UtcNow.AddHours(1), "scope"));
+        var locks = new StubSyncLockProvider(SyncLockStatus.InfrastructureFailure);
+        var resolver = new MailCredentialResolver(db, new PrefixProtector(), [provider], new DefaultRuntimePolicyProvider(), null, null, locks);
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => resolver.ResolveAsync(accountId, CancellationToken.None));
+
+        Assert.Equal(SyncFailureClassifier.OAuthRefreshLockUnavailable, error.Message);
+        Assert.Equal(SyncFailureCategory.Transient, SyncFailureClassifier.Classify(error));
+        Assert.Equal(0, provider.RefreshCount);
+        Assert.Equal(1, locks.Calls);
+        Assert.Equal(MailAccountStatus.Active, (await db.MailAccounts.SingleAsync(x => x.Id == accountId)).Status);
+    }
+
+    [Fact]
+    public async Task ResolveAsync_LockContention_WaitsForOwnershipBeforeRefreshing()
+    {
+        var db = Db();
+        var accountId = await SeedOAuthAsync(db, DateTime.UtcNow.AddMinutes(1), "old-access", "old-refresh");
+        var provider = new FakeOAuthProvider(new OAuthToken("new-access", "new-refresh", DateTime.UtcNow.AddHours(1), "scope"));
+        var locks = new StubSyncLockProvider(SyncLockStatus.Contended, SyncLockStatus.Acquired);
+        var resolver = new MailCredentialResolver(db, new PrefixProtector(), [provider], new DefaultRuntimePolicyProvider(), null, null, locks);
+
+        var resolved = await resolver.ResolveAsync(accountId, CancellationToken.None);
+
+        Assert.Equal("new-access", resolved.Secret);
+        Assert.Equal(2, locks.Calls);
+        Assert.Equal(1, provider.RefreshCount);
     }
 
     [Fact]
@@ -115,6 +175,9 @@ public sealed class OAuthCredentialResolverTests
         return accountId;
     }
 
+    private static MailCredentialResolver Resolver(AppDbContext db, IOAuthProvider provider, MetricsCapture capture) =>
+        new(db, new PrefixProtector(), [provider], new DefaultRuntimePolicyProvider(), null, null, null, capture.Metrics);
+
     private static AppDbContext Db() => new(new DbContextOptionsBuilder<AppDbContext>()
         .UseInMemoryDatabase(Guid.NewGuid().ToString("N"))
         .Options);
@@ -127,8 +190,8 @@ public sealed class OAuthCredentialResolverTests
 
     private sealed class FakeOAuthProvider(OAuthToken token) : IOAuthProvider
     {
-        private readonly bool _invalidGrant;
-        private FakeOAuthProvider() : this(new OAuthToken("", null, DateTime.UtcNow, "")) => _invalidGrant = true;
+        private readonly Exception? _failure;
+        private FakeOAuthProvider(Exception failure) : this(new OAuthToken("", null, DateTime.UtcNow, "")) => _failure = failure;
         public MailProvider Provider => MailProvider.Google;
         public bool IsConfigured => true;
         public string PrimaryRedirectUri => "app://oauth";
@@ -138,10 +201,11 @@ public sealed class OAuthCredentialResolverTests
         public Task<OAuthToken> RefreshAsync(string refreshToken, CancellationToken cancellationToken)
         {
             RefreshCount++;
-            if (_invalidGrant)
-                throw new InvalidOperationException("mail_account_needs_reauthentication");
+            if (_failure is not null)
+                throw _failure;
             return Task.FromResult(token);
         }
-        public static FakeOAuthProvider InvalidGrant() => new();
+        public static FakeOAuthProvider InvalidGrant() => new(new InvalidOperationException("mail_account_needs_reauthentication"));
+        public static FakeOAuthProvider Unreachable() => new(new HttpRequestException("token endpoint unavailable"));
     }
 }

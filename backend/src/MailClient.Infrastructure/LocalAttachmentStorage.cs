@@ -33,6 +33,8 @@ public sealed class BoundedWriteStream(Stream inner, long maxBytes) : Stream
 
 public sealed class LocalAttachmentStorage(string rootPath) : IFileStorage
 {
+    public string RootPath => Path.GetFullPath(rootPath);
+
     public string Resolve(string relativePath)
     {
         var root = Path.GetFullPath(rootPath).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;

@@ -1,4 +1,6 @@
+using System.Diagnostics;
 using MailClient.Application.Mail;
+using MailClient.Application.Observability;
 using MailClient.Infrastructure.Persistence;
 using MailClient.Infrastructure.Runtime;
 using Microsoft.EntityFrameworkCore;
@@ -6,7 +8,7 @@ using NpgsqlTypes;
 
 namespace MailClient.Infrastructure.Services;
 
-public sealed class MailSearchService(AppDbContext db, RuntimeOperationSettings operationSettings)
+public sealed class MailSearchService(AppDbContext db, RuntimeOperationSettings operationSettings, MailClientMetrics? metrics = null)
 {
     public MailSearchService(AppDbContext db)
         : this(db, new RuntimeOperationSettings(new DefaultRuntimeSettingsStore()))
@@ -16,6 +18,31 @@ public sealed class MailSearchService(AppDbContext db, RuntimeOperationSettings 
     private const int DefaultPageSize = 50;
 
     public async Task<MailListResponse> SearchAsync(Guid accountId, MailSearchRequest request, CancellationToken cancellationToken)
+    {
+        var hasTextQuery = !string.IsNullOrWhiteSpace(request.Query);
+        using var activity = MailClientTelemetry.StartActivity("mailclient.mail.search");
+        activity?.SetTag("mail.search.has_text_query", hasTextQuery);
+        var started = Stopwatch.GetTimestamp();
+        try
+        {
+            var response = await SearchCoreAsync(accountId, request, cancellationToken);
+            metrics?.RecordMailSearch(hasTextQuery, "success", Stopwatch.GetElapsedTime(started), response.Total);
+            return response;
+        }
+        catch (OperationCanceledException)
+        {
+            metrics?.RecordMailSearch(hasTextQuery, "cancelled", Stopwatch.GetElapsedTime(started), null);
+            throw;
+        }
+        catch (Exception ex)
+        {
+            MailClientTelemetry.MarkFailed(activity, ex);
+            metrics?.RecordMailSearch(hasTextQuery, "failure", Stopwatch.GetElapsedTime(started), null);
+            throw;
+        }
+    }
+
+    private async Task<MailListResponse> SearchCoreAsync(Guid accountId, MailSearchRequest request, CancellationToken cancellationToken)
     {
         var settings = (await operationSettings.GetAsync(cancellationToken)).Settings.Search;
         var page = request.Page < 1 ? 1 : request.Page;

@@ -36,7 +36,7 @@ internal static class ApiFailureMapper
         "runtime_settings_conflict" => 409,
         "runtime_settings_invalid" or "management_unauthorized" => 400,
         "mail_account_disabled" => 403,
-        "sync_queue_full" => 503,
+        "sync_queue_full" or "oauth_refresh_lock_unavailable" => 503,
         _ => null
     };
 }

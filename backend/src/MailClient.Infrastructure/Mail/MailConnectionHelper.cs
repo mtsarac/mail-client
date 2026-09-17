@@ -1,5 +1,6 @@
 using System.Net.Sockets;
 using MailClient.Application.Mail;
+using MailClient.Application.Observability;
 using MailClient.Domain.Enums;
 using MailClient.Infrastructure.Email;
 using MailClient.Infrastructure.Network;
@@ -13,7 +14,8 @@ namespace MailClient.Infrastructure.Mail;
 
 public sealed class MailConnectionHelper(
     OutboundHostValidator hosts,
-    ILogger<MailConnectionHelper> logger)
+    ILogger<MailConnectionHelper> logger,
+    MailClientMetrics? metrics = null)
 {
     private const int OperationTimeoutMs = 30_000;
     private static readonly TimeSpan DiscoveryTimeout = TimeSpan.FromSeconds(10);
@@ -108,6 +110,7 @@ public sealed class MailConnectionHelper(
         catch (Exception ex)
         {
             var failure = MailConnectionErrorClassifier.Classify(ex);
+            metrics?.RecordMailConnectionFailure(client is SmtpClient ? "smtp" : "imap", failure);
             logger.LogError(ex,
                 "Mail operation {Operation} failed ({Failure}) for host {Host} on port {Port}.",
                 operation, failure, LogSafe(endpoint.Host), endpoint.Port);

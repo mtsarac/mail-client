@@ -8,6 +8,14 @@ public sealed class SyncQueueFullException : InvalidOperationException
     }
 }
 
+public enum SyncEnqueueResult
+{
+    Enqueued,
+    Coalesced,
+    Rejected,
+    EnqueuedAfterShedding
+}
+
 /// <summary>
 /// Bounded priority queue for sync work. User work is never silently dropped;
 /// background periodic work is coalesced or shed under backpressure.
@@ -56,7 +64,7 @@ public sealed class SyncScheduleQueue
         }
     }
 
-    public void Enqueue(ScheduledSyncRequest request)
+    public SyncEnqueueResult Enqueue(ScheduledSyncRequest request)
     {
         lock (_gate)
         {
@@ -69,21 +77,24 @@ public sealed class SyncScheduleQueue
                     _pending.Enqueue(request, QueuePriority(request));
                 }
 
-                return;
+                return SyncEnqueueResult.Coalesced;
             }
 
+            var result = SyncEnqueueResult.Enqueued;
             if (_pending.Count >= _capacity)
             {
                 if (request.Priority != SyncPriority.UserRequested)
-                    return;
+                    return SyncEnqueueResult.Rejected;
 
                 if (!TryShedLowestBackgroundWork())
                     throw new SyncQueueFullException();
+                result = SyncEnqueueResult.EnqueuedAfterShedding;
             }
 
             _queued.Add(request.Request);
             _byRequest[request.Request] = request;
             _pending.Enqueue(request, QueuePriority(request));
+            return result;
         }
     }
 

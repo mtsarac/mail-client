@@ -4,12 +4,17 @@ namespace MailClient.Application.Sync;
 
 public static class SyncFailureClassifier
 {
+    public const string OAuthRefreshLockUnavailable = "oauth_refresh_lock_unavailable";
+
+
     public static SyncFailureCategory Classify(Exception exception) => exception switch
     {
         InvalidOperationException invalid when IsAuthenticationMessage(invalid.Message) =>
             SyncFailureCategory.Authentication,
         InvalidOperationException invalid when IsConfigurationMessage(invalid.Message) =>
             SyncFailureCategory.Configuration,
+        InvalidOperationException invalid when invalid.Message == OAuthRefreshLockUnavailable =>
+            SyncFailureCategory.Transient,
         TimeoutException => SyncFailureCategory.Transient,
         IOException => SyncFailureCategory.Transient,
         System.Net.Sockets.SocketException => SyncFailureCategory.Transient,

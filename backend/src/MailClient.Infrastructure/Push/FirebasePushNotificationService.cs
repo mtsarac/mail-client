@@ -1,4 +1,6 @@
+using System.Diagnostics;
 using MailClient.Application.Mail;
+using MailClient.Application.Observability;
 using MailClient.Application.Runtime;
 using MailClient.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -10,7 +12,8 @@ namespace MailClient.Infrastructure.Push;
 public sealed class FirebasePushNotificationService(
     IServiceScopeFactory scopes,
     IFirebaseGateway gateway,
-    ILogger<FirebasePushNotificationService> logger) : IPushNotificationService
+    ILogger<FirebasePushNotificationService> logger,
+    MailClientMetrics? metrics = null) : IPushNotificationService
 {
     public async Task NotifyAsync(PushEvent pushEvent, CancellationToken cancellationToken)
     {
@@ -24,6 +27,7 @@ public sealed class FirebasePushNotificationService(
         }
         catch (Exception ex)
         {
+            metrics?.RecordPushFailure(pushEvent.Type);
             logger.LogWarning(ex, "Push notification delivery failed. Sync state is unaffected.");
         }
     }
@@ -47,14 +51,17 @@ public sealed class FirebasePushNotificationService(
 
         var (title, body) = NotificationText(pushEvent, push.IncludeMailPreview);
         var data = EventData(pushEvent);
+        var started = Stopwatch.GetTimestamp();
         var results = await gateway.SendAsync(
             tokens.Select(token => new FirebaseRecipient(token.Id, token.Token)).ToList(),
             title,
             body,
             data,
             cancellationToken);
+        var elapsed = Stopwatch.GetElapsedTime(started);
 
         var invalidIds = results.Where(result => result.RemoveToken).Select(result => result.DbId).ToList();
+        var removed = 0;
         if (invalidIds.Count > 0)
         {
             var invalid = await db.DeviceTokens
@@ -62,8 +69,12 @@ public sealed class FirebasePushNotificationService(
                 .ToListAsync(cancellationToken);
             db.DeviceTokens.RemoveRange(invalid);
             await db.SaveChangesAsync(cancellationToken);
+            removed = invalid.Count;
             logger.LogInformation("Removed {Count} invalid device tokens.", invalid.Count);
         }
+
+        var succeeded = results.Count(result => result.Succeeded);
+        metrics?.RecordPushDelivery(pushEvent.Type, succeeded, results.Count - succeeded, removed, elapsed);
     }
 
     private static bool IsEventEnabled(RuntimePushSettings push, PushEventType type) => type switch

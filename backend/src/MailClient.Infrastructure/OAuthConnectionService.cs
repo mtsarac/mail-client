@@ -4,6 +4,7 @@ using System.Text.Json;
 using MailClient.Application.Accounts;
 using MailClient.Application.Discovery;
 using MailClient.Application.Mail;
+using MailClient.Application.Observability;
 using MailClient.Application.Runtime;
 using MailClient.Application.Sync;
 using MailClient.Domain;
@@ -30,7 +31,8 @@ public sealed class OAuthConnectionService(
     ISyncScheduler scheduler,
     MailKitFolderExplorer explorer,
     IRuntimePolicyProvider runtimePolicy,
-    ILogger<OAuthConnectionService> logger)
+    ILogger<OAuthConnectionService> logger,
+    MailClientMetrics? metrics = null)
 {
     public async Task<OAuthStartResponse> StartAsync(MailProvider provider, OAuthStartRequest request, CancellationToken cancellationToken)
     {
@@ -43,6 +45,7 @@ public sealed class OAuthConnectionService(
         var payload = new OAuthStatePayload(provider, email, redirectUri, verifier, request.DeviceIdentifier, Convert.ToHexString(RandomNumberGenerator.GetBytes(16)));
         var state = states.Protect(payload);
         var url = oauthProvider.CreateAuthorizationUrl(email, redirectUri, state, challenge);
+        metrics?.RecordOAuthAuthorizationStarted(provider);
         return new OAuthStartResponse(url, state);
     }
 
@@ -64,6 +67,21 @@ public sealed class OAuthConnectionService(
     }
 
     public async Task<TokenResponse> CompleteAsync(MailProvider provider, OAuthCompleteRequest request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var response = await CompleteCoreAsync(provider, request, cancellationToken);
+            metrics?.RecordOAuthAuthorizationCompleted(provider, succeeded: true);
+            return response;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            metrics?.RecordOAuthAuthorizationCompleted(provider, succeeded: false);
+            throw;
+        }
+    }
+
+    private async Task<TokenResponse> CompleteCoreAsync(MailProvider provider, OAuthCompleteRequest request, CancellationToken cancellationToken)
     {
         OAuthStatePayload payload;
         try

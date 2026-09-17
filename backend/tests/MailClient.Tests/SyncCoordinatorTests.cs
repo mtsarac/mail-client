@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using MailClient.Application.Mail;
+using MailClient.Application.Observability;
 using MailClient.Application.Runtime;
 using MailClient.Application.Sync;
 using MailClient.Domain.Entities;
@@ -238,15 +239,150 @@ public sealed class SyncCoordinatorTests
         Assert.Equal(2, scopes.Distinct().Count());
     }
 
-    private static Harness CreateHarness(ISyncExecutor executor, int maxAccounts, int maxFolders, int threshold = 3, int maxAttempts = 3)
+    [Fact]
+    public async Task Metrics_SuccessAfterFailures_RecordsCompletionRecoveryAndBalancedActivity()
+    {
+        using var capture = new MetricsCapture();
+        var harness = CreateHarness(new OrderRecordingExecutor(new ConcurrentQueue<Guid>()), maxAccounts: 1, maxFolders: 1, metrics: capture.Metrics);
+        var accountId = await harness.SeedAccountAsync(0);
+        var folderId = await harness.AddFolderAsync(accountId, MailFolderType.Inbox);
+        await harness.SetFailureStateAsync(folderId, failures: 2);
+
+        await harness.Scheduler.ScheduleFolderAsync(accountId, folderId, SyncOrigin.Periodic, CancellationToken.None);
+        await harness.Scheduler.DispatchOnceAsync(CancellationToken.None);
+
+        Assert.Equal(1, capture.Sum("mailclient.sync.scheduled", ("origin", "periodic")));
+        Assert.Equal(1, capture.Sum("mailclient.sync.completed", ("origin", "periodic"), ("folder_type", "inbox")));
+        Assert.Equal(1, capture.Sum("mailclient.sync.recoveries", ("folder_type", "inbox")));
+        Assert.Single(capture.For("mailclient.sync.duration"), item => item.Has("result", "success"));
+        Assert.Empty(capture.For("mailclient.sync.failures"));
+        Assert.Equal(1, capture.Sum("mailclient.lock.acquisitions", ("purpose", "account_sync"), ("result", "acquired")));
+        Assert.Equal(0, capture.Sum("mailclient.sync.active.accounts"));
+        Assert.Equal(0, capture.Sum("mailclient.sync.active.folders"));
+        Assert.Single(capture.For("mailclient.sync.connection_budget.wait"));
+    }
+
+    [Theory]
+    [InlineData(MailConnectionFailure.Tls, "configuration")]
+    [InlineData(MailConnectionFailure.Authentication, "authentication")]
+    [InlineData(MailConnectionFailure.Network, "transient")]
+    public async Task Metrics_Failure_RecordsClassifiedCategory(MailConnectionFailure failure, string category)
+    {
+        using var capture = new MetricsCapture();
+        var harness = CreateHarness(new FailingExecutor(new MailConnectionException(failure, "x")), maxAccounts: 1, maxFolders: 1, metrics: capture.Metrics);
+        var accountId = await harness.SeedAccountAsync(0);
+        var folderId = await harness.AddFolderAsync(accountId, MailFolderType.Custom);
+
+        await harness.Scheduler.ScheduleFolderAsync(accountId, folderId, SyncOrigin.UserRequested, CancellationToken.None);
+        await harness.Scheduler.DispatchOnceAsync(CancellationToken.None);
+
+        Assert.Equal(1, capture.Sum("mailclient.sync.failures", ("origin", "user"), ("failure_category", category)));
+        Assert.Empty(capture.For("mailclient.sync.completed"));
+    }
+
+    [Fact]
+    public async Task Metrics_TransientFailure_RecordsRetryThenExhaustion()
+    {
+        using var retrying = new MetricsCapture();
+        var harness = CreateHarness(new FailingExecutor(new TimeoutException()), maxAccounts: 1, maxFolders: 1, maxAttempts: 3, metrics: retrying.Metrics);
+        var accountId = await harness.SeedAccountAsync(0);
+        var folderId = await harness.AddFolderAsync(accountId, MailFolderType.Custom);
+        await harness.RunPeriodicAsync(accountId, folderId);
+
+        Assert.Equal(1, retrying.Sum("mailclient.sync.retries", ("origin", "periodic"), ("failure_category", "transient")));
+        Assert.Empty(retrying.For("mailclient.sync.retries.exhausted"));
+
+        using var exhausted = new MetricsCapture();
+        var single = CreateHarness(new FailingExecutor(new TimeoutException()), maxAccounts: 1, maxFolders: 1, maxAttempts: 1, metrics: exhausted.Metrics);
+        var otherAccountId = await single.SeedAccountAsync(0);
+        var otherFolderId = await single.AddFolderAsync(otherAccountId, MailFolderType.Custom);
+        await single.RunPeriodicAsync(otherAccountId, otherFolderId);
+        await single.RunPeriodicAsync(otherAccountId, otherFolderId);
+
+        Assert.Empty(exhausted.For("mailclient.sync.retries"));
+        Assert.Equal(1, exhausted.Sum("mailclient.sync.retries.exhausted", ("origin", "periodic")));
+    }
+
+    [Fact]
+    public async Task Metrics_QueueFull_RecordsRejectionAndShedding()
+    {
+        using var capture = new MetricsCapture();
+        var harness = CreateHarness(new OrderRecordingExecutor(new ConcurrentQueue<Guid>()), maxAccounts: 1, maxFolders: 1, metrics: capture.Metrics, queueCapacity: 1);
+        var accountId = Guid.NewGuid();
+
+        await harness.Scheduler.ScheduleFolderAsync(accountId, Guid.NewGuid(), SyncOrigin.Periodic, CancellationToken.None);
+        await harness.Scheduler.ScheduleFolderAsync(accountId, Guid.NewGuid(), SyncOrigin.Periodic, CancellationToken.None);
+        await harness.Scheduler.ScheduleFolderAsync(accountId, Guid.NewGuid(), SyncOrigin.UserRequested, CancellationToken.None);
+
+        Assert.Equal(1, capture.Sum("mailclient.sync.queue.rejected", ("origin", "periodic"), ("reason", "queue_full")));
+        Assert.Equal(1, capture.Sum("mailclient.sync.queue.rejected", ("origin", "periodic"), ("reason", "shed")));
+        Assert.Equal(1, capture.Sum("mailclient.sync.scheduled", ("origin", "periodic")));
+        Assert.Equal(1, capture.Sum("mailclient.sync.scheduled", ("origin", "user")));
+    }
+
+    [Fact]
+    public async Task Coordinator_LockContention_RequeuesImmediately()
+    {
+        var executor = new OrderRecordingExecutor(new ConcurrentQueue<Guid>());
+        var harness = CreateHarness(executor, maxAccounts: 1, maxFolders: 1, locks: new StubSyncLockProvider(SyncLockStatus.Contended));
+        var accountId = await harness.SeedAccountAsync(0);
+        var folderId = await harness.AddFolderAsync(accountId, MailFolderType.Inbox);
+
+        await harness.Scheduler.ScheduleFolderAsync(accountId, folderId, SyncOrigin.Periodic, CancellationToken.None);
+        await harness.Scheduler.DispatchOnceAsync(CancellationToken.None);
+
+        Assert.Empty(executor.FolderCalls);
+        Assert.Equal(1, harness.Scheduler.PendingCount);
+        Assert.Empty(harness.Clock.Delays);
+    }
+
+    [Fact]
+    public async Task Coordinator_LockInfrastructureFailure_DefersRequeueInsteadOfTightLoop()
+    {
+        var executor = new OrderRecordingExecutor(new ConcurrentQueue<Guid>());
+        var locks = new StubSyncLockProvider(SyncLockStatus.InfrastructureFailure);
+        var harness = CreateHarness(executor, maxAccounts: 1, maxFolders: 1, locks: locks);
+        var accountId = await harness.SeedAccountAsync(0);
+        var folderId = await harness.AddFolderAsync(accountId, MailFolderType.Inbox);
+
+        await harness.Scheduler.ScheduleFolderAsync(accountId, folderId, SyncOrigin.Periodic, CancellationToken.None);
+        await harness.Scheduler.DispatchOnceAsync(CancellationToken.None);
+        await WaitUntilAsync(() => harness.Scheduler.PendingCount == 1);
+
+        Assert.Empty(executor.FolderCalls);
+        Assert.Equal(1, locks.Calls);
+        Assert.Equal(new[] { SyncCoordinator.LockFailureRequeueDelay }, harness.Clock.Delays);
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (!condition())
+            await Task.Delay(10, timeout.Token);
+    }
+
+    internal static Harness CreateHarness(
+        ISyncExecutor executor,
+        int maxAccounts,
+        int maxFolders,
+        int threshold = 3,
+        int maxAttempts = 3,
+        MailClientMetrics? metrics = null,
+        int queueCapacity = 100,
+        ISyncLockProvider? locks = null)
     {
         var dbName = Guid.NewGuid().ToString("N");
         var clock = new FakeSyncClock(new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc));
         var services = new ServiceCollection();
         services.AddDbContext<AppDbContext>(options => options.UseInMemoryDatabase(dbName));
-        services.AddSingleton(new SyncScheduleQueue(100));
+        services.AddSingleton(new SyncScheduleQueue(queueCapacity));
         services.AddSingleton<ISyncClock>(clock);
-        services.AddSingleton<ISyncLockProvider, InMemorySyncLockProvider>();
+        if (metrics is not null)
+            services.AddSingleton(metrics);
+        if (locks is null)
+            services.AddSingleton<ISyncLockProvider, InMemorySyncLockProvider>();
+        else
+            services.AddSingleton(locks);
         services.AddSingleton<ISyncConnectionBudget, SyncConnectionBudget>();
         services.AddSingleton(executor);
         services.AddSingleton<IRuntimeSettingsStore>(new FakeRuntimeSettingsStore(maxAccounts, maxFolders, threshold, maxAttempts));
@@ -260,10 +396,11 @@ public sealed class SyncCoordinatorTests
         return new Harness(provider, push, clock);
     }
 
-    private sealed class Harness(ServiceProvider provider, FakePushNotificationService push, FakeSyncClock clock)
+    internal sealed class Harness(ServiceProvider provider, FakePushNotificationService push, FakeSyncClock clock)
     {
         public SyncCoordinator Scheduler => provider.GetRequiredService<SyncCoordinator>();
         public FakePushNotificationService Push => push;
+        public FakeSyncClock Clock => clock;
 
         public async Task RunPeriodicAsync(Guid accountId, Guid folderId)
         {
@@ -407,7 +544,7 @@ public sealed class SyncCoordinatorTests
         }
     }
 
-    private sealed class OrderRecordingExecutor(ConcurrentQueue<Guid> order) : ISyncExecutor
+    internal sealed class OrderRecordingExecutor(ConcurrentQueue<Guid> order) : ISyncExecutor
     {
         public ConcurrentBag<(Guid AccountId, Guid FolderId)> FolderCalls { get; } = [];
         public Task SyncAccountAsync(Guid accountId, CancellationToken cancellationToken) => Task.CompletedTask;
@@ -419,7 +556,7 @@ public sealed class SyncCoordinatorTests
         }
     }
 
-    private sealed class FailingExecutor(Exception? failure) : ISyncExecutor
+    internal sealed class FailingExecutor(Exception? failure) : ISyncExecutor
     {
         public Exception? Failure { get; set; } = failure;
         public Task SyncAccountAsync(Guid accountId, CancellationToken cancellationToken) => Task.CompletedTask;
