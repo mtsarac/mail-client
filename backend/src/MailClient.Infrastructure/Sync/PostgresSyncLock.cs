@@ -1,5 +1,5 @@
+using System.Buffers.Binary;
 using System.Security.Cryptography;
-using System.Text;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Npgsql;
@@ -14,8 +14,6 @@ public enum SyncLockPurpose
 
 public interface ISyncLock : IAsyncDisposable
 {
-    Guid AccountId { get; }
-    SyncLockPurpose Purpose { get; }
 }
 
 public interface ISyncLockProvider
@@ -48,7 +46,7 @@ public sealed class PostgresSyncLockProvider(string connectionString, ILogger<Po
                 return null;
             }
 
-            return new PostgresSyncLock(connection, accountId, purpose, logger);
+            return new PostgresSyncLock(connection, key1, key2, purpose, logger);
         }
         catch (OperationCanceledException)
         {
@@ -57,7 +55,7 @@ public sealed class PostgresSyncLockProvider(string connectionString, ILogger<Po
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "Sync lock acquisition failed for account {AccountId} purpose {Purpose}.", accountId, purpose);
+            logger.LogWarning(ex, "Sync lock acquisition failed for purpose {Purpose}.", purpose);
             await connection.DisposeAsync();
             return null;
         }
@@ -65,15 +63,22 @@ public sealed class PostgresSyncLockProvider(string connectionString, ILogger<Po
 
     internal static (int Key1, int Key2) LockKey(Guid accountId, SyncLockPurpose purpose)
     {
-        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes($"mailclient:sync:{purpose}:{accountId:N}"));
-        return (BitConverter.ToInt32(bytes, 0), BitConverter.ToInt32(bytes, 4));
+        Span<byte> source = stackalloc byte[17];
+        accountId.TryWriteBytes(source);
+        source[^1] = (byte)purpose;
+        var hash = SHA256.HashData(source);
+        return (
+            BinaryPrimitives.ReadInt32LittleEndian(hash),
+            BinaryPrimitives.ReadInt32LittleEndian(hash.AsSpan(sizeof(int))));
     }
 
-    private sealed class PostgresSyncLock(NpgsqlConnection connection, Guid accountId, SyncLockPurpose purpose, ILogger logger) : ISyncLock
+    private sealed class PostgresSyncLock(
+        NpgsqlConnection connection,
+        int key1,
+        int key2,
+        SyncLockPurpose purpose,
+        ILogger logger) : ISyncLock
     {
-        public Guid AccountId => accountId;
-        public SyncLockPurpose Purpose => purpose;
-
         public async ValueTask DisposeAsync()
         {
             try
@@ -81,7 +86,6 @@ public sealed class PostgresSyncLockProvider(string connectionString, ILogger<Po
                 if (connection.State == System.Data.ConnectionState.Open)
                 {
                     await using var command = connection.CreateCommand();
-                    var (key1, key2) = LockKey(accountId, purpose);
                     command.CommandText = "SELECT pg_advisory_unlock(@key1, @key2)";
                     command.Parameters.AddWithValue("key1", key1);
                     command.Parameters.AddWithValue("key2", key2);
@@ -90,7 +94,7 @@ public sealed class PostgresSyncLockProvider(string connectionString, ILogger<Po
             }
             catch (Exception ex)
             {
-                logger.LogDebug(ex, "Sync lock release failed for account {AccountId} purpose {Purpose}.", accountId, purpose);
+                logger.LogDebug(ex, "Sync lock release failed for purpose {Purpose}.", purpose);
             }
             finally
             {
