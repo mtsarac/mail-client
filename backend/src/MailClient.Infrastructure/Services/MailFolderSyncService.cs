@@ -150,7 +150,8 @@ public sealed class MailFolderSyncService(
                         await SyncFolderCoreAsync(account.Id, folderId, remote, ct);
                         return true;
                     },
-                    cancellationToken);
+                    cancellationToken,
+                    resolved.AuthenticationMethod);
             }
             catch (OperationCanceledException)
             {
@@ -230,6 +231,7 @@ public sealed class MailFolderSyncService(
                 MailFolderId = folderId,
                 UidValidity = remote.UidValidity
             };
+            StartNewestFirst(state, remote);
             db.SyncStates.Add(state);
             await db.SaveChangesAsync(cancellationToken);
         }
@@ -244,6 +246,8 @@ public sealed class MailFolderSyncService(
             state.UidValidity = remote.UidValidity;
             state.LastUid = 0;
             state.NextUidScanStart = 1;
+            state.FlagScanCursorUid = 0;
+            StartNewestFirst(state, remote);
             await db.SaveChangesAsync(cancellationToken);
             foreach (var path in obsoletePaths)
             {
@@ -262,21 +266,67 @@ public sealed class MailFolderSyncService(
             }
         }
 
+        var budget = operationSettings.Current.MaxMessagesPerRun;
         var afterUid = state.NextUidScanStart <= 1
             ? 0u
             : (uint)Math.Min(state.NextUidScanStart - 1, (long)uint.MaxValue);
-        var result = await remote.SearchNewAsync(
-            afterUid, operationSettings.Current.MaxMessagesPerRun, cancellationToken);
-        var batch = result.Uids.OrderBy(item => item.Id).Take(operationSettings.Current.MaxMessagesPerRun).ToList();
-        if (batch.Count == 0)
-        {
-            state.UidValidity = remote.UidValidity;
-            state.LastNewMailSyncAt = DateTime.UtcNow;
-            state.NextUidScanStart = CursorAfter(result.ScannedUpTo);
-            await ReconcileFlagsIfDueAsync(folderId, state, remote, cancellationToken);
-            await db.SaveChangesAsync(cancellationToken);
+        var result = await remote.SearchNewAsync(afterUid, budget, cancellationToken);
+        var batch = result.Uids.OrderBy(item => item.Id).Take(budget).ToList();
+        var newMail = await ImportAsync(accountId, folderId, state, remote, batch, cancellationToken);
+
+        state.UidValidity = remote.UidValidity;
+        state.LastNewMailSyncAt = DateTime.UtcNow;
+        state.NextUidScanStart = batch.Count == 0
+            ? CursorAfter(result.ScannedUpTo)
+            : CursorAfter(batch.Max(item => item.Id));
+        await BackfillOlderAsync(accountId, folderId, state, remote, budget - batch.Count, cancellationToken);
+        await ReconcileFlagsIfDueAsync(folderId, state, remote, cancellationToken);
+        await db.SaveChangesAsync(cancellationToken);
+
+        if (newMail.Count > 0 && localFolder.FolderType == MailFolderType.Inbox)
+            await NotifyNewMailAsync(accountId, folderId, newMail, cancellationToken);
+    }
+
+    /// <summary>
+    /// A folder is synced newest-first: forward scanning starts at the current UIDNEXT and the existing history
+    /// is walked backwards separately, so a large mailbox surfaces recent mail on the first poll. Servers that do
+    /// not report UIDNEXT keep the original oldest-first behaviour.
+    /// </summary>
+    private static void StartNewestFirst(SyncState state, IRemoteMailFolder remote)
+    {
+        var uidNext = remote.UidNext;
+        if (uidNext <= 1)
             return;
-        }
+        state.NextUidScanStart = uidNext;
+        state.BackfillNextUid = uidNext;
+    }
+
+    private async Task BackfillOlderAsync(
+        Guid accountId,
+        Guid folderId,
+        SyncState state,
+        IRemoteMailFolder remote,
+        int budget,
+        CancellationToken cancellationToken)
+    {
+        if (state.BackfillNextUid <= 1 || budget <= 0)
+            return;
+        var page = await remote.SearchOlderAsync(state.BackfillNextUid, budget, cancellationToken);
+        await ImportAsync(accountId, folderId, state, remote, [.. page.Uids.OrderBy(item => item.Id)], cancellationToken);
+        state.BackfillNextUid = page.NextHighExclusive;
+    }
+
+    private async Task<List<NewMailCandidate>> ImportAsync(
+        Guid accountId,
+        Guid folderId,
+        SyncState state,
+        IRemoteMailFolder remote,
+        IReadOnlyList<UniqueId> batch,
+        CancellationToken cancellationToken)
+    {
+        var imported = new List<NewMailCandidate>();
+        if (batch.Count == 0)
+            return imported;
 
         var batchIds = batch.Select(item => item.Id).ToList();
         var committedUids = (await db.Mails
@@ -291,24 +341,16 @@ public sealed class MailFolderSyncService(
             .ToListAsync(cancellationToken)).ToHashSet();
         var summaries = await remote.GetSummariesAsync(batch, cancellationToken);
 
-        var newMail = new List<NewMailCandidate>();
         foreach (var uid in batch)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var candidate = await SyncOneAsync(accountId, folderId, state, remote, uid,
                 summaries.GetValueOrDefault(uid.Id), committedUids, skippedUids, cancellationToken);
             if (candidate is not null)
-                newMail.Add(candidate);
+                imported.Add(candidate);
         }
 
-        state.UidValidity = remote.UidValidity;
-        state.LastNewMailSyncAt = DateTime.UtcNow;
-        state.NextUidScanStart = CursorAfter(batch.Max(item => item.Id));
-        await ReconcileFlagsIfDueAsync(folderId, state, remote, cancellationToken);
-        await db.SaveChangesAsync(cancellationToken);
-
-        if (newMail.Count > 0 && localFolder.FolderType == MailFolderType.Inbox)
-            await NotifyNewMailAsync(accountId, folderId, newMail, cancellationToken);
+        return imported;
     }
 
     private async Task NotifyNewMailAsync(
@@ -354,15 +396,16 @@ public sealed class MailFolderSyncService(
         IRemoteMailFolder remote,
         CancellationToken cancellationToken)
     {
-        var due = state.LastFlagSyncAt is null
+        // A pass already in progress continues on every poll; a finished pass restarts only when due.
+        var due = state.FlagScanCursorUid > 0
+            || state.LastFlagSyncAt is null
             || DateTime.UtcNow - state.LastFlagSyncAt.Value >= TimeSpan.FromSeconds(operationSettings.Current.FlagSyncIntervalSeconds);
         if (!due)
             return;
 
         try
         {
-            await ReconcileFlagsAsync(folderId, remote.UidValidity, remote, cancellationToken);
-            state.LastFlagSyncAt = DateTime.UtcNow;
+            await ReconcileFlagsAsync(folderId, state, remote, cancellationToken);
         }
         catch (OperationCanceledException)
         {
@@ -374,71 +417,136 @@ public sealed class MailFolderSyncService(
         }
     }
 
+    private const int ReconciliationChunkSize = 500;
+    private const int ReconciliationChunksPerRun = 2;
+
+    /// <summary>
+    /// Converges local rows with the mailbox in bounded chunks: server flags win, and rows the server no longer
+    /// returns for the current UIDVALIDITY were expunged or moved away remotely and are removed locally. Rows in a
+    /// pending local move keep their placeholder until their own reconciliation completes.
+    /// </summary>
     private async Task ReconcileFlagsAsync(
         Guid folderId,
-        uint uidValidity,
+        SyncState state,
         IRemoteMailFolder remote,
         CancellationToken cancellationToken)
     {
-        const int chunkSize = 500;
-        var lastUid = 0u;
-        while (true)
+        var uidValidity = remote.UidValidity;
+        var cursor = state.FlagScanCursorUid;
+        for (var chunkIndex = 0; chunkIndex < ReconciliationChunksPerRun; chunkIndex++)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var chunk = await db.Mails
                 .AsNoTracking()
-                .Where(mail => mail.MailFolderId == folderId && mail.UidValidity == uidValidity && mail.Uid > lastUid)
+                .Where(mail => mail.MailFolderId == folderId && mail.UidValidity == uidValidity && mail.Uid > cursor)
                 .OrderBy(mail => mail.Uid)
-                .Take(chunkSize)
-                .Select(mail => new { mail.Id, mail.Uid, mail.IsRead })
+                .Take(ReconciliationChunkSize)
+                .Select(mail => new ReconciliationRow(
+                    mail.Id, mail.Uid, mail.IsRead, mail.Answered, mail.Flagged, mail.Draft, mail.Deleted, mail.ReconciliationState, mail.ExpectedMailFolderId))
                 .ToListAsync(cancellationToken);
             if (chunk.Count == 0)
+            {
+                state.FlagScanCursorUid = 0;
+                state.LastFlagSyncAt = DateTime.UtcNow;
                 return;
+            }
 
             var flags = await remote.GetFlagsAsync(
                 chunk.Select(item => new UniqueId(item.Uid)).ToList(), cancellationToken);
-            var toRead = new List<Guid>();
-            var toUnread = new List<Guid>();
-            foreach (var item in chunk)
-            {
-                if (!flags.TryGetValue(item.Uid, out var seen))
-                    continue;
-                if (seen && !item.IsRead)
-                    toRead.Add(item.Id);
-                else if (!seen && item.IsRead)
-                    toUnread.Add(item.Id);
-            }
+            await ApplyFlagChangesAsync(folderId, uidValidity, chunk, flags, cancellationToken);
+            await RemoveVanishedAsync(folderId, uidValidity, chunk, flags, cancellationToken);
 
-            if (toRead.Count > 0)
+            cursor = chunk[^1].Uid;
+            state.FlagScanCursorUid = cursor;
+            if (chunk.Count < ReconciliationChunkSize)
             {
-                var mails = await db.Mails
-                    .Where(mail => mail.MailFolderId == folderId
-                        && mail.UidValidity == uidValidity
-                        && toRead.Contains(mail.Id))
-                    .ToListAsync(cancellationToken);
-                foreach (var mail in mails)
-                    mail.IsRead = true;
-                await db.SaveChangesAsync(cancellationToken);
-                foreach (var mail in mails)
-                    db.Entry(mail).State = EntityState.Detached;
+                state.FlagScanCursorUid = 0;
+                state.LastFlagSyncAt = DateTime.UtcNow;
+                return;
             }
-
-            if (toUnread.Count > 0)
-            {
-                var mails = await db.Mails
-                    .Where(mail => mail.MailFolderId == folderId
-                        && mail.UidValidity == uidValidity
-                        && toUnread.Contains(mail.Id))
-                    .ToListAsync(cancellationToken);
-                foreach (var mail in mails)
-                    mail.IsRead = false;
-                await db.SaveChangesAsync(cancellationToken);
-                foreach (var mail in mails)
-                    db.Entry(mail).State = EntityState.Detached;
-            }
-
-            lastUid = chunk[^1].Uid;
         }
+    }
+
+    private async Task ApplyFlagChangesAsync(
+        Guid folderId,
+        uint uidValidity,
+        IReadOnlyList<ReconciliationRow> chunk,
+        IReadOnlyDictionary<uint, RemoteMessageFlags> flags,
+        CancellationToken cancellationToken)
+    {
+        var changed = chunk
+            .Where(row => flags.TryGetValue(row.Uid, out var remote) && row.Differs(remote))
+            .Select(row => row.Id)
+            .ToList();
+        if (changed.Count == 0)
+            return;
+
+        var mails = await db.Mails
+            .Where(mail => mail.MailFolderId == folderId && mail.UidValidity == uidValidity && changed.Contains(mail.Id))
+            .ToListAsync(cancellationToken);
+        foreach (var mail in mails)
+        {
+            if (!flags.TryGetValue(mail.Uid, out var remoteFlags))
+                continue;
+            mail.IsRead = remoteFlags.Seen;
+            mail.Answered = remoteFlags.Answered;
+            mail.Flagged = remoteFlags.Flagged;
+            mail.Draft = remoteFlags.Draft;
+            mail.Deleted = remoteFlags.Deleted;
+        }
+
+        await db.SaveChangesAsync(cancellationToken);
+        foreach (var mail in mails)
+            db.Entry(mail).State = EntityState.Detached;
+    }
+
+    private async Task RemoveVanishedAsync(
+        Guid folderId,
+        uint uidValidity,
+        IReadOnlyList<ReconciliationRow> chunk,
+        IReadOnlyDictionary<uint, RemoteMessageFlags> flags,
+        CancellationToken cancellationToken)
+    {
+        var vanished = chunk
+            .Where(row => !flags.ContainsKey(row.Uid) && !row.HasPendingLocalOperation)
+            .Select(row => row.Id)
+            .ToList();
+        if (vanished.Count == 0)
+            return;
+
+        var storagePaths = await db.Attachments
+            .Where(attachment => vanished.Contains(attachment.MailId))
+            .Select(attachment => attachment.StoragePath)
+            .ToListAsync(cancellationToken);
+        var mails = await db.Mails
+            .Where(mail => mail.MailFolderId == folderId && mail.UidValidity == uidValidity && vanished.Contains(mail.Id))
+            .ToListAsync(cancellationToken);
+        db.Mails.RemoveRange(mails);
+        await db.SaveChangesAsync(cancellationToken);
+        await CleanupCreatedFilesAsync(storagePaths);
+        logger.LogInformation("Removed {Count} messages that no longer exist on the server.", mails.Count);
+    }
+
+    private sealed record ReconciliationRow(
+        Guid Id,
+        uint Uid,
+        bool IsRead,
+        bool Answered,
+        bool Flagged,
+        bool Draft,
+        bool Deleted,
+        MailReconciliationState ReconciliationState,
+        Guid? ExpectedMailFolderId)
+    {
+        public bool HasPendingLocalOperation =>
+            ReconciliationState == MailReconciliationState.Pending || ExpectedMailFolderId is not null;
+
+        public bool Differs(RemoteMessageFlags remote) =>
+            IsRead != remote.Seen
+            || Answered != remote.Answered
+            || Flagged != remote.Flagged
+            || Draft != remote.Draft
+            || Deleted != remote.Deleted;
     }
 
     private async Task<NewMailCandidate?> SyncOneAsync(
@@ -481,7 +589,7 @@ public sealed class MailFolderSyncService(
             var incomingMessageId = MailFieldNormalizer.MessageId(message.MessageId);
             if (await reconciliations.ReconcileAsync(accountId, folderId, incomingMessageId, uid.Id, remote.UidValidity, cancellationToken))
             {
-                state.LastUid = uid.Id;
+                state.LastUid = Math.Max(state.LastUid, uid.Id);
                 await db.SaveChangesAsync(cancellationToken);
                 return null;
             }
@@ -582,7 +690,7 @@ public sealed class MailFolderSyncService(
             mail.HasAttachments = mail.Attachments.Count > 0;
 
             db.Mails.Add(mail);
-            state.LastUid = uid.Id;
+            state.LastUid = Math.Max(state.LastUid, uid.Id);
             try
             {
                 await db.SaveChangesAsync(cancellationToken);

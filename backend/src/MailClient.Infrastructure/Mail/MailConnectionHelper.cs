@@ -12,7 +12,7 @@ using Microsoft.Extensions.Logging;
 
 namespace MailClient.Infrastructure.Mail;
 
-public sealed class MailConnectionHelper(
+public class MailConnectionHelper(
     OutboundHostValidator hosts,
     ILogger<MailConnectionHelper> logger,
     MailClientMetrics? metrics = null)
@@ -44,7 +44,7 @@ public sealed class MailConnectionHelper(
         }, timeout.Token);
     }
 
-    public async Task<T> WithImapAsync<T>(
+    public virtual async Task<T> WithImapAsync<T>(
         MailServerEndpoint endpoint,
         string username,
         string password,
@@ -58,7 +58,7 @@ public sealed class MailConnectionHelper(
             (service, ct) => action((ImapClient)service, ct), cancellationToken, authenticationMethod);
     }
 
-    public async Task<T> WithSmtpAsync<T>(
+    public virtual async Task<T> WithSmtpAsync<T>(
         MailServerEndpoint endpoint,
         string username,
         string password,

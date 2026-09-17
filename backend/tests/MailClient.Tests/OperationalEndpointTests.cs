@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using MailClient.Api.Endpoints;
@@ -219,6 +220,35 @@ public sealed class HttpTracingPrivacyTests(AcceptingApiFactory factory) : IClas
             Assert.DoesNotContain("confidential", Convert.ToString(tag.Value)!);
         });
         Assert.DoesNotContain(mailId.ToString(), span.DisplayName);
+    }
+}
+
+public sealed class AuthenticatedRateLimitTests(AcceptingApiFactory factory) : IClassFixture<AcceptingApiFactory>
+{
+    [Fact]
+    public async Task RateLimitPartitions_AreScopedToTheAuthenticatedAccount()
+    {
+        var first = await ConnectAsync();
+        var second = await ConnectAsync();
+        var statuses = new List<HttpStatusCode>();
+
+        for (var i = 0; i < 125; i++)
+            statuses.Add((await first.GetAsync("/api/account")).StatusCode);
+
+        Assert.Contains(HttpStatusCode.TooManyRequests, statuses);
+        Assert.Equal(HttpStatusCode.OK, (await second.GetAsync("/api/account")).StatusCode);
+    }
+
+    private async Task<HttpClient> ConnectAsync()
+    {
+        var client = factory.CreateClient();
+        var response = await client.PostAsJsonAsync(
+            "/api/accounts/connect-manual",
+            ManualRequestBuilder.Build("mail.test.invalid", "mail.test.invalid", $"limits-{Guid.NewGuid():N}@example.test"));
+        response.EnsureSuccessStatusCode();
+        var tokens = (await response.Content.ReadFromJsonAsync<JsonDocument>())!.RootElement;
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", tokens.GetProperty("accessToken").GetString());
+        return client;
     }
 }
 

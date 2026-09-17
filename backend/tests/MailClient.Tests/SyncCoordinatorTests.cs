@@ -321,6 +321,34 @@ public sealed class SyncCoordinatorTests
     }
 
     [Fact]
+    public async Task Coordinator_ReconciliationReachesFolderThatIsNotPeriodicallySynced()
+    {
+        var executor = new OrderRecordingExecutor(new ConcurrentQueue<Guid>());
+        var harness = CreateHarness(executor, maxAccounts: 1, maxFolders: 1);
+        var accountId = await harness.SeedAccountAsync(0);
+        var trashId = await harness.AddFolderAsync(accountId, MailFolderType.Trash, isSyncEnabled: false);
+
+        await harness.Scheduler.ScheduleFolderAsync(accountId, trashId, SyncOrigin.Reconciliation, CancellationToken.None);
+        await harness.Scheduler.DispatchOnceAsync(CancellationToken.None);
+
+        Assert.Equal([trashId], executor.FolderCalls.Select(call => call.FolderId));
+    }
+
+    [Fact]
+    public async Task Coordinator_PeriodicWorkStillSkipsFoldersThatAreNotSyncEnabled()
+    {
+        var executor = new OrderRecordingExecutor(new ConcurrentQueue<Guid>());
+        var harness = CreateHarness(executor, maxAccounts: 1, maxFolders: 1);
+        var accountId = await harness.SeedAccountAsync(0);
+        var trashId = await harness.AddFolderAsync(accountId, MailFolderType.Trash, isSyncEnabled: false);
+
+        await harness.Scheduler.ScheduleFolderAsync(accountId, trashId, SyncOrigin.Periodic, CancellationToken.None);
+        await harness.Scheduler.DispatchOnceAsync(CancellationToken.None);
+
+        Assert.Empty(executor.FolderCalls);
+    }
+
+    [Fact]
     public async Task Coordinator_LockContention_RequeuesImmediately()
     {
         var executor = new OrderRecordingExecutor(new ConcurrentQueue<Guid>());
@@ -443,7 +471,7 @@ public sealed class SyncCoordinatorTests
             return accountId;
         }
 
-        public async Task<Guid> AddFolderAsync(Guid accountId, MailFolderType type)
+        public async Task<Guid> AddFolderAsync(Guid accountId, MailFolderType type, bool isSyncEnabled = true)
         {
             using var scope = provider.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -455,7 +483,7 @@ public sealed class SyncCoordinatorTests
                 Name = type.ToString(),
                 FullName = $"{type}-{folderId:N}",
                 FolderType = type,
-                IsSyncEnabled = true,
+                IsSyncEnabled = isSyncEnabled,
                 IsAvailable = true
             });
             db.SyncStates.Add(new SyncState { Id = Guid.NewGuid(), MailAccountId = accountId, MailFolderId = folderId });

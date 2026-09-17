@@ -28,6 +28,14 @@ internal class FakeRemoteMailFolder(
 {
     public Dictionary<uint, Func<MimeMessage>> Messages { get; } = messages;
     public Dictionary<uint, Func<Exception>> Failures { get; } = [];
+    public HashSet<uint> AnsweredUids { get; } = [];
+    public HashSet<uint> FlaggedUids { get; } = [];
+    public HashSet<uint> DraftUids { get; } = [];
+    public HashSet<uint> DeletedUids { get; } = [];
+
+    /// <summary>0 keeps the legacy oldest-first behaviour; set it to emulate a server that reports UIDNEXT.</summary>
+    public uint UidNext { get; set; }
+    public long LastBackfillBelowUid { get; private set; }
     public int LastSearchMaxCount { get; private set; }
     public uint LastSearchAfterUid { get; private set; }
     public uint UidValidity { get; set; } = uidValidity;
@@ -67,11 +75,30 @@ internal class FakeRemoteMailFolder(
                     IsRecent: false,
                     InternalDate: null)));
 
-    public Task<IReadOnlyDictionary<uint, bool>> GetFlagsAsync(
+    public Task<UidBackfillResult> SearchOlderAsync(long belowUidExclusive, int maxCount, CancellationToken cancellationToken)
+    {
+        LastBackfillBelowUid = belowUidExclusive;
+        var found = Messages.Keys
+            .Where(uid => uid < belowUidExclusive)
+            .OrderByDescending(uid => uid)
+            .Take(maxCount)
+            .OrderBy(uid => uid)
+            .Select(uid => new UniqueId(uid))
+            .ToList();
+        var next = found.Count < maxCount || found[0].Id <= 1 ? 0 : found[0].Id;
+        return Task.FromResult(new UidBackfillResult(found, next));
+    }
+
+    public Task<IReadOnlyDictionary<uint, RemoteMessageFlags>> GetFlagsAsync(
         IReadOnlyCollection<UniqueId> uids, CancellationToken cancellationToken) =>
-        Task.FromResult<IReadOnlyDictionary<uint, bool>>(uids
+        Task.FromResult<IReadOnlyDictionary<uint, RemoteMessageFlags>>(uids
             .Where(uid => Messages.ContainsKey(uid.Id))
-            .ToDictionary(uid => uid.Id, uid => _seenUids.Contains(uid.Id)));
+            .ToDictionary(uid => uid.Id, uid => new RemoteMessageFlags(
+                _seenUids.Contains(uid.Id),
+                AnsweredUids.Contains(uid.Id),
+                FlaggedUids.Contains(uid.Id),
+                DraftUids.Contains(uid.Id),
+                DeletedUids.Contains(uid.Id))));
 
     public Task<MimeMessage> GetMessageAsync(UniqueId uid, CancellationToken cancellationToken)
     {
@@ -121,24 +148,53 @@ internal sealed class FakeMailFolderClient(FakeRemoteMailFolder remote) : IMailF
         action(remote, cancellationToken);
 }
 
-internal sealed class FakeFileStorage : IFileStorage
+/// <summary>In-memory <see cref="IFileStorage"/> adapter: exercises the storage contract without a real backend.</summary>
+public sealed class FakeFileStorage : IFileStorage
 {
+    private readonly Dictionary<string, byte[]> _content = [];
+
     public List<string> Saved { get; } = [];
     public List<string> Deleted { get; } = [];
+    public bool Available { get; set; } = true;
+    public IReadOnlyDictionary<string, byte[]> Content => _content;
 
-    public Task<StoredFile> SaveAsync(Guid accountId, Guid mailId, Guid attachmentId,
+    public async Task<StoredFile> SaveAsync(Guid accountId, Guid mailId, Guid attachmentId,
         Func<Stream, CancellationToken, Task> write, long maxBytes, CancellationToken cancellationToken)
     {
-        var path = $"fake/{Guid.NewGuid():N}";
+        var path = MailClient.Infrastructure.Storage.AttachmentPath.Relative(accountId, mailId, attachmentId);
+        using var buffer = new MemoryStream();
+        await using (var bounded = new MailClient.Infrastructure.Storage.BoundedWriteStream(buffer, maxBytes))
+            await write(bounded, cancellationToken);
+        _content[path] = buffer.ToArray();
         Saved.Add(path);
-        return Task.FromResult(new StoredFile(path, 3));
+        return new StoredFile(path, _content[path].Length);
     }
+
+    public Task<Stream> OpenReadAsync(string relativePath, CancellationToken cancellationToken) =>
+        _content.TryGetValue(relativePath, out var bytes)
+            ? Task.FromResult<Stream>(new MemoryStream(bytes))
+            : throw new FileNotFoundException(relativePath);
 
     public Task DeleteAsync(string relativePath, CancellationToken cancellationToken)
     {
         Deleted.Add(relativePath);
+        _content.Remove(relativePath);
         return Task.CompletedTask;
     }
+
+    public Task DeleteAccountAsync(Guid accountId, CancellationToken cancellationToken)
+    {
+        var prefix = MailClient.Infrastructure.Storage.AttachmentPath.AccountPrefix(accountId);
+        foreach (var key in _content.Keys.Where(key => key.StartsWith(prefix, StringComparison.Ordinal)).ToList())
+        {
+            _content.Remove(key);
+            Deleted.Add(key);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public Task<bool> IsAvailableAsync(CancellationToken cancellationToken) => Task.FromResult(Available);
 }
 
 internal sealed class FakeSyncScheduler : ISyncScheduler

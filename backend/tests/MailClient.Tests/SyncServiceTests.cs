@@ -1,4 +1,5 @@
 using MailClient.Application.Sync;
+using MailClient.Domain.Entities;
 using MailClient.Domain.Enums;
 using MailClient.Infrastructure.Network;
 using MailClient.Infrastructure.Persistence;
@@ -190,6 +191,95 @@ public sealed class SyncServiceTests
         Assert.Equal(expected, SyncStateDecision.RequiresReset(storedUidValidity, serverUidValidity));
     }
 
+    [Fact]
+    public async Task NewMailbox_ImportsNewestFirst_ThenBackfillsOlderHistory()
+    {
+        await using var db = CreateDb();
+        var (accountId, folderId) = await SeedUnsyncedFolderAsync(db);
+        var messages = Enumerable.Range(1, 1000)
+            .ToDictionary(uid => (uint)uid, uid => (Func<MimeKit.MimeMessage>)(() => SimpleMessage($"m{uid}")));
+        var remote = new FakeRemoteMailFolder(7, messages) { UidNext = 1001 };
+        var service = CreateService(db, Options(100));
+
+        await service.SyncFolderCoreAsync(accountId, folderId, remote, CancellationToken.None);
+
+        var firstRun = await db.Mails.Select(mail => mail.Uid).OrderBy(uid => uid).ToListAsync();
+        Assert.Equal(100, firstRun.Count);
+        Assert.Equal(901u, firstRun[0]);
+        Assert.Equal(1000u, firstRun[^1]);
+        var state = await db.SyncStates.SingleAsync();
+        Assert.Equal(901, state.BackfillNextUid);
+        Assert.Equal(1001, state.NextUidScanStart);
+
+        for (var run = 0; run < 9; run++)
+            await service.SyncFolderCoreAsync(accountId, folderId, remote, CancellationToken.None);
+
+        Assert.Equal(1000, await db.Mails.CountAsync());
+        Assert.Equal(1000, await db.Mails.Select(mail => mail.Uid).Distinct().CountAsync());
+        Assert.Equal(0, (await db.SyncStates.SingleAsync()).BackfillNextUid);
+    }
+
+    [Fact]
+    public async Task BackfillInProgress_StillImportsNewArrivalsFirst()
+    {
+        await using var db = CreateDb();
+        var (accountId, folderId) = await SeedUnsyncedFolderAsync(db);
+        var messages = Enumerable.Range(1, 500)
+            .ToDictionary(uid => (uint)uid, uid => (Func<MimeKit.MimeMessage>)(() => SimpleMessage($"m{uid}")));
+        var remote = new FakeRemoteMailFolder(7, messages) { UidNext = 501 };
+        var service = CreateService(db, Options(10));
+
+        await service.SyncFolderCoreAsync(accountId, folderId, remote, CancellationToken.None);
+        remote.Messages[501] = () => SimpleMessage("brand-new");
+        remote.UidNext = 502;
+        await service.SyncFolderCoreAsync(accountId, folderId, remote, CancellationToken.None);
+
+        Assert.Contains(501u, await db.Mails.Select(mail => mail.Uid).ToListAsync());
+        Assert.True((await db.SyncStates.SingleAsync()).BackfillNextUid > 0, "older history must still be pending");
+        Assert.Equal(
+            await db.Mails.Select(mail => mail.Uid).Distinct().CountAsync(),
+            await db.Mails.CountAsync());
+    }
+
+    [Fact]
+    public async Task RemoteExpungeAndFlagChanges_ConvergeLocally_WithoutTouchingPendingMoves()
+    {
+        await using var db = CreateDb();
+        var (accountId, folderId) = await SeedFolderAsync(db);
+        var messages = Enumerable.Range(1, 4)
+            .ToDictionary(uid => (uint)uid, uid => (Func<MimeKit.MimeMessage>)(() => SimpleMessage($"m{uid}")));
+        var remote = new FakeRemoteMailFolder(7, messages);
+        var service = CreateService(db, Options(100));
+        await service.SyncFolderCoreAsync(accountId, folderId, remote, CancellationToken.None);
+        Assert.Equal(4, await db.Mails.CountAsync());
+
+        // UID 3 is mid-move locally; UID 2 and UID 4 disappear from the server.
+        var pending = await db.Mails.SingleAsync(mail => mail.Uid == 3);
+        pending.ReconciliationState = MailReconciliationState.Pending;
+        pending.ExpectedMailFolderId = Guid.NewGuid();
+        var state = await db.SyncStates.SingleAsync();
+        state.LastFlagSyncAt = null;
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+        remote.Messages.Remove(2);
+        remote.Messages.Remove(3);
+        remote.Messages.Remove(4);
+        await remote.SetSeenAsync(new MailKit.UniqueId(1), true, CancellationToken.None);
+        remote.FlaggedUids.Add(1);
+        remote.AnsweredUids.Add(1);
+
+        await service.SyncFolderCoreAsync(accountId, folderId, remote, CancellationToken.None);
+
+        var remaining = await db.Mails.OrderBy(mail => mail.Uid).ToListAsync();
+        Assert.Equal([1u, 3u], remaining.Select(mail => mail.Uid));
+        Assert.True(remaining[0].IsRead);
+        Assert.True(remaining[0].Flagged);
+        Assert.True(remaining[0].Answered);
+        var after = await db.SyncStates.SingleAsync();
+        Assert.Equal(0u, after.FlagScanCursorUid);
+        Assert.NotNull(after.LastFlagSyncAt);
+    }
+
     private static MailFolderSyncService CreateService(AppDbContext db, MailSyncOptions options, FakePushNotificationService? push = null) =>
         new(db,
             new MailCredentialResolver(db, new PassthroughProtector()),
@@ -200,6 +290,15 @@ public sealed class SyncServiceTests
             options,
             push ?? new FakePushNotificationService(),
             new MailClient.Infrastructure.Services.ConversationService(db), new MailReconciliationService(db), NullLogger<MailFolderSyncService>.Instance);
+
+    private static async Task<(Guid AccountId, Guid FolderId)> SeedUnsyncedFolderAsync(AppDbContext db)
+    {
+        var seeded = await SeedFolderAsync(db);
+        db.SyncStates.RemoveRange(db.SyncStates);
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+        return seeded;
+    }
 
     private static AppDbContext CreateDb() => new(new DbContextOptionsBuilder<AppDbContext>()
         .UseInMemoryDatabase(Guid.NewGuid().ToString("N")).Options);

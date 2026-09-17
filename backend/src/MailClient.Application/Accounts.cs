@@ -7,6 +7,7 @@ public sealed record DiscoverResponse(string DiscoveryId, string Email, MailProv
 public sealed record AuthenticationInput(AuthenticationMethod Type, string Password);
 public sealed record EndpointInput(string Host, int Port, MailSecurity Security);
 public sealed record ConnectRequest(string DiscoveryId, AuthenticationInput Authentication, string? DeviceIdentifier = null);
+public sealed record AccountReconnectRequest(AuthenticationInput Authentication, EndpointInput? Imap = null, EndpointInput? Smtp = null);
 public sealed record ManualConnectRequest(string Email, string Username, AuthenticationInput Authentication, EndpointInput Imap, EndpointInput Smtp, string? DisplayName = null, string? DeviceIdentifier = null);
 public sealed record TokenResponse(string AccessToken, string RefreshToken, Guid MailAccountId, DateTime AccessTokenExpiresAt);
 public sealed record RefreshRequest(string RefreshToken);

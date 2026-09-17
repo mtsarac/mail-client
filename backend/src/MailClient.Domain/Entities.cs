@@ -163,6 +163,12 @@ public sealed class SyncState
     public uint UidValidity { get; set; }
     public uint LastUid { get; set; }
     public long NextUidScanStart { get; set; } = 1;
+
+    /// <summary>Exclusive upper bound for the next newest-first backfill page; 0 when history is complete.</summary>
+    public long BackfillNextUid { get; set; }
+
+    /// <summary>Resume point of the current chunked flag/removal reconciliation pass; 0 starts a new pass.</summary>
+    public uint FlagScanCursorUid { get; set; }
     public DateTime? LastNewMailSyncAt { get; set; }
     public DateTime? LastFlagSyncAt { get; set; }
     public int ConsecutiveFailures { get; set; }

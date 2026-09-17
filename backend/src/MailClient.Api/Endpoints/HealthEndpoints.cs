@@ -1,5 +1,5 @@
+using MailClient.Application.Mail;
 using MailClient.Infrastructure.Persistence;
-using MailClient.Infrastructure.Storage;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 
@@ -45,21 +45,10 @@ internal sealed class PostgresHealthCheck(AppDbContext db) : IHealthCheck
             : HealthCheckResult.Unhealthy("Database is unreachable.");
 }
 
-internal sealed class StorageHealthCheck(LocalAttachmentStorage storage) : IHealthCheck
+internal sealed class StorageHealthCheck(IFileStorage storage) : IHealthCheck
 {
-    public async Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context, CancellationToken cancellationToken = default)
-    {
-        try
-        {
-            Directory.CreateDirectory(storage.RootPath);
-            var probe = Path.Combine(storage.RootPath, $".health-{Guid.NewGuid():N}.tmp");
-            await File.WriteAllBytesAsync(probe, [], cancellationToken);
-            File.Delete(probe);
-            return HealthCheckResult.Healthy();
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            return HealthCheckResult.Unhealthy("Attachment storage is not writable.");
-        }
-    }
+    public async Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context, CancellationToken cancellationToken = default) =>
+        await storage.IsAvailableAsync(cancellationToken)
+            ? HealthCheckResult.Healthy()
+            : HealthCheckResult.Unhealthy("Attachment storage is not available.");
 }

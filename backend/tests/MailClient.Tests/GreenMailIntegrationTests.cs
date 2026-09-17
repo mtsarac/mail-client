@@ -89,6 +89,61 @@ public sealed class GreenMailIntegrationTests(GreenMailFixture greenmail)
     }
 
     [Fact]
+    public async Task RealImap_RemoteExpungeAndFlagChanges_ConvergeLocally()
+    {
+        if (!IntegrationEnvironment.GreenMailEnabled) return;
+        var kept = $"kept-{Guid.NewGuid():N}";
+        var removed = $"removed-{Guid.NewGuid():N}";
+        await SeedMessageAsync(kept, markSeen: false);
+        await SeedMessageAsync(removed, markSeen: false);
+
+        await using var db = NewDb();
+        var (accountId, folderId) = await SeedAccountAsync(db);
+        await SyncAsync(db, accountId, folderId);
+        Assert.NotNull(await db.Mails.SingleOrDefaultAsync(mail => mail.Subject == removed));
+
+        using (var imap = await ConnectAsync())
+        {
+            var inbox = imap.Inbox;
+            await inbox.OpenAsync(FolderAccess.ReadWrite, CancellationToken.None);
+            var removedUids = await inbox.SearchAsync(SearchQuery.SubjectContains(removed), CancellationToken.None);
+            await inbox.AddFlagsAsync(removedUids, MessageFlags.Deleted, true, CancellationToken.None);
+            try
+            {
+                await inbox.ExpungeAsync(removedUids, CancellationToken.None);
+            }
+            catch (NotSupportedException)
+            {
+                await inbox.ExpungeAsync(CancellationToken.None);
+            }
+
+            var keptUids = await inbox.SearchAsync(SearchQuery.SubjectContains(kept), CancellationToken.None);
+            await inbox.AddFlagsAsync(keptUids, MessageFlags.Seen | MessageFlags.Flagged | MessageFlags.Answered, true, CancellationToken.None);
+        }
+
+        var state = await db.SyncStates.SingleAsync();
+        state.LastFlagSyncAt = null;
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+
+        await SyncAsync(db, accountId, folderId);
+
+        Assert.Null(await db.Mails.SingleOrDefaultAsync(mail => mail.Subject == removed));
+        var survivor = await db.Mails.SingleAsync(mail => mail.Subject == kept);
+        Assert.True(survivor.IsRead);
+        Assert.True(survivor.Flagged);
+        Assert.True(survivor.Answered);
+    }
+
+    private async Task SyncAsync(AppDbContext db, Guid accountId, Guid folderId)
+    {
+        using var imap = await ConnectAsync();
+        var inbox = imap.Inbox;
+        await inbox.OpenAsync(FolderAccess.ReadOnly, CancellationToken.None);
+        await CreateSyncService(db).SyncFolderCoreAsync(accountId, folderId, new MailKitRemoteMailFolder(inbox), CancellationToken.None);
+    }
+
+    [Fact]
     public async Task RealImap_ProductionRemoteFolder_AppendsSentCopy()
     {
         if (!IntegrationEnvironment.GreenMailEnabled) return;

@@ -40,6 +40,7 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+using Amazon.S3;
 using Microsoft.OpenApi;
 using Serilog;
 using Serilog.Formatting.Json;
@@ -200,8 +201,19 @@ builder.Services.AddScoped<ISyncLockProvider>(sp =>
 });
 if (!builder.Environment.IsEnvironment("Test"))
     builder.Services.AddHostedService<MailSyncService>();
-builder.Services.AddSingleton(new LocalAttachmentStorage(Path.Combine(builder.Environment.ContentRootPath, "data")));
-builder.Services.AddSingleton<IFileStorage>(sp => sp.GetRequiredService<LocalAttachmentStorage>());
+var storageOptions = builder.Configuration.GetSection("Storage").Get<StorageOptions>() ?? new StorageOptions();
+storageOptions.Validate();
+builder.Services.AddSingleton(storageOptions);
+if (storageOptions.Provider == StorageProvider.S3)
+{
+    builder.Services.AddSingleton<IAmazonS3>(_ => S3StorageFactory.Create(storageOptions.S3));
+    builder.Services.AddSingleton<IFileStorage>(sp => new S3AttachmentStorage(sp.GetRequiredService<IAmazonS3>(), storageOptions));
+}
+else
+{
+    builder.Services.AddSingleton(new LocalAttachmentStorage(Path.Combine(builder.Environment.ContentRootPath, "data")));
+    builder.Services.AddSingleton<IFileStorage>(sp => sp.GetRequiredService<LocalAttachmentStorage>());
+}
 var jwt = builder.Configuration.GetSection("Jwt").Get<JwtOptions>() ?? new("MailClient", "MailClient", "development-only-key-change-before-production-123456789", 15);
 if (jwt.Key.Length < 32) throw new InvalidOperationException("Jwt:Key must contain at least 32 characters.");
 if (!builder.Environment.IsDevelopment() && !builder.Environment.IsEnvironment("Test") && jwt.Key == JwtOptions.DevelopmentKey)
@@ -211,6 +223,7 @@ builder.Services.AddSingleton<IJwtTokenIssuer, JwtTokenIssuer>();
 builder.Services.AddScoped<ICurrentMailAccount, CurrentMailAccount>();
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(options =>
 {
+    options.MapInboundClaims = false;
     options.TokenValidationParameters = new()
     {
         ValidateIssuer = true,
@@ -226,9 +239,7 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJw
     {
         OnTokenValidated = async context =>
         {
-            var subject = context.Principal?.FindFirstValue(ClaimTypes.NameIdentifier)
-                ?? context.Principal?.FindFirstValue(JwtRegisteredClaimNames.Sub);
-            if (!Guid.TryParse(subject, out var mailAccountId))
+            if (!MailAccountClaims.TryGetAccountId(context.Principal, out var mailAccountId))
             {
                 context.Fail("JWT subject is not a mail account id.");
                 return;
@@ -248,7 +259,7 @@ builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = 429;
     options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context => RateLimitPartition.GetFixedWindowLimiter(
-        context.User.FindFirstValue(JwtRegisteredClaimNames.Sub) ?? context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        MailAccountClaims.GetAccountIdOrNull(context.User) ?? context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
         _ => new FixedWindowRateLimiterOptions { PermitLimit = 60, Window = TimeSpan.FromMinutes(1) }));
 });
 if (builder.Environment.IsDevelopment())

@@ -41,6 +41,12 @@ public sealed class AccountConnectionService(
         if (authentication.Type is not (AuthenticationMethod.Password or AuthenticationMethod.AppSpecificPassword) || string.IsNullOrWhiteSpace(authentication.Password)) throw new InvalidOperationException("unsupported_authentication_method");
         (await runtimePolicy.GetAsync(cancellationToken)).EnsureNewAccountAllowed(candidate.Provider, authentication.Type);
         if (!email.Contains('@', StringComparison.Ordinal)) throw new InvalidOperationException("invalid_email");
+        var normalizedEmail = email.Trim().ToUpperInvariant();
+        // Anonymous connection creates accounts only. Re-pointing an existing mailbox at different servers or
+        // credentials would let any caller claim someone else's account with a mail server they control, so it
+        // requires an authenticated account-scoped reconnect instead.
+        if (await db.MailAccounts.AnyAsync(item => item.NormalizedEmailAddress == normalizedEmail, cancellationToken))
+            throw new InvalidOperationException("mail_account_already_exists");
         var local = email[..email.IndexOf('@')];
         var usernames = new[] { username, email, local }.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase);
         string? working = null;
@@ -58,14 +64,9 @@ public sealed class AccountConnectionService(
             }
         }
         if (working is null) throw new InvalidOperationException("mail_authentication_failed");
-        var normalized = email.Trim().ToUpperInvariant();
-        var account = await db.MailAccounts.Include(x => x.Credentials).SingleOrDefaultAsync(x => x.NormalizedEmailAddress == normalized, cancellationToken);
         var now = DateTime.UtcNow;
-        if (account is null)
-        {
-            account = new MailAccount { Id = Guid.NewGuid(), EmailAddress = email.Trim(), NormalizedEmailAddress = normalized, CreatedAt = now };
-            db.MailAccounts.Add(account);
-        }
+        var account = new MailAccount { Id = Guid.NewGuid(), EmailAddress = email.Trim(), NormalizedEmailAddress = normalizedEmail, CreatedAt = now };
+        db.MailAccounts.Add(account);
         account.DisplayName = displayName?.Trim() ?? account.DisplayName;
         account.Username = working;
         account.Provider = candidate.Provider;
@@ -76,25 +77,90 @@ public sealed class AccountConnectionService(
         var credential = account.Credentials.SingleOrDefault(x => x.AuthenticationMethod == authentication.Type);
         if (credential is null) { credential = new MailCredential { Id = Guid.NewGuid(), MailAccount = account, AuthenticationMethod = authentication.Type, Provider = candidate.Provider, CreatedAt = now }; account.Credentials.Add(credential); }
         credential.EncryptedMaterial = protector.Protect(authentication.Password); credential.UpdatedAt = now;
-        await db.SaveChangesAsync(cancellationToken);
-        await RefreshFoldersBestEffortAsync(account, working, authentication.Password, cancellationToken);
+        try
+        {
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException)
+        {
+            // Unique index on NormalizedEmailAddress: a concurrent connection created the account first.
+            throw new InvalidOperationException("mail_account_already_exists");
+        }
+
+        await RefreshFoldersBestEffortAsync(account, cancellationToken);
         var session = await sessions.CreateAsync(account.Id, deviceIdentifier, cancellationToken);
         await scheduler.ScheduleAccountAsync(account.Id, SyncOrigin.Initial, cancellationToken);
         var access = jwt.Issue(account.Id);
         return new(access.Token, session.Token, account.Id, access.ExpiresAt);
     }
 
+    /// <summary>
+    /// Authenticated credential/server update for the caller's own account. The account is located by the
+    /// authenticated id, never by a submitted email address.
+    /// </summary>
+    public async Task<MailAccount> ReconnectAsync(Guid accountId, AccountReconnectRequest request, CancellationToken cancellationToken)
+    {
+        if (request.Authentication.Type is not (AuthenticationMethod.Password or AuthenticationMethod.AppSpecificPassword)
+            || string.IsNullOrWhiteSpace(request.Authentication.Password))
+            throw new InvalidOperationException("unsupported_authentication_method");
+        var account = await db.MailAccounts.Include(item => item.Credentials)
+            .SingleOrDefaultAsync(item => item.Id == accountId, cancellationToken)
+            ?? throw new InvalidOperationException("mail_account_not_found");
+        var policy = await runtimePolicy.GetAsync(cancellationToken);
+        policy.EnsureExistingAccountAllowed(account.Provider);
+        policy.EnsureAuthenticationMethodAllowed(account.Provider, request.Authentication.Type);
+
+        var imap = request.Imap is { } imapInput
+            ? new MailEndpoint(imapInput.Host, imapInput.Port, imapInput.Security)
+            : new MailEndpoint(account.ImapHost, account.ImapPort, account.ImapSecurity);
+        var smtp = request.Smtp is { } smtpInput
+            ? new MailEndpoint(smtpInput.Host, smtpInput.Port, smtpInput.Security)
+            : new MailEndpoint(account.SmtpHost, account.SmtpPort, account.SmtpSecurity);
+        var candidate = new MailServerCandidate(
+            account.Provider, imap, smtp,
+            [AuthenticationMethod.Password, AuthenticationMethod.AppSpecificPassword],
+            request.Imap is null && request.Smtp is null ? account.DiscoverySource : DiscoverySource.Manual);
+        await connections.ValidateCredentialsAsync(candidate, account.Username, request.Authentication.Password, cancellationToken);
+
+        var now = DateTime.UtcNow;
+        account.AuthenticationMethod = request.Authentication.Type;
+        account.ImapHost = imap.Host; account.ImapPort = imap.Port; account.ImapSecurity = imap.Security;
+        account.SmtpHost = smtp.Host; account.SmtpPort = smtp.Port; account.SmtpSecurity = smtp.Security;
+        account.DiscoverySource = candidate.Source;
+        account.Status = MailAccountStatus.Active;
+        account.UpdatedAt = now;
+        account.LastAuthenticatedAt = now;
+        var credential = account.Credentials.SingleOrDefault(item => item.AuthenticationMethod == request.Authentication.Type);
+        if (credential is null)
+        {
+            credential = new MailCredential { Id = Guid.NewGuid(), MailAccount = account, AuthenticationMethod = request.Authentication.Type, Provider = account.Provider, CreatedAt = now };
+            account.Credentials.Add(credential);
+        }
+
+        credential.EncryptedMaterial = protector.Protect(request.Authentication.Password);
+        credential.UpdatedAt = now;
+        await db.SaveChangesAsync(cancellationToken);
+        await RefreshFoldersBestEffortAsync(account, cancellationToken);
+        await scheduler.ScheduleAccountAsync(account.Id, SyncOrigin.UserRequested, cancellationToken);
+        return account;
+    }
+
     public async Task<int> RefreshFoldersAsync(Guid accountId, CancellationToken cancellationToken)
     {
         var resolved = await credentialResolver.ResolveAsync(accountId, cancellationToken);
-        return await ReconcileFoldersAsync(resolved.Account, resolved.Username, resolved.Password, cancellationToken);
+        return await ReconcileFoldersAsync(resolved.Account, resolved.Username, resolved.Secret, resolved.AuthenticationMethod, cancellationToken);
     }
 
-    private async Task RefreshFoldersBestEffortAsync(MailAccount account, string username, string password, CancellationToken cancellationToken)
+    /// <summary>
+    /// Folder discovery after connect/reconnect authenticates with the credential persisted for the account,
+    /// never with the values submitted on the request. The authentication method that reaches the mail server is
+    /// therefore always the stored one, so a request can never select the mechanism a connection authenticates with.
+    /// </summary>
+    private async Task RefreshFoldersBestEffortAsync(MailAccount account, CancellationToken cancellationToken)
     {
         try
         {
-            await ReconcileFoldersAsync(account, username, password, cancellationToken);
+            await RefreshFoldersAsync(account.Id, cancellationToken);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -102,10 +168,10 @@ public sealed class AccountConnectionService(
         }
     }
 
-    private async Task<int> ReconcileFoldersAsync(MailAccount account, string username, string password, CancellationToken cancellationToken)
+    private async Task<int> ReconcileFoldersAsync(MailAccount account, string username, string password, AuthenticationMethod authenticationMethod, CancellationToken cancellationToken)
     {
         var endpoint = new MailServerEndpoint(account.ImapHost, account.ImapPort, account.ImapSecurity);
-        var discovered = await explorer.ExploreAsync(endpoint, username, password, cancellationToken);
+        var discovered = await explorer.ExploreAsync(endpoint, username, password, cancellationToken, authenticationMethod);
         var existing = await db.MailFolders.Where(folder => folder.MailAccountId == account.Id).ToListAsync(cancellationToken);
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var folder in discovered)
