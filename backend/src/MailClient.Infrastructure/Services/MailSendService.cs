@@ -2,6 +2,8 @@ using System.Buffers;
 using System.Security.Cryptography;
 using MailClient.Application.Conversations;
 using MailClient.Application.Mail;
+using MailClient.Application.Runtime;
+using MailClient.Infrastructure.Runtime;
 using MailClient.Application.Sync;
 using MailClient.Domain.Entities;
 using MailClient.Domain.Enums;
@@ -20,10 +22,21 @@ public sealed class MailSendService(
     AppDbContext db,
     Mail.IMailTransport transport,
     SendOperationStore operations,
-    MailSyncOptions options,
+    RuntimeOperationSettings operationSettings,
     AuditLogger audit,
     ILogger<MailSendService> logger)
 {
+    public MailSendService(
+        AppDbContext db,
+        Mail.IMailTransport transport,
+        SendOperationStore operations,
+        MailSyncOptions options,
+        AuditLogger audit,
+        ILogger<MailSendService> logger)
+        : this(db, transport, operations, RuntimeOperationSettings.FromMailSyncOptions(options), audit, logger)
+    {
+    }
+
     private const int MaxAttachmentCount = 20;
 
     public async Task<SendMailResult> SendAsync(
@@ -49,19 +62,20 @@ public sealed class MailSendService(
         string? correlationId,
         CancellationToken cancellationToken)
     {
+        var limits = (await operationSettings.GetAsync(cancellationToken)).Settings.Limits;
         var recipients = MailRecipientResolver.Parse(command.To, command.Cc, command.Bcc);
         var to = recipients.To.Select(recipient => new MailboxAddress(recipient.DisplayName, recipient.Address)).ToList();
         var cc = recipients.Cc.Select(recipient => new MailboxAddress(recipient.DisplayName, recipient.Address)).ToList();
         var bcc = recipients.Bcc.Select(recipient => new MailboxAddress(recipient.DisplayName, recipient.Address)).ToList();
         if (string.IsNullOrWhiteSpace(command.BodyHtml) && string.IsNullOrWhiteSpace(command.BodyText))
             throw new InvalidOperationException("body_required");
-        if ((command.BodyHtml?.Length ?? 0) > options.MaxSendBodyChars
-            || (command.BodyText?.Length ?? 0) > options.MaxSendBodyChars)
+        if ((command.BodyHtml?.Length ?? 0) > limits.MaxSendBodyChars
+            || (command.BodyText?.Length ?? 0) > limits.MaxSendBodyChars)
             throw new InvalidOperationException("body_too_large");
         if (command.Attachments.Count > MaxAttachmentCount)
             throw new InvalidOperationException("too_many_attachments");
 
-        var sizeError = CheckAttachmentSizes(command.Attachments);
+        var sizeError = CheckAttachmentSizes(command.Attachments, limits);
         if (sizeError is not null)
             throw new InvalidOperationException("attachment_too_large");
 
@@ -280,19 +294,19 @@ public sealed class MailSendService(
         return hashed;
     }
 
-    private string? CheckAttachmentSizes(IReadOnlyList<SendMailAttachment> attachments)
+    private static string? CheckAttachmentSizes(IReadOnlyList<SendMailAttachment> attachments, RuntimeLimitSettings limits)
     {
         var total = 0L;
         foreach (var attachment in attachments)
         {
             if (!attachment.Content.CanSeek)
                 return "Attachment size could not be determined.";
-            if (attachment.Content.Length > options.MaxAttachmentBytes)
+            if (attachment.Content.Length > limits.MaxAttachmentBytes)
                 return $"Attachment '{attachment.FileName}' exceeds the per-attachment size limit.";
             total += attachment.Content.Length;
         }
 
-        return total > options.MaxMessageAttachmentBytes
+        return total > limits.MaxMessageAttachmentBytes
             ? "Attachments exceed the per-message size limit."
             : null;
     }
