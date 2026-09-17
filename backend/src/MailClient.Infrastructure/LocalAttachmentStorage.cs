@@ -51,7 +51,7 @@ public sealed class LocalAttachmentStorage(string rootPath) : IFileStorage
         long maxBytes,
         CancellationToken cancellationToken)
     {
-        var relativePath = Path.Combine("attachments", accountId.ToString("N"), mailId.ToString("N"), attachmentId.ToString("N"));
+        var relativePath = AttachmentPath.Relative(accountId, mailId, attachmentId);
         var destination = Resolve(relativePath);
         var temporary = $"{destination}.{Guid.NewGuid():N}.tmp";
         Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
@@ -86,9 +86,25 @@ public sealed class LocalAttachmentStorage(string rootPath) : IFileStorage
     public Task DeleteAccountAsync(Guid accountId, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var accountDir = Resolve(Path.Combine("attachments", accountId.ToString("N")));
+        var accountDir = Resolve(AttachmentPath.AccountPrefix(accountId));
         if (Directory.Exists(accountDir))
             Directory.Delete(accountDir, recursive: true);
         return Task.CompletedTask;
+    }
+
+    public async Task<bool> IsAvailableAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            Directory.CreateDirectory(RootPath);
+            var probe = Path.Combine(RootPath, $".health-{Guid.NewGuid():N}.tmp");
+            await File.WriteAllBytesAsync(probe, [], cancellationToken);
+            File.Delete(probe);
+            return true;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or NotSupportedException or ArgumentException)
+        {
+            return false;
+        }
     }
 }

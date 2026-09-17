@@ -38,7 +38,7 @@ Standard `OTEL_*` variables (for example `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_RES
 | Endpoint | Question answered | Checks |
 |---|---|---|
 | `GET /health/live` | Is the process alive? Restart only if this fails. | None. Never depends on PostgreSQL, mail providers, OAuth providers, Firebase or internet access. |
-| `GET /health/ready` | Can this instance serve core API traffic now? | `postgres` (lightweight `CanConnect`), `storage` (attachment root exists and is writable) |
+| `GET /health/ready` | Can this instance serve core API traffic now? | `postgres` (lightweight `CanConnect`), `storage` (the configured attachment provider — local filesystem or S3-compatible bucket — is reachable and writable) |
 | `GET /health` | Compatibility alias of `/health/live`. | None |
 
 Readiness never contacts customer IMAP/SMTP servers, OAuth providers or Firebase. Each check has a 5 second timeout. Health endpoints bypass the user/API traffic rate limiter, so probes never receive `429`.

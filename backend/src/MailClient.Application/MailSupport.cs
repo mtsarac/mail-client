@@ -75,7 +75,12 @@ public interface IPushNotificationService
 public interface IFileStorage
 {
     Task<StoredFile> SaveAsync(Guid accountId, Guid mailId, Guid attachmentId, Func<Stream, CancellationToken, Task> write, long maxBytes, CancellationToken cancellationToken);
+    Task<Stream> OpenReadAsync(string relativePath, CancellationToken cancellationToken);
     Task DeleteAsync(string relativePath, CancellationToken cancellationToken);
+    Task DeleteAccountAsync(Guid accountId, CancellationToken cancellationToken);
+
+    /// <summary>Cheap readiness probe for the configured backend; used by /health/ready.</summary>
+    Task<bool> IsAvailableAsync(CancellationToken cancellationToken);
 }
 
 public sealed record StoredFile(string RelativePath, long SizeBytes);

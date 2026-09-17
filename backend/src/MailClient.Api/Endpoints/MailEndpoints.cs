@@ -58,7 +58,7 @@ public static class MailEndpoints
             await drafts.DeleteAsync(current.MailAccountId, id, correlation.CorrelationId, ct);
             return Results.NoContent();
         });
-        api.MapPost("/drafts/{id:guid}/send", async (Guid id, HttpRequest request, ICurrentMailAccount current, DraftService drafts, MailSendService sender, LocalAttachmentStorage storage, CorrelationContext correlation, CancellationToken ct) =>
+        api.MapPost("/drafts/{id:guid}/send", async (Guid id, HttpRequest request, ICurrentMailAccount current, DraftService drafts, MailSendService sender, IFileStorage storage, CorrelationContext correlation, CancellationToken ct) =>
         {
             var key = request.Headers["Idempotency-Key"].ToString();
             var result = await drafts.SendAsync(current.MailAccountId, id, key, sender, storage, correlation.CorrelationId, ct);
@@ -82,7 +82,7 @@ public static class MailEndpoints
         MapOperation(api, "not-spam", MailOperationKind.NotSpam);
         api.MapPost("/mails/{id:guid}/move", async (Guid id, FolderOperationRequest request, ICurrentMailAccount current, CorrelationContext correlation, IMailOperationService operations, CancellationToken ct) => OperationResult(await operations.ExecuteAsync(current.MailAccountId, new MailOperationRequest(id, MailOperationKind.Move, request.FolderId), correlation.CorrelationId, ct), correlation.CorrelationId));
         api.MapPost("/mails/{id:guid}/copy", async (Guid id, FolderOperationRequest request, ICurrentMailAccount current, CorrelationContext correlation, IMailOperationService operations, CancellationToken ct) => OperationResult(await operations.ExecuteAsync(current.MailAccountId, new MailOperationRequest(id, MailOperationKind.Copy, request.FolderId), correlation.CorrelationId, ct), correlation.CorrelationId));
-        api.MapGet("/mails/{mailId:guid}/attachments/{attachmentId:guid}", async (Guid mailId, Guid attachmentId, ICurrentMailAccount current, AppDbContext db, LocalAttachmentStorage storage, CancellationToken ct) =>
+        api.MapGet("/mails/{mailId:guid}/attachments/{attachmentId:guid}", async (Guid mailId, Guid attachmentId, ICurrentMailAccount current, AppDbContext db, IFileStorage storage, CancellationToken ct) =>
         {
             var attachment = await db.Attachments.SingleOrDefaultAsync(x => x.Id == attachmentId && x.MailId == mailId && x.MailAccountId == current.MailAccountId, ct);
             return attachment is null ? Results.NotFound() : Results.File(await storage.OpenReadAsync(attachment.StoragePath, ct), attachment.ContentType, attachment.FileName);

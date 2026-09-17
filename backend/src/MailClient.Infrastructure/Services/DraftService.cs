@@ -62,7 +62,7 @@ public sealed class DraftService(
         return new(await reader.GetAsync(accountId, draftId, cancellationToken), DraftLookupError.None);
     }
 
-    public async Task<DraftSendResult> SendAsync(Guid accountId, Guid draftId, string idempotencyKey, MailSendService sender, LocalAttachmentStorage storage, string? correlationId, CancellationToken cancellationToken)
+    public async Task<DraftSendResult> SendAsync(Guid accountId, Guid draftId, string idempotencyKey, MailSendService sender, IFileStorage storage, string? correlationId, CancellationToken cancellationToken)
     {
         var draft = await GetDraftEntityAsync(accountId, draftId, cancellationToken);
         await db.Entry(draft).Collection(mail => mail.Participants).LoadAsync(cancellationToken);
