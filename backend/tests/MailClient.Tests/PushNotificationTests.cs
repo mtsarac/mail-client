@@ -333,7 +333,7 @@ public sealed class PushNotificationTests
             folders,
             new MailReadService(db, folders, new AuditLogger(db), NullLogger<MailReadService>.Instance),
             new AuditLogger(db),
-            new InitialSyncQueue(),
+            new FakeSyncScheduler(),
             NullLogger<MailOperationService>.Instance,
             push);
 
