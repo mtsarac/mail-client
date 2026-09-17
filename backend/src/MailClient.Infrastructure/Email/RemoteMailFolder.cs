@@ -15,17 +15,28 @@ public sealed record RemoteSummary(
     DateTime? InternalDate);
 
 public sealed record UidSearchResult(IList<UniqueId> Uids, uint ScannedUpTo);
+
+/// <summary>Newest-first backfill page. <paramref name="NextHighExclusive"/> is the upper bound (exclusive)
+/// for the next older page; 0 means the folder has been walked back to UID 1.</summary>
+public sealed record UidBackfillResult(IList<UniqueId> Uids, long NextHighExclusive);
+
+/// <summary>Server-side flag state used to converge local rows with the mailbox.</summary>
+public sealed record RemoteMessageFlags(bool Seen, bool Answered, bool Flagged, bool Draft, bool Deleted);
 public sealed record RemoteMoveResult(UniqueId? DestinationUid, uint DestinationUidValidity);
 public sealed record RemoteAppendResult(UniqueId? DestinationUid, uint DestinationUidValidity);
 
 public interface IRemoteMailFolder
 {
     uint UidValidity { get; }
+
+    /// <summary>Server UIDNEXT, or 0 when the server did not report it.</summary>
+    uint UidNext { get; }
     Task OpenAsync(CancellationToken cancellationToken);
     Task OpenForUpdateAsync(CancellationToken cancellationToken);
     Task<UidSearchResult> SearchNewAsync(uint afterUid, int maxCount, CancellationToken cancellationToken);
+    Task<UidBackfillResult> SearchOlderAsync(long belowUidExclusive, int maxCount, CancellationToken cancellationToken);
     Task<IReadOnlyDictionary<uint, RemoteSummary?>> GetSummariesAsync(IReadOnlyCollection<UniqueId> uids, CancellationToken cancellationToken);
-    Task<IReadOnlyDictionary<uint, bool>> GetFlagsAsync(IReadOnlyCollection<UniqueId> uids, CancellationToken cancellationToken);
+    Task<IReadOnlyDictionary<uint, RemoteMessageFlags>> GetFlagsAsync(IReadOnlyCollection<UniqueId> uids, CancellationToken cancellationToken);
     Task<MimeMessage> GetMessageAsync(UniqueId uid, CancellationToken cancellationToken);
     Task SetSeenAsync(UniqueId uid, bool seen, CancellationToken cancellationToken);
     Task SetFlaggedAsync(UniqueId uid, bool flagged, CancellationToken cancellationToken);
@@ -37,6 +48,8 @@ public interface IRemoteMailFolder
 public sealed class MailKitRemoteMailFolder(IMailFolder folder, Func<string, CancellationToken, Task<IMailFolder>>? resolveFolder = null) : IRemoteMailFolder
 {
     public uint UidValidity => folder.UidValidity;
+
+    public uint UidNext => folder.UidNext?.Id ?? 0;
 
     public Task OpenAsync(CancellationToken cancellationToken) =>
         folder.OpenAsync(FolderAccess.ReadOnly, cancellationToken);
@@ -53,6 +66,62 @@ public sealed class MailKitRemoteMailFolder(IMailFolder folder, Func<string, Can
             (low, high, ct) => folder.SearchAsync(
                 SearchQuery.Uids(new UniqueIdRange(new UniqueId((uint)low), new UniqueId((uint)high))), ct),
             cancellationToken);
+
+    public Task<UidBackfillResult> SearchOlderAsync(long belowUidExclusive, int maxCount, CancellationToken cancellationToken) =>
+        SearchOlderPagedAsync(
+            belowUidExclusive,
+            maxCount,
+            (low, high, ct) => folder.SearchAsync(
+                SearchQuery.Uids(new UniqueIdRange(new UniqueId((uint)low), new UniqueId((uint)high))), ct),
+            cancellationToken);
+
+    /// <summary>
+    /// Walks the folder downwards from <paramref name="belowUidExclusive"/> so the newest history is imported
+    /// first. The returned bound resumes strictly below the oldest UID this page covered, so nothing is skipped.
+    /// </summary>
+    internal static async Task<UidBackfillResult> SearchOlderPagedAsync(
+        long belowUidExclusive,
+        int maxCount,
+        Func<ulong, ulong, CancellationToken, Task<IList<UniqueId>>> searchPage,
+        CancellationToken cancellationToken)
+    {
+        const int MaxPages = 8;
+        const ulong GrowthFactor = 4;
+        if (belowUidExclusive <= 1 || maxCount <= 0)
+            return new UidBackfillResult([], 0);
+        var found = new List<UniqueId>();
+        var high = (ulong)Math.Min(belowUidExclusive - 1, uint.MaxValue);
+        var window = (ulong)Math.Max(4L * maxCount, 1);
+        var pages = 0;
+        long nextHighExclusive = 0;
+        while (found.Count < maxCount && pages < MaxPages && high >= 1)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var low = high >= window ? high - window + 1 : 1;
+            var page = (await searchPage(low, high, cancellationToken)).OrderByDescending(uid => uid.Id).ToList();
+            pages++;
+            nextHighExclusive = (long)low;
+            foreach (var uid in page)
+            {
+                if (found.Count >= maxCount)
+                {
+                    // Page truncated: resume immediately below the oldest UID actually taken.
+                    nextHighExclusive = found[^1].Id;
+                    break;
+                }
+
+                found.Add(uid);
+            }
+
+            if (found.Count >= maxCount || low <= 1)
+                break;
+            high = low - 1;
+            window = Math.Min(page.Count == 0 ? window * GrowthFactor : window * 2, (ulong)uint.MaxValue);
+        }
+
+        found.Sort((left, right) => left.Id.CompareTo(right.Id));
+        return new UidBackfillResult(found, nextHighExclusive <= 1 ? 0 : nextHighExclusive);
+    }
 
     internal static async Task<UidSearchResult> SearchPagedAsync(
         uint afterUid,
@@ -125,18 +194,23 @@ public sealed class MailKitRemoteMailFolder(IMailFolder folder, Func<string, Can
                 : null);
     }
 
-    public async Task<IReadOnlyDictionary<uint, bool>> GetFlagsAsync(
+    public async Task<IReadOnlyDictionary<uint, RemoteMessageFlags>> GetFlagsAsync(
         IReadOnlyCollection<UniqueId> uids,
         CancellationToken cancellationToken)
     {
         if (uids.Count == 0)
-            return new Dictionary<uint, bool>();
+            return new Dictionary<uint, RemoteMessageFlags>();
         var summaries = await folder.FetchAsync(
             [.. uids], MessageSummaryItems.UniqueId | MessageSummaryItems.Flags,
             cancellationToken);
         return summaries.ToDictionary(
             summary => summary.UniqueId.Id,
-            summary => summary.Flags?.HasFlag(MessageFlags.Seen) == true);
+            summary => new RemoteMessageFlags(
+                summary.Flags?.HasFlag(MessageFlags.Seen) == true,
+                summary.Flags?.HasFlag(MessageFlags.Answered) == true,
+                summary.Flags?.HasFlag(MessageFlags.Flagged) == true,
+                summary.Flags?.HasFlag(MessageFlags.Draft) == true,
+                summary.Flags?.HasFlag(MessageFlags.Deleted) == true));
     }
 
     public Task<MimeMessage> GetMessageAsync(UniqueId uid, CancellationToken cancellationToken) =>

@@ -391,7 +391,9 @@ public sealed class SyncCoordinator : BackgroundService, ISyncScheduler
                 .Where(folder => folder.Id == folderId
                     && folder.MailAccountId == item.Request.AccountId
                     && folder.IsAvailable
-                    && (item.Origin == SyncOrigin.UserRequested || folder.IsSyncEnabled))
+                    && (item.Origin == SyncOrigin.UserRequested
+                        || item.Origin == SyncOrigin.Reconciliation
+                        || folder.IsSyncEnabled))
                 .Select(folder => new FolderTarget(folder.Id, folder.FolderType))
                 .SingleOrDefaultAsync(cancellationToken);
             return single is null ? [] : [single];
