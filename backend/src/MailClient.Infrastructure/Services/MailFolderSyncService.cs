@@ -162,6 +162,10 @@ public sealed class MailFolderSyncService(
                 await MarkReauthenticationAsync(accountId, cancellationToken);
                 return;
             }
+            catch (Exception) when (targetFolderId is not null)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
                 logger.LogWarning(ex, "Mail sync failed while communicating with the provider.");

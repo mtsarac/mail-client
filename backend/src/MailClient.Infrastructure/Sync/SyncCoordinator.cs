@@ -18,6 +18,7 @@ public sealed class SyncCoordinator : BackgroundService, ISyncScheduler
     private readonly IServiceScopeFactory _scopes;
     private readonly SyncScheduleQueue _queue;
     private readonly ISyncClock _clock;
+    private readonly ISyncConnectionBudget _connectionBudget;
     private readonly Func<double> _jitterSource;
     private readonly ILogger<SyncCoordinator> _logger;
     private readonly Channel<SyncScheduleSignal> _signals = Channel.CreateUnbounded<SyncScheduleSignal>();
@@ -26,12 +27,14 @@ public sealed class SyncCoordinator : BackgroundService, ISyncScheduler
         IServiceScopeFactory scopes,
         SyncScheduleQueue queue,
         ISyncClock clock,
+        ISyncConnectionBudget connectionBudget,
         ILogger<SyncCoordinator> logger,
         Func<double>? jitterSource = null)
     {
         _scopes = scopes;
         _queue = queue;
         _clock = clock;
+        _connectionBudget = connectionBudget;
         _logger = logger;
         _jitterSource = jitterSource ?? Random.Shared.NextDouble;
     }
@@ -176,11 +179,10 @@ public sealed class SyncCoordinator : BackgroundService, ISyncScheduler
         if (folders.Count == 0)
             return;
 
-        var hostBudget = Math.Max(1, settings.Sync.MaxConcurrentSyncConnectionsPerHost);
-        using var hostGate = new SemaphoreSlim(hostBudget, hostBudget);
         var folderBudget = Math.Max(1, settings.Sync.MaxConcurrentFoldersPerAccount);
         using var folderGate = new SemaphoreSlim(folderBudget, folderBudget);
-        var tasks = folders.Select(folder => RunFolderAsync(item, folder, settings, hostGate, folderGate, cancellationToken));
+        var host = account.ImapHost.Trim().ToLowerInvariant();
+        var tasks = folders.Select(folder => RunFolderAsync(item, folder, settings, host, folderGate, cancellationToken));
         await Task.WhenAll(tasks);
     }
 
@@ -188,7 +190,7 @@ public sealed class SyncCoordinator : BackgroundService, ISyncScheduler
         ScheduledSyncRequest item,
         FolderTarget folder,
         RuntimeSettings settings,
-        SemaphoreSlim hostGate,
+        string host,
         SemaphoreSlim folderGate,
         CancellationToken cancellationToken)
     {
@@ -205,7 +207,10 @@ public sealed class SyncCoordinator : BackgroundService, ISyncScheduler
             if (state?.NextRetryAt is { } nextRetry && nextRetry > _clock.UtcNow)
                 return;
 
-            await hostGate.WaitAsync(cancellationToken);
+            using var hostLease = await _connectionBudget.AcquireAsync(
+                host,
+                settings.Sync.MaxConcurrentSyncConnectionsPerHost,
+                cancellationToken);
             try
             {
                 var executor = provider.GetRequiredService<ISyncExecutor>();
@@ -245,10 +250,6 @@ public sealed class SyncCoordinator : BackgroundService, ISyncScheduler
                         }, cancellationToken);
                     }
                 }
-            }
-            finally
-            {
-                hostGate.Release();
             }
         }
         finally

@@ -183,6 +183,7 @@ public sealed class SyncCoordinatorTests
         services.AddSingleton(new SyncScheduleQueue(100));
         services.AddSingleton<ISyncClock>(new FakeSyncClock(new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)));
         services.AddSingleton<ISyncLockProvider, InMemorySyncLockProvider>();
+        services.AddSingleton<ISyncConnectionBudget, SyncConnectionBudget>();
         services.AddScoped<ISyncExecutor>(_ => new ScopeCapturingExecutor(scopes, gate));
         services.AddSingleton<IRuntimeSettingsStore>(new FakeRuntimeSettingsStore(1, 2, 3));
         services.AddScoped<RuntimeOperationSettings>();
@@ -246,6 +247,7 @@ public sealed class SyncCoordinatorTests
         services.AddSingleton(new SyncScheduleQueue(100));
         services.AddSingleton<ISyncClock>(clock);
         services.AddSingleton<ISyncLockProvider, InMemorySyncLockProvider>();
+        services.AddSingleton<ISyncConnectionBudget, SyncConnectionBudget>();
         services.AddSingleton(executor);
         services.AddSingleton<IRuntimeSettingsStore>(new FakeRuntimeSettingsStore(maxAccounts, maxFolders, threshold, maxAttempts));
         services.AddScoped<RuntimeOperationSettings>();

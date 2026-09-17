@@ -170,6 +170,7 @@ else
 }
 
 builder.Services.AddSingleton<ISyncClock, SystemSyncClock>();
+builder.Services.AddSingleton<ISyncConnectionBudget, SyncConnectionBudget>();
 builder.Services.AddSingleton(new SyncScheduleQueue(1000));
 builder.Services.AddSingleton<SyncCoordinator>();
 builder.Services.AddSingleton<ISyncScheduler>(sp => sp.GetRequiredService<SyncCoordinator>());
