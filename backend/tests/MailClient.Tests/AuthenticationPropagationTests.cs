@@ -113,6 +113,30 @@ public sealed class AuthenticationPropagationTests
         Assert.Equal(AuthenticationMethod.OAuth2, call.Method);
     }
 
+    [Fact]
+    public async Task ManualConnect_DiscoversFoldersWithTheStoredCredential()
+    {
+        await using var db = CreateDb();
+        var connections = new RecordingMailConnectionHelper();
+        var service = CreateConnectionService(db, connections, new StoreMarkingProtector());
+
+        await service.ConnectManualAsync(
+            new ManualConnectRequest(
+                "person@example.test",
+                "person@example.test",
+                new AuthenticationInput(AuthenticationMethod.AppSpecificPassword, "app-password"),
+                new EndpointInput("imap.example.test", 993, MailSecurity.SslOnConnect),
+                new EndpointInput("smtp.example.test", 465, MailSecurity.SslOnConnect)),
+            CancellationToken.None);
+
+        var call = Assert.Single(connections.ImapCalls);
+        Assert.Equal("ExploreFolders", call.Operation);
+        Assert.Equal(AuthenticationMethod.AppSpecificPassword, call.Method);
+        // The marker is only added when the secret is read back out of the credential store, so folder discovery
+        // authenticated with the persisted credential rather than with the values carried on the request.
+        Assert.Equal("app-password|from-store", call.Secret);
+    }
+
     private static MailFolderSyncService CreateSyncService(AppDbContext db, MailConnectionHelper connections) =>
         new(db,
             new MailCredentialResolver(db, new PassthroughProtector()),
@@ -124,17 +148,23 @@ public sealed class AuthenticationPropagationTests
             new MailReconciliationService(db),
             NullLogger<MailFolderSyncService>.Instance);
 
-    private static AccountConnectionService CreateConnectionService(AppDbContext db, MailConnectionHelper connections) =>
-        new(db,
+    private static AccountConnectionService CreateConnectionService(
+        AppDbContext db,
+        MailConnectionHelper connections,
+        ICredentialProtector? protector = null)
+    {
+        protector ??= new PassthroughProtector();
+        return new AccountConnectionService(db,
             new StubMailValidator(true),
-            new PassthroughProtector(),
+            protector,
             new MailSessionService(db, new SessionOptions()),
             new MailClient.Api.Auth.JwtTokenIssuer(new MailClient.Api.Auth.JwtOptions("i", "a", new string('k', 40))),
             new FakeSyncScheduler(),
             new MailKitFolderExplorer(connections),
-            new MailCredentialResolver(db, new PassthroughProtector()),
+            new MailCredentialResolver(db, protector),
             new DefaultRuntimePolicyProvider(),
             NullLogger<AccountConnectionService>.Instance);
+    }
 
     private static async Task<(Guid AccountId, Guid FolderId)> SeedAccountAsync(AppDbContext db, AuthenticationMethod method)
     {
@@ -184,4 +214,14 @@ public sealed class AuthenticationPropagationTests
 
     private static AppDbContext CreateDb() => new(new DbContextOptionsBuilder<AppDbContext>()
         .UseInMemoryDatabase(Guid.NewGuid().ToString("N")).Options);
+}
+
+/// <summary>
+/// Marks secrets on the way out of the store so a test can tell a stored credential apart from the plaintext a
+/// request carried.
+/// </summary>
+internal sealed class StoreMarkingProtector : ICredentialProtector
+{
+    public string Protect(string plaintext) => plaintext;
+    public string Unprotect(string protectedValue) => protectedValue + "|from-store";
 }

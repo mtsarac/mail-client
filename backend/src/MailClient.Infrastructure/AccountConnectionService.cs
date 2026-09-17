@@ -87,7 +87,7 @@ public sealed class AccountConnectionService(
             throw new InvalidOperationException("mail_account_already_exists");
         }
 
-        await RefreshFoldersBestEffortAsync(account, working, authentication.Password, authentication.Type, cancellationToken);
+        await RefreshFoldersBestEffortAsync(account.Id, cancellationToken);
         var session = await sessions.CreateAsync(account.Id, deviceIdentifier, cancellationToken);
         await scheduler.ScheduleAccountAsync(account.Id, SyncOrigin.Initial, cancellationToken);
         var access = jwt.Issue(account.Id);
@@ -140,7 +140,7 @@ public sealed class AccountConnectionService(
         credential.EncryptedMaterial = protector.Protect(request.Authentication.Password);
         credential.UpdatedAt = now;
         await db.SaveChangesAsync(cancellationToken);
-        await RefreshFoldersBestEffortAsync(account, account.Username, request.Authentication.Password, request.Authentication.Type, cancellationToken);
+        await RefreshFoldersBestEffortAsync(account.Id, cancellationToken);
         await scheduler.ScheduleAccountAsync(account.Id, SyncOrigin.UserRequested, cancellationToken);
         return account;
     }
@@ -151,15 +151,20 @@ public sealed class AccountConnectionService(
         return await ReconcileFoldersAsync(resolved.Account, resolved.Username, resolved.Secret, resolved.AuthenticationMethod, cancellationToken);
     }
 
-    private async Task RefreshFoldersBestEffortAsync(MailAccount account, string username, string password, AuthenticationMethod authenticationMethod, CancellationToken cancellationToken)
+    /// <summary>
+    /// Folder discovery after connect/reconnect authenticates with the credential persisted for the account,
+    /// never with the values submitted on the request. The authentication method that reaches the mail server is
+    /// therefore always the stored one, so a request can never select the mechanism a connection authenticates with.
+    /// </summary>
+    private async Task RefreshFoldersBestEffortAsync(Guid accountId, CancellationToken cancellationToken)
     {
         try
         {
-            await ReconcileFoldersAsync(account, username, password, authenticationMethod, cancellationToken);
+            await RefreshFoldersAsync(accountId, cancellationToken);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            logger.LogWarning(ex, "Folder discovery failed for account {AccountId}; folders remain refreshable.", account.Id);
+            logger.LogWarning(ex, "Folder discovery failed for account {AccountId}; folders remain refreshable.", accountId);
         }
     }
 
