@@ -20,7 +20,7 @@ public sealed class MailOperationService(
     IMailFolderClient folders,
     MailReadService readService,
     AuditLogger audit,
-    InitialSyncQueue syncQueue,
+    ISyncScheduler scheduler,
     ILogger<MailOperationService> logger,
     IPushNotificationService push) : IMailOperationService
 {
@@ -94,7 +94,7 @@ public sealed class MailOperationService(
                     mail.ExpectedMailFolderId = target!.Id;
                     mail.ReconciliationState = MailReconciliationState.Pending;
                     mail.IsRestoreReconciliation = auditKind == MailOperationKind.Restore;
-                    await syncQueue.EnqueueAsync(SyncRequest.Folder(accountId, target.Id), cancellationToken);
+                    await scheduler.ScheduleFolderAsync(accountId, target.Id, SyncOrigin.Reconciliation, cancellationToken);
                     await db.SaveChangesAsync(cancellationToken);
                     await NotifyStateChangedAsync(accountId, mail, target.Id, OperationName(auditKind), cancellationToken);
                     return await AuditSuccess(accountId, auditKind, mail.Id, correlationId, cancellationToken, new(true, MailOperationError.None, true));
