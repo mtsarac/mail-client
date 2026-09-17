@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
 using MailClient.Application.Accounts;
+using MailClient.Application.Runtime;
 using MailClient.Domain.Entities;
 using MailClient.Domain.Enums;
 using MailClient.Infrastructure.OAuth;
@@ -18,10 +19,16 @@ public sealed record ResolvedCredential(MailAccount Account, string Username, st
 public sealed class MailCredentialResolver(
     AppDbContext db,
     ICredentialProtector protector,
-    IEnumerable<IOAuthProvider> oauthProviders)
+    IEnumerable<IOAuthProvider> oauthProviders,
+    IRuntimePolicyProvider runtimePolicy)
 {
     public MailCredentialResolver(AppDbContext db, ICredentialProtector protector)
-        : this(db, protector, [])
+        : this(db, protector, [], new DefaultRuntimePolicyProvider())
+    {
+    }
+
+    public MailCredentialResolver(AppDbContext db, ICredentialProtector protector, IEnumerable<IOAuthProvider> oauthProviders)
+        : this(db, protector, oauthProviders, new DefaultRuntimePolicyProvider())
     {
     }
 
@@ -31,6 +38,7 @@ public sealed class MailCredentialResolver(
     public async Task<ResolvedCredential> ResolveAsync(Guid accountId, CancellationToken cancellationToken)
     {
         var account = await LoadAccountAsync(accountId, cancellationToken);
+        (await runtimePolicy.GetAsync(cancellationToken)).EnsureExistingAccountAllowed(account.Provider);
         var credential = account.Credentials.SingleOrDefault(x => x.AuthenticationMethod == account.AuthenticationMethod)
             ?? throw new InvalidOperationException("credential_missing");
         if (account.AuthenticationMethod != AuthenticationMethod.OAuth2)

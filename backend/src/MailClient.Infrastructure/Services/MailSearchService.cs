@@ -1,22 +1,27 @@
 using MailClient.Application.Mail;
 using MailClient.Infrastructure.Persistence;
+using MailClient.Infrastructure.Runtime;
 using Microsoft.EntityFrameworkCore;
 using NpgsqlTypes;
 
 namespace MailClient.Infrastructure.Services;
 
-public sealed class MailSearchService(AppDbContext db)
+public sealed class MailSearchService(AppDbContext db, RuntimeOperationSettings operationSettings)
 {
+    public MailSearchService(AppDbContext db)
+        : this(db, new RuntimeOperationSettings(new DefaultRuntimeSettingsStore()))
+    {
+    }
+
     private const int DefaultPageSize = 50;
-    private const int MaxPageSize = 100;
-    private const int MaxQueryLength = 200;
 
     public async Task<MailListResponse> SearchAsync(Guid accountId, MailSearchRequest request, CancellationToken cancellationToken)
     {
+        var settings = (await operationSettings.GetAsync(cancellationToken)).Settings.Search;
         var page = request.Page < 1 ? 1 : request.Page;
-        var pageSize = request.PageSize < 1 ? DefaultPageSize : Math.Min(request.PageSize, MaxPageSize);
+        var pageSize = request.PageSize < 1 ? DefaultPageSize : Math.Min(request.PageSize, settings.MaxPageSize);
         var queryText = request.Query?.Trim();
-        if (queryText is { Length: > MaxQueryLength }) queryText = queryText[..MaxQueryLength];
+        if (queryText is { Length: var length } && length > settings.MaxQueryLength) queryText = queryText[..settings.MaxQueryLength];
         var query = db.Mails.AsNoTracking().Where(mail => mail.MailAccountId == accountId);
         if (request.FolderId is { } folderId) query = query.Where(mail => mail.MailFolderId == folderId);
         if (request.ConversationId is { } conversationId) query = query.Where(mail => mail.ConversationId == conversationId);

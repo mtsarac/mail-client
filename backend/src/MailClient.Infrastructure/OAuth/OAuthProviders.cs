@@ -1,5 +1,4 @@
 using System.Net.Http.Json;
-using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Serialization;
@@ -160,23 +159,28 @@ public sealed class MicrosoftOAuthProvider(HttpClient httpClient, OAuthProviderO
     protected override string Scope => "https://outlook.office.com/IMAP.AccessAsUser.All https://outlook.office.com/SMTP.Send offline_access";
 }
 
-public sealed class OAuthStateProtector(IDataProtectionProvider provider, TimeSpan lifetime)
+public sealed class OAuthStateProtector(IDataProtectionProvider provider, TimeSpan lifetime, IOAuthStateNonceStore? nonces = null)
 {
     private readonly ITimeLimitedDataProtector _protector = provider.CreateProtector("MailClient.OAuthState.v1").ToTimeLimitedDataProtector();
-    private readonly ConcurrentDictionary<string, DateTimeOffset> _consumedNonces = new(StringComparer.Ordinal);
 
     public string Protect(OAuthStatePayload payload) => _protector.Protect(System.Text.Json.JsonSerializer.Serialize(payload), lifetime);
 
-    public OAuthStatePayload Consume(string protectedState)
+    public async Task<OAuthStatePayload> ConsumeAsync(string protectedState, CancellationToken cancellationToken)
     {
         try
         {
             var payload = System.Text.Json.JsonSerializer.Deserialize<OAuthStatePayload>(_protector.Unprotect(protectedState, out var expiration))
                 ?? throw new InvalidOperationException("oauth_state_invalid");
-            foreach (var consumed in _consumedNonces.Where(item => item.Value <= DateTimeOffset.UtcNow))
-                _consumedNonces.TryRemove(consumed.Key, out _);
-            if (string.IsNullOrWhiteSpace(payload.Nonce) || !_consumedNonces.TryAdd(payload.Nonce, expiration))
+            if (string.IsNullOrWhiteSpace(payload.Nonce))
+            {
                 throw new InvalidOperationException("oauth_state_invalid");
+            }
+
+            if (nonces is null || !await nonces.TryConsumeAsync(payload.Nonce, expiration, cancellationToken))
+            {
+                throw new InvalidOperationException("oauth_state_invalid");
+            }
+
             return payload;
         }
         catch (Exception ex) when (ex is CryptographicException or System.Text.Json.JsonException)

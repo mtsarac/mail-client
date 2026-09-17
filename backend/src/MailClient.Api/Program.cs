@@ -14,6 +14,7 @@ using MailClient.Application.Authentication;
 using MailClient.Application.Accounts;
 using MailClient.Application.Discovery;
 using MailClient.Application.Mail;
+using MailClient.Application.Runtime;
 using MailClient.Application.Sync;
 using MailClient.Domain;
 using MailClient.Domain.Entities;
@@ -27,6 +28,7 @@ using MailClient.Infrastructure.Observability;
 using MailClient.Infrastructure.OAuth;
 using MailClient.Infrastructure.Persistence;
 using MailClient.Infrastructure.Push;
+using MailClient.Infrastructure.Runtime;
 using MailClient.Infrastructure.Security;
 using MailClient.Infrastructure.Services;
 using MailClient.Infrastructure.Storage;
@@ -82,6 +84,10 @@ StartupConfig.Validate(
     builder.Configuration["DataProtection:KeyPath"],
     builder.Configuration["DataProtection:CertificatePath"],
     isProduction);
+var managementOptions = builder.Configuration.GetSection("Management").Get<ManagementOptions>() ?? new ManagementOptions();
+managementOptions.Validate(isProduction);
+builder.Services.AddSingleton(managementOptions);
+builder.Services.AddScoped<ManagementApiKeyFilter>();
 var connection = builder.Configuration.GetConnectionString("Default") ?? "Host=localhost;Port=5432;Database=mailclient_v2;Username=postgres;Password=postgres";
 builder.Services.AddDbContext<AppDbContext>(options => options.UseNpgsql(connection));
 var keyPath = builder.Configuration["DataProtection:KeyPath"] ?? Path.Combine(builder.Environment.ContentRootPath, "data", "protection-keys");
@@ -108,26 +114,23 @@ builder.Services.AddSingleton<IMailDiscoveryStrategy, DnsSrvDiscoveryStrategy>()
 builder.Services.AddTransient<IMailDiscoveryStrategy>(sp => sp.GetRequiredService<AutoconfigDiscoveryStrategy>());
 builder.Services.AddTransient<IMailDiscoveryStrategy>(sp => sp.GetRequiredService<MicrosoftAutodiscoverStrategy>());
 builder.Services.AddSingleton<IMailDiscoveryStrategy, HeuristicDiscoveryStrategy>();
-builder.Services.AddSingleton<MailServerDiscoveryService>();
-var mailSyncOptions = builder.Configuration.GetSection("MailSync").Get<MailSyncOptions>() ?? new MailSyncOptions();
-mailSyncOptions.Validate();
-builder.Services.AddSingleton(mailSyncOptions);
+builder.Services.AddScoped<MailServerDiscoveryService>();
 var sessionOptions = builder.Configuration.GetSection("Session").Get<MailClient.Application.Authentication.SessionOptions>() ?? new MailClient.Application.Authentication.SessionOptions();
 sessionOptions.Validate();
 builder.Services.AddSingleton(sessionOptions);
 builder.Services.AddSingleton<MailConnectionHelper>();
 builder.Services.AddScoped<MailKitFolderExplorer>();
 builder.Services.AddScoped<MailCredentialResolver>();
-var oauthOptions = new OAuthOptions
-{
-    Google = builder.Configuration.GetSection("OAuth:Google").Get<OAuthProviderOptions>() ?? new(),
-    Microsoft = builder.Configuration.GetSection("OAuth:Microsoft").Get<OAuthProviderOptions>() ?? new()
-};
+var oauthOptions = builder.Configuration.GetSection("OAuth").Get<OAuthOptions>() ?? new OAuthOptions();
 builder.Services.AddSingleton(oauthOptions);
+builder.Services.AddScoped<IRuntimeSettingsStore, RuntimeSettingsStore>();
+builder.Services.AddScoped<IRuntimePolicyProvider, RuntimePolicyProvider>();
+builder.Services.AddScoped<RuntimeOperationSettings>();
+builder.Services.AddScoped<IOAuthStateNonceStore, OAuthStateNonceStore>();
 builder.Services.AddHttpClient("OAuth");
 builder.Services.AddSingleton<IOAuthProvider>(sp => new GoogleOAuthProvider(sp.GetRequiredService<IHttpClientFactory>().CreateClient("OAuth"), oauthOptions.Google));
 builder.Services.AddSingleton<IOAuthProvider>(sp => new MicrosoftOAuthProvider(sp.GetRequiredService<IHttpClientFactory>().CreateClient("OAuth"), oauthOptions.Microsoft));
-builder.Services.AddSingleton<OAuthStateProtector>(sp => new OAuthStateProtector(sp.GetRequiredService<IDataProtectionProvider>(), TimeSpan.FromMinutes(oauthOptions.StateLifetimeMinutes)));
+builder.Services.AddScoped<OAuthStateProtector>(sp => new OAuthStateProtector(sp.GetRequiredService<IDataProtectionProvider>(), TimeSpan.FromMinutes(oauthOptions.StateLifetimeMinutes), sp.GetRequiredService<IOAuthStateNonceStore>()));
 builder.Services.AddScoped<OAuthConnectionService>();
 builder.Services.AddSingleton<IMailConnectionValidator, MailKitConnectionValidator>();
 builder.Services.AddSingleton<IMailServerCandidateValidator>(sp => (MailKitConnectionValidator)sp.GetRequiredService<IMailConnectionValidator>());
@@ -139,7 +142,6 @@ builder.Services.AddScoped<IMailFolderClient, MailFolderClient>();
 builder.Services.AddScoped<MailFolderSyncService>();
 builder.Services.AddScoped<ISyncExecutor>(sp => sp.GetRequiredService<MailFolderSyncService>());
 builder.Services.AddScoped<MailReadService>();
-builder.Services.AddScoped<MailSearchService>();
 builder.Services.AddScoped<MailSearchService>();
 builder.Services.AddScoped<MailQueryService>();
 
@@ -168,8 +170,7 @@ else
 
 builder.Services.AddSingleton<InitialSyncQueue>();
 builder.Services.AddHostedService<InitialSyncWorker>();
-if (mailSyncOptions.Enabled)
-    builder.Services.AddHostedService<MailSyncService>();
+builder.Services.AddHostedService<MailSyncService>();
 builder.Services.AddSingleton(new LocalAttachmentStorage(Path.Combine(builder.Environment.ContentRootPath, "data")));
 builder.Services.AddSingleton<IFileStorage>(sp => sp.GetRequiredService<LocalAttachmentStorage>());
 var jwt = builder.Configuration.GetSection("Jwt").Get<JwtOptions>() ?? new("MailClient", "MailClient", "development-only-key-change-before-production-123456789", 15);
@@ -286,6 +287,7 @@ app.MapFolderEndpoints();
 app.MapMailEndpoints();
 app.MapConversationEndpoints();
 app.MapDeviceEndpoints();
+app.MapManagementEndpoints();
 app.MapHealthEndpoints();
 
 app.Run();

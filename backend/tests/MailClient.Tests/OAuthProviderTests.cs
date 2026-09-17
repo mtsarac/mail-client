@@ -63,25 +63,34 @@ public sealed class OAuthProviderTests
     }
 
     [Fact]
-    public void ProtectedState_RejectsTamperingAndEnforcesLifetime()
+    public async Task ProtectedState_RejectsTamperingAndEnforcesLifetime()
     {
         var keys = new DirectoryInfo(Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N")));
         try
         {
             var provider = DataProtectionProvider.Create(keys);
-            var states = new OAuthStateProtector(provider, TimeSpan.FromMinutes(10));
+            var nonceStore = new InMemoryNonceStore();
+            var states = new OAuthStateProtector(provider, TimeSpan.FromMinutes(10), nonceStore);
             var protectedState = states.Protect(new OAuthStatePayload(MailProvider.Google, "person@gmail.com", "app://oauth", "verifier", "device", "nonce"));
 
-            var roundTrip = states.Consume(protectedState);
+            var roundTrip = await states.ConsumeAsync(protectedState, CancellationToken.None);
             Assert.Equal("verifier", roundTrip.CodeVerifier);
-            Assert.Throws<InvalidOperationException>(() => states.Consume(protectedState));
-            Assert.Throws<InvalidOperationException>(() => states.Consume(protectedState + "tampered"));
+            await Assert.ThrowsAsync<InvalidOperationException>(() => states.ConsumeAsync(protectedState, CancellationToken.None));
+            await Assert.ThrowsAsync<InvalidOperationException>(() => states.ConsumeAsync(protectedState + "tampered", CancellationToken.None));
         }
         finally
         {
             if (keys.Exists)
                 keys.Delete(true);
         }
+    }
+
+    private sealed class InMemoryNonceStore : IOAuthStateNonceStore
+    {
+        private readonly HashSet<string> consumed = [];
+
+        public Task<bool> TryConsumeAsync(string nonce, DateTimeOffset expiresAt, CancellationToken cancellationToken) =>
+            Task.FromResult(consumed.Add(nonce));
     }
 
     private static OAuthProviderOptions Config(MailProvider provider) => new()

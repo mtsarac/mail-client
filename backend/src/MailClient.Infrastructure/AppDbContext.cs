@@ -20,6 +20,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<Conversation> Conversations => Set<Conversation>();
     public DbSet<MailParticipant> Participants => Set<MailParticipant>();
     public DbSet<MailClient.Domain.Entities.MailHeader> MailHeaders => Set<MailClient.Domain.Entities.MailHeader>();
+    public DbSet<RuntimeConfiguration> RuntimeConfigurations => Set<RuntimeConfiguration>();
+    public DbSet<OAuthStateNonce> OAuthStateNonces => Set<OAuthStateNonce>();
 
     protected override void OnModelCreating(ModelBuilder model)
     {
@@ -84,5 +86,10 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         model.Entity<AuditLog>().HasIndex(x => new { x.MailAccountId, x.TimestampUtc });
         // Audit history is deliberately not destroyed with the mailbox: the row survives with a null account id.
         model.Entity<AuditLog>().HasOne<MailAccount>().WithMany().HasForeignKey(x => x.MailAccountId).OnDelete(DeleteBehavior.SetNull);
+        model.Entity<RuntimeConfiguration>().HasKey(x => x.Id);
+        model.Entity<RuntimeConfiguration>().Property(x => x.Version).IsConcurrencyToken();
+        model.Entity<RuntimeConfiguration>().Property(x => x.SettingsJson).HasColumnType("jsonb");
+        model.Entity<OAuthStateNonce>().HasIndex(x => x.NonceHash).IsUnique();
+        model.Entity<OAuthStateNonce>().Property(x => x.NonceHash).HasMaxLength(128);
     }
 }
