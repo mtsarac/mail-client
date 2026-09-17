@@ -1,11 +1,14 @@
 using MailClient.Application.Authentication;
 using MailClient.Application.Mail;
+using MailClient.Application.Runtime;
 using MailClient.Domain.Entities;
 using MailClient.Domain.Enums;
 using MailClient.Infrastructure.Authentication;
+using MailClient.Infrastructure.OAuth;
 using MailClient.Infrastructure.Persistence;
 using MailClient.Infrastructure.Security;
 using MailClient.Infrastructure.Services;
+using MailClient.Infrastructure.Sync;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
@@ -303,6 +306,80 @@ public sealed class PostgresIntegrationTests(PostgresFixture fixture)
         Assert.Equal(1, await check.AuditLogs.CountAsync(x => x.MailAccountId == null && x.Action == "other.action"));
     }
 
+    [Fact]
+    public async Task SyncLock_SameAccountSecondHolderBlocked_DifferentAccountsProceed()
+    {
+        if (!IntegrationEnvironment.PostgresEnabled) return;
+        var accountId = await SeedAccountAsync();
+        var otherAccountId = await SeedAccountAsync();
+        var provider = new PostgresSyncLockProvider(fixture.ConnectionString, NullLogger<PostgresSyncLockProvider>.Instance);
+
+        await using var first = await provider.TryAcquireAsync(accountId, SyncLockPurpose.AccountSync, CancellationToken.None);
+        Assert.NotNull(first);
+        Assert.Null(await provider.TryAcquireAsync(accountId, SyncLockPurpose.AccountSync, CancellationToken.None));
+        await using var other = await provider.TryAcquireAsync(otherAccountId, SyncLockPurpose.AccountSync, CancellationToken.None);
+        Assert.NotNull(other);
+        await using var refresh = await provider.TryAcquireAsync(accountId, SyncLockPurpose.OAuthRefresh, CancellationToken.None);
+        Assert.NotNull(refresh);
+    }
+
+    [Fact]
+    public async Task SyncLock_ReleasedAfterDispose_AllowsReacquire()
+    {
+        if (!IntegrationEnvironment.PostgresEnabled) return;
+        var accountId = await SeedAccountAsync();
+        var provider = new PostgresSyncLockProvider(fixture.ConnectionString, NullLogger<PostgresSyncLockProvider>.Instance);
+
+        await using (var first = await provider.TryAcquireAsync(accountId, SyncLockPurpose.AccountSync, CancellationToken.None))
+        {
+            Assert.NotNull(first);
+        }
+
+        await using var second = await provider.TryAcquireAsync(accountId, SyncLockPurpose.AccountSync, CancellationToken.None);
+        Assert.NotNull(second);
+    }
+
+    [Fact]
+    public async Task SyncLock_CancelledWait_ReleasesLock()
+    {
+        if (!IntegrationEnvironment.PostgresEnabled) return;
+        var accountId = await SeedAccountAsync();
+        var provider = new PostgresSyncLockProvider(fixture.ConnectionString, NullLogger<PostgresSyncLockProvider>.Instance);
+
+        await using var first = await provider.TryAcquireAsync(accountId, SyncLockPurpose.AccountSync, CancellationToken.None);
+        Assert.NotNull(first);
+        using var cancelled = new CancellationTokenSource();
+        await cancelled.CancelAsync();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            provider.TryAcquireAsync(accountId, SyncLockPurpose.AccountSync, cancelled.Token));
+    }
+
+    [Fact]
+    public async Task OAuthRefresh_TwoResolvers_SecondReusesPersistedToken()
+    {
+        if (!IntegrationEnvironment.PostgresEnabled) return;
+        var accountId = await SeedOAuthAccountAsync("old-access", "rotated-refresh", DateTime.UtcNow.AddMinutes(-10));
+        var refreshCalls = new int[1];
+        var refreshedToken = new OAuthToken("new-access", "rotated-refresh", DateTime.UtcNow.AddHours(1), "scope");
+        var oauth = new CountingOAuthProvider(refreshCalls, refreshedToken);
+        var locks = new PostgresSyncLockProvider(fixture.ConnectionString, NullLogger<PostgresSyncLockProvider>.Instance);
+
+        await using var firstDb = fixture.CreateDb();
+        await using var secondDb = fixture.CreateDb();
+        var first = new MailCredentialResolver(firstDb, new PassthroughProtector(), [oauth], new DefaultRuntimePolicyProvider(), null, null, locks);
+        var second = new MailCredentialResolver(secondDb, new PassthroughProtector(), [oauth], new DefaultRuntimePolicyProvider(), null, null, locks);
+
+        var resolved = await Task.WhenAll(
+            first.ResolveAsync(accountId, CancellationToken.None),
+            second.ResolveAsync(accountId, CancellationToken.None));
+
+        Assert.All(resolved, credential => Assert.Equal("new-access", credential.Secret));
+        Assert.Equal(1, refreshCalls[0]);
+        await using var check = fixture.CreateDb();
+        var stored = await check.MailCredentials.SingleAsync(credential => credential.MailAccountId == accountId);
+        Assert.Contains("new-access", new PassthroughProtector().Unprotect(stored.EncryptedMaterial));
+    }
+
     private async Task<Guid> SeedAccountAsync()
     {
         var account = Account($"seed-{Guid.NewGuid():N}@example.test");
@@ -310,6 +387,44 @@ public sealed class PostgresIntegrationTests(PostgresFixture fixture)
         db.MailAccounts.Add(account);
         await db.SaveChangesAsync();
         return account.Id;
+    }
+
+    private async Task<Guid> SeedOAuthAccountAsync(string accessToken, string refreshToken, DateTime expiresAt)
+    {
+        var email = $"oauth-{Guid.NewGuid():N}@example.test";
+        var account = Account(email);
+        account.Provider = MailProvider.Google;
+        account.AuthenticationMethod = AuthenticationMethod.OAuth2;
+        var material = System.Text.Json.JsonSerializer.Serialize(new OAuthCredentialMaterial(accessToken, refreshToken));
+        await using var db = fixture.CreateDb();
+        db.MailAccounts.Add(account);
+        db.MailCredentials.Add(new MailCredential
+        {
+            Id = Guid.NewGuid(),
+            MailAccountId = account.Id,
+            AuthenticationMethod = AuthenticationMethod.OAuth2,
+            Provider = MailProvider.Google,
+            EncryptedMaterial = new PassthroughProtector().Protect(material),
+            ExpiresAt = expiresAt,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+        return account.Id;
+    }
+
+    private sealed class CountingOAuthProvider(int[] calls, OAuthToken token) : IOAuthProvider
+    {
+        public MailProvider Provider => MailProvider.Google;
+        public bool IsConfigured => true;
+        public string PrimaryRedirectUri => "https://app.example.test/oauth/callback";
+        public string CreateAuthorizationUrl(string email, string redirectUri, string state, string codeChallenge) => redirectUri;
+        public Task<OAuthToken> ExchangeCodeAsync(string code, string codeVerifier, string redirectUri, CancellationToken cancellationToken) => Task.FromResult(token);
+        public Task<OAuthToken> RefreshAsync(string refreshToken, CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref calls[0]);
+            return Task.FromResult(token);
+        }
     }
 
     private static async Task<Guid> SeedFolderAsync(AppDbContext db, Guid accountId)
