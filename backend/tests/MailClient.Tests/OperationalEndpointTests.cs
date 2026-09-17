@@ -221,3 +221,34 @@ public sealed class HttpTracingPrivacyTests(AcceptingApiFactory factory) : IClas
         Assert.DoesNotContain(mailId.ToString(), span.DisplayName);
     }
 }
+
+public sealed class OperationalEndpointRateLimitTests(PrometheusApiFactory factory) : IClassFixture<PrometheusApiFactory>
+{
+    // Exceeds two fixed 60-request windows, so a limited endpoint must hit 429 even if a window resets mid-test.
+    private const int RequestCount = 125;
+
+    [Theory]
+    [InlineData("/health")]
+    [InlineData("/health/live")]
+    [InlineData("/health/ready")]
+    [InlineData("/metrics")]
+    public async Task OperationalEndpoint_BypassesApiRateLimiter(string path)
+    {
+        var client = factory.CreateClient();
+
+        for (var i = 0; i < RequestCount; i++)
+            Assert.Equal(HttpStatusCode.OK, (await client.GetAsync(path)).StatusCode);
+    }
+
+    [Fact]
+    public async Task ApiEndpoint_RemainsSubjectToGlobalRateLimiter()
+    {
+        var client = factory.CreateClient();
+        var statuses = new List<HttpStatusCode>();
+
+        for (var i = 0; i < RequestCount; i++)
+            statuses.Add((await client.GetAsync("/api/mails")).StatusCode);
+
+        Assert.Contains(HttpStatusCode.TooManyRequests, statuses);
+    }
+}

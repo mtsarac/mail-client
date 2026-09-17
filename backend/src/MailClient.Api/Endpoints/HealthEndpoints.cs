@@ -20,13 +20,13 @@ public static class HealthEndpoints
     public static void MapHealthEndpoints(this WebApplication app)
     {
         var live = new HealthCheckOptions { Predicate = _ => false, ResponseWriter = WriteResponseAsync };
-        app.MapHealthChecks("/health/live", live).WithName("HealthLive");
-        app.MapHealthChecks("/health", live).WithName("Health");
+        app.MapHealthChecks("/health/live", live).WithName("HealthLive").DisableRateLimiting();
+        app.MapHealthChecks("/health", live).WithName("Health").DisableRateLimiting();
         app.MapHealthChecks("/health/ready", new HealthCheckOptions
         {
             Predicate = registration => registration.Tags.Contains(ReadyTag),
             ResponseWriter = WriteResponseAsync
-        }).WithName("HealthReady");
+        }).WithName("HealthReady").DisableRateLimiting();
     }
 
     private static Task WriteResponseAsync(HttpContext context, HealthReport report) =>
