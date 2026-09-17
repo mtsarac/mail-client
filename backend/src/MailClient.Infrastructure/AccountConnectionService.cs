@@ -87,7 +87,7 @@ public sealed class AccountConnectionService(
             throw new InvalidOperationException("mail_account_already_exists");
         }
 
-        await RefreshFoldersBestEffortAsync(account.Id, cancellationToken);
+        await RefreshFoldersBestEffortAsync(account, cancellationToken);
         var session = await sessions.CreateAsync(account.Id, deviceIdentifier, cancellationToken);
         await scheduler.ScheduleAccountAsync(account.Id, SyncOrigin.Initial, cancellationToken);
         var access = jwt.Issue(account.Id);
@@ -140,7 +140,7 @@ public sealed class AccountConnectionService(
         credential.EncryptedMaterial = protector.Protect(request.Authentication.Password);
         credential.UpdatedAt = now;
         await db.SaveChangesAsync(cancellationToken);
-        await RefreshFoldersBestEffortAsync(account.Id, cancellationToken);
+        await RefreshFoldersBestEffortAsync(account, cancellationToken);
         await scheduler.ScheduleAccountAsync(account.Id, SyncOrigin.UserRequested, cancellationToken);
         return account;
     }
@@ -156,15 +156,15 @@ public sealed class AccountConnectionService(
     /// never with the values submitted on the request. The authentication method that reaches the mail server is
     /// therefore always the stored one, so a request can never select the mechanism a connection authenticates with.
     /// </summary>
-    private async Task RefreshFoldersBestEffortAsync(Guid accountId, CancellationToken cancellationToken)
+    private async Task RefreshFoldersBestEffortAsync(MailAccount account, CancellationToken cancellationToken)
     {
         try
         {
-            await RefreshFoldersAsync(accountId, cancellationToken);
+            await RefreshFoldersAsync(account.Id, cancellationToken);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            logger.LogWarning(ex, "Folder discovery failed for account {AccountId}; folders remain refreshable.", accountId);
+            logger.LogWarning(ex, "Folder discovery failed for account {AccountId}; folders remain refreshable.", account.Id);
         }
     }
 
