@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text.Json;
 using MailClient.Application.Accounts;
 using MailClient.Application.Discovery;
@@ -36,7 +37,7 @@ public sealed class OAuthConnectionService(
             throw new InvalidOperationException("invalid_email");
         var redirectUri = oauthProvider.PrimaryRedirectUri;
         var (verifier, challenge) = OAuthStateProtector.CreatePkce();
-        var payload = new OAuthStatePayload(provider, request.Email, redirectUri, verifier, request.DeviceIdentifier);
+        var payload = new OAuthStatePayload(provider, request.Email.Trim(), redirectUri, verifier, request.DeviceIdentifier, Convert.ToHexString(RandomNumberGenerator.GetBytes(16)));
         var state = states.Protect(payload);
         var url = oauthProvider.CreateAuthorizationUrl(request.Email, redirectUri, state, challenge);
         return new OAuthStartResponse(url, state);
@@ -47,7 +48,7 @@ public sealed class OAuthConnectionService(
         OAuthStatePayload payload;
         try
         {
-            payload = states.Unprotect(request.State);
+            payload = states.Consume(request.State);
         }
         catch (InvalidOperationException ex) when (ex.Message == "oauth_state_invalid")
         {

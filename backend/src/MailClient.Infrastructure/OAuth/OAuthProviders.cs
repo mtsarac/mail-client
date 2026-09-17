@@ -1,4 +1,5 @@
 using System.Net.Http.Json;
+using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Serialization;
@@ -22,12 +23,14 @@ public sealed class OAuthProviderOptions
     public string Tenant { get; init; } = "organizations";
     public string[] RedirectUris { get; init; } = [];
 
-    public bool IsConfigured => !string.IsNullOrWhiteSpace(ClientId) && RedirectUris.Length > 0;
+    public bool IsConfigured => !string.IsNullOrWhiteSpace(ClientId)
+        && !string.IsNullOrWhiteSpace(ClientSecret)
+        && RedirectUris.Length > 0;
     public bool AllowsRedirectUri(string redirectUri) => RedirectUris.Contains(redirectUri, StringComparer.Ordinal);
 }
 
 public sealed record OAuthToken(string AccessToken, string? RefreshToken, DateTime ExpiresAt, string Scopes);
-public sealed record OAuthStatePayload(MailProvider Provider, string Email, string RedirectUri, string CodeVerifier, string? DeviceIdentifier);
+public sealed record OAuthStatePayload(MailProvider Provider, string Email, string RedirectUri, string CodeVerifier, string? DeviceIdentifier, string Nonce);
 
 public interface IOAuthProvider
 {
@@ -160,15 +163,21 @@ public sealed class MicrosoftOAuthProvider(HttpClient httpClient, OAuthProviderO
 public sealed class OAuthStateProtector(IDataProtectionProvider provider, TimeSpan lifetime)
 {
     private readonly ITimeLimitedDataProtector _protector = provider.CreateProtector("MailClient.OAuthState.v1").ToTimeLimitedDataProtector();
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _consumedNonces = new(StringComparer.Ordinal);
 
     public string Protect(OAuthStatePayload payload) => _protector.Protect(System.Text.Json.JsonSerializer.Serialize(payload), lifetime);
 
-    public OAuthStatePayload Unprotect(string protectedState)
+    public OAuthStatePayload Consume(string protectedState)
     {
         try
         {
-            return System.Text.Json.JsonSerializer.Deserialize<OAuthStatePayload>(_protector.Unprotect(protectedState))
+            var payload = System.Text.Json.JsonSerializer.Deserialize<OAuthStatePayload>(_protector.Unprotect(protectedState, out var expiration))
                 ?? throw new InvalidOperationException("oauth_state_invalid");
+            foreach (var consumed in _consumedNonces.Where(item => item.Value <= DateTimeOffset.UtcNow))
+                _consumedNonces.TryRemove(consumed.Key, out _);
+            if (string.IsNullOrWhiteSpace(payload.Nonce) || !_consumedNonces.TryAdd(payload.Nonce, expiration))
+                throw new InvalidOperationException("oauth_state_invalid");
+            return payload;
         }
         catch (Exception ex) when (ex is CryptographicException or System.Text.Json.JsonException)
         {

@@ -70,11 +70,12 @@ public sealed class OAuthProviderTests
         {
             var provider = DataProtectionProvider.Create(keys);
             var states = new OAuthStateProtector(provider, TimeSpan.FromMinutes(10));
-            var protectedState = states.Protect(new OAuthStatePayload(MailProvider.Google, "person@gmail.com", "app://oauth", "verifier", "device"));
+            var protectedState = states.Protect(new OAuthStatePayload(MailProvider.Google, "person@gmail.com", "app://oauth", "verifier", "device", "nonce"));
 
-            var roundTrip = states.Unprotect(protectedState);
+            var roundTrip = states.Consume(protectedState);
             Assert.Equal("verifier", roundTrip.CodeVerifier);
-            Assert.Throws<InvalidOperationException>(() => states.Unprotect(protectedState + "tampered"));
+            Assert.Throws<InvalidOperationException>(() => states.Consume(protectedState));
+            Assert.Throws<InvalidOperationException>(() => states.Consume(protectedState + "tampered"));
         }
         finally
         {
