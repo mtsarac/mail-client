@@ -355,23 +355,46 @@ public sealed class PostgresIntegrationTests(PostgresFixture fixture)
     }
 
     [Fact]
-    public async Task OAuthRefresh_TwoResolvers_SecondReusesPersistedToken()
+    public async Task OAuthRefresh_SecondResolverWaitsForPostgresLockAndReusesPersistedToken()
     {
         if (!IntegrationEnvironment.PostgresEnabled) return;
         var accountId = await SeedOAuthAccountAsync("old-access", "rotated-refresh", DateTime.UtcNow.AddMinutes(-10));
         var refreshCalls = new int[1];
+        var firstRefreshStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var allowFirstRefresh = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondRefreshStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var refreshedToken = new OAuthToken("new-access", "rotated-refresh", DateTime.UtcNow.AddHours(1), "scope");
-        var oauth = new CountingOAuthProvider(refreshCalls, refreshedToken);
         var locks = new PostgresSyncLockProvider(fixture.ConnectionString, NullLogger<PostgresSyncLockProvider>.Instance);
 
         await using var firstDb = fixture.CreateDb();
         await using var secondDb = fixture.CreateDb();
-        var first = new MailCredentialResolver(firstDb, new PassthroughProtector(), [oauth], new DefaultRuntimePolicyProvider(), null, null, locks);
-        var second = new MailCredentialResolver(secondDb, new PassthroughProtector(), [oauth], new DefaultRuntimePolicyProvider(), null, null, locks);
+        var first = new MailCredentialResolver(
+            firstDb,
+            new PassthroughProtector(),
+            [new BlockingOAuthProvider(refreshCalls, refreshedToken, firstRefreshStarted, allowFirstRefresh)],
+            new DefaultRuntimePolicyProvider(),
+            null,
+            null,
+            locks);
+        var second = new MailCredentialResolver(
+            secondDb,
+            new PassthroughProtector(),
+            [new CountingOAuthProvider(refreshCalls, refreshedToken, secondRefreshStarted)],
+            new DefaultRuntimePolicyProvider(),
+            null,
+            null,
+            locks);
 
-        var resolved = await Task.WhenAll(
-            first.ResolveAsync(accountId, CancellationToken.None),
-            second.ResolveAsync(accountId, CancellationToken.None));
+        var firstResolving = first.ResolveAsync(accountId, CancellationToken.None);
+        await firstRefreshStarted.Task;
+        var secondResolving = second.ResolveAsync(accountId, CancellationToken.None);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMilliseconds(250));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => secondRefreshStarted.Task.WaitAsync(timeout.Token));
+        Assert.Equal(1, refreshCalls[0]);
+        allowFirstRefresh.SetResult();
+
+        var resolved = await Task.WhenAll(firstResolving, secondResolving);
 
         Assert.All(resolved, credential => Assert.Equal("new-access", credential.Secret));
         Assert.Equal(1, refreshCalls[0]);
@@ -413,7 +436,7 @@ public sealed class PostgresIntegrationTests(PostgresFixture fixture)
         return account.Id;
     }
 
-    private sealed class CountingOAuthProvider(int[] calls, OAuthToken token) : IOAuthProvider
+    private sealed class CountingOAuthProvider(int[] calls, OAuthToken token, TaskCompletionSource refreshStarted) : IOAuthProvider
     {
         public MailProvider Provider => MailProvider.Google;
         public bool IsConfigured => true;
@@ -423,7 +446,28 @@ public sealed class PostgresIntegrationTests(PostgresFixture fixture)
         public Task<OAuthToken> RefreshAsync(string refreshToken, CancellationToken cancellationToken)
         {
             Interlocked.Increment(ref calls[0]);
+            refreshStarted.SetResult();
             return Task.FromResult(token);
+        }
+    }
+
+    private sealed class BlockingOAuthProvider(
+        int[] calls,
+        OAuthToken token,
+        TaskCompletionSource refreshStarted,
+        TaskCompletionSource allowRefresh) : IOAuthProvider
+    {
+        public MailProvider Provider => MailProvider.Google;
+        public bool IsConfigured => true;
+        public string PrimaryRedirectUri => "https://app.example.test/oauth/callback";
+        public string CreateAuthorizationUrl(string email, string redirectUri, string state, string codeChallenge) => redirectUri;
+        public Task<OAuthToken> ExchangeCodeAsync(string code, string codeVerifier, string redirectUri, CancellationToken cancellationToken) => Task.FromResult(token);
+        public async Task<OAuthToken> RefreshAsync(string refreshToken, CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref calls[0]);
+            refreshStarted.SetResult();
+            await allowRefresh.Task.WaitAsync(cancellationToken);
+            return token;
         }
     }
 

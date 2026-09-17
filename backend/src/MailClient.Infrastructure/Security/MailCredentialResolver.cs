@@ -40,6 +40,7 @@ public sealed class MailCredentialResolver(
 
     private static readonly ConcurrentDictionary<Guid, SemaphoreSlim> RefreshLocks = new();
     private static readonly TimeSpan RefreshWindow = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan DistributedLockRetryDelay = TimeSpan.FromMilliseconds(50);
 
     public async Task<ResolvedCredential> ResolveAsync(Guid accountId, CancellationToken cancellationToken)
     {
@@ -54,23 +55,41 @@ public sealed class MailCredentialResolver(
 
     private async Task<ResolvedCredential> ResolveOAuthAsync(Guid accountId, CancellationToken cancellationToken)
     {
+        if (await TryFreshTokenAsync(accountId, cancellationToken) is { } fresh)
+            return fresh;
+        if (syncLocks is not null)
+            return await ResolveOAuthWithDistributedLockAsync(accountId, syncLocks, cancellationToken);
         var refreshLock = RefreshLocks.GetOrAdd(accountId, static _ => new SemaphoreSlim(1, 1));
         await refreshLock.WaitAsync(cancellationToken);
         try
         {
-            if (await TryFreshTokenAsync(accountId, cancellationToken) is { } fresh)
-                return fresh;
-            await using var distributedLock = syncLocks is null
-                ? null
-                : await syncLocks.TryAcquireAsync(accountId, SyncLockPurpose.OAuthRefresh, cancellationToken);
             db.ChangeTracker.Clear();
-            if (await TryFreshTokenAsync(accountId, cancellationToken) is { } reread)
-                return reread;
-            return await RefreshOAuthTokenAsync(accountId, cancellationToken);
+            return await TryFreshTokenAsync(accountId, cancellationToken)
+                ?? await RefreshOAuthTokenAsync(accountId, cancellationToken);
         }
         finally
         {
             refreshLock.Release();
+        }
+    }
+
+    private async Task<ResolvedCredential> ResolveOAuthWithDistributedLockAsync(
+        Guid accountId,
+        ISyncLockProvider lockProvider,
+        CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            await using var distributedLock = await lockProvider.TryAcquireAsync(
+                accountId,
+                SyncLockPurpose.OAuthRefresh,
+                cancellationToken);
+            db.ChangeTracker.Clear();
+            if (await TryFreshTokenAsync(accountId, cancellationToken) is { } fresh)
+                return fresh;
+            if (distributedLock is not null)
+                return await RefreshOAuthTokenAsync(accountId, cancellationToken);
+            await Task.Delay(DistributedLockRetryDelay, cancellationToken);
         }
     }
 
