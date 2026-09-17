@@ -7,6 +7,7 @@ using MailClient.Domain.Entities;
 using MailClient.Domain.Enums;
 using MailClient.Infrastructure.OAuth;
 using MailClient.Infrastructure.Persistence;
+using MailClient.Infrastructure.Sync;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
@@ -24,7 +25,8 @@ public sealed class MailCredentialResolver(
     IEnumerable<IOAuthProvider> oauthProviders,
     IRuntimePolicyProvider runtimePolicy,
     IPushNotificationService? push = null,
-    ILogger<MailCredentialResolver>? logger = null)
+    ILogger<MailCredentialResolver>? logger = null,
+    ISyncLockProvider? syncLocks = null)
 {
     public MailCredentialResolver(AppDbContext db, ICredentialProtector protector)
         : this(db, protector, [], new DefaultRuntimePolicyProvider())
@@ -56,34 +58,55 @@ public sealed class MailCredentialResolver(
         await refreshLock.WaitAsync(cancellationToken);
         try
         {
-            var account = await LoadAccountAsync(accountId, cancellationToken);
-            var credential = account.Credentials.Single(x => x.AuthenticationMethod == AuthenticationMethod.OAuth2);
-            var material = Deserialize(credential.EncryptedMaterial);
-            if (credential.ExpiresAt is { } expiresAt && expiresAt > DateTime.UtcNow.Add(RefreshWindow))
-                return new ResolvedCredential(account, account.Username, material.AccessToken, AuthenticationMethod.OAuth2);
-            if (string.IsNullOrWhiteSpace(material.RefreshToken))
-                return await RequireReauthenticationAsync(account, cancellationToken);
-            var provider = oauthProviders.SingleOrDefault(item => item.Provider == account.Provider && item.IsConfigured)
-                ?? throw new InvalidOperationException("oauth_provider_not_configured");
-            try
-            {
-                var refreshed = await provider.RefreshAsync(material.RefreshToken, cancellationToken);
-                var rotatedRefreshToken = refreshed.RefreshToken ?? material.RefreshToken;
-                credential.EncryptedMaterial = protector.Protect(JsonSerializer.Serialize(new OAuthCredentialMaterial(refreshed.AccessToken, rotatedRefreshToken)));
-                credential.ExpiresAt = refreshed.ExpiresAt;
-                credential.Scopes = refreshed.Scopes;
-                credential.UpdatedAt = DateTime.UtcNow;
-                await db.SaveChangesAsync(cancellationToken);
-                return new ResolvedCredential(account, account.Username, refreshed.AccessToken, AuthenticationMethod.OAuth2);
-            }
-            catch (InvalidOperationException ex) when (ex.Message == "mail_account_needs_reauthentication")
-            {
-                return await RequireReauthenticationAsync(account, cancellationToken);
-            }
+            if (await TryFreshTokenAsync(accountId, cancellationToken) is { } fresh)
+                return fresh;
+            await using var distributedLock = syncLocks is null
+                ? null
+                : await syncLocks.TryAcquireAsync(accountId, SyncLockPurpose.OAuthRefresh, cancellationToken);
+            db.ChangeTracker.Clear();
+            if (await TryFreshTokenAsync(accountId, cancellationToken) is { } reread)
+                return reread;
+            return await RefreshOAuthTokenAsync(accountId, cancellationToken);
         }
         finally
         {
             refreshLock.Release();
+        }
+    }
+
+    private async Task<ResolvedCredential?> TryFreshTokenAsync(Guid accountId, CancellationToken cancellationToken)
+    {
+        var account = await LoadAccountAsync(accountId, cancellationToken);
+        var credential = account.Credentials.Single(x => x.AuthenticationMethod == AuthenticationMethod.OAuth2);
+        var material = Deserialize(credential.EncryptedMaterial);
+        if (credential.ExpiresAt is { } expiresAt && expiresAt > DateTime.UtcNow.Add(RefreshWindow))
+            return new ResolvedCredential(account, account.Username, material.AccessToken, AuthenticationMethod.OAuth2);
+        return null;
+    }
+
+    private async Task<ResolvedCredential> RefreshOAuthTokenAsync(Guid accountId, CancellationToken cancellationToken)
+    {
+        var account = await LoadAccountAsync(accountId, cancellationToken);
+        var credential = account.Credentials.Single(x => x.AuthenticationMethod == AuthenticationMethod.OAuth2);
+        var material = Deserialize(credential.EncryptedMaterial);
+        if (string.IsNullOrWhiteSpace(material.RefreshToken))
+            return await RequireReauthenticationAsync(account, cancellationToken);
+        var provider = oauthProviders.SingleOrDefault(item => item.Provider == account.Provider && item.IsConfigured)
+            ?? throw new InvalidOperationException("oauth_provider_not_configured");
+        try
+        {
+            var refreshed = await provider.RefreshAsync(material.RefreshToken, cancellationToken);
+            var rotatedRefreshToken = refreshed.RefreshToken ?? material.RefreshToken;
+            credential.EncryptedMaterial = protector.Protect(JsonSerializer.Serialize(new OAuthCredentialMaterial(refreshed.AccessToken, rotatedRefreshToken)));
+            credential.ExpiresAt = refreshed.ExpiresAt;
+            credential.Scopes = refreshed.Scopes;
+            credential.UpdatedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync(cancellationToken);
+            return new ResolvedCredential(account, account.Username, refreshed.AccessToken, AuthenticationMethod.OAuth2);
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "mail_account_needs_reauthentication")
+        {
+            return await RequireReauthenticationAsync(account, cancellationToken);
         }
     }
 

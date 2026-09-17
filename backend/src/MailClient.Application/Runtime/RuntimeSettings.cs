@@ -12,10 +12,8 @@ public sealed class RuntimeSettings
 
     public void Validate()
     {
-        if (Sync.PollIntervalSeconds <= 0
-            || Sync.FlagSyncIntervalSeconds <= 0
-            || Sync.MaxMessagesPerRun <= 0
-            || Limits.MaxAttachmentBytes <= 0
+        Sync.Validate();
+        if (Limits.MaxAttachmentBytes <= 0
             || Limits.MaxMessageAttachmentBytes < Limits.MaxAttachmentBytes
             || Limits.MaxMessageBytes <= 0
             || Limits.MaxMessageBytes < Limits.MaxMessageAttachmentBytes
@@ -65,6 +63,33 @@ public sealed class RuntimeSyncSettings
     public int PollIntervalSeconds { get; init; } = 30;
     public int FlagSyncIntervalSeconds { get; init; } = 120;
     public int MaxMessagesPerRun { get; init; } = 100;
+    public int MaxConcurrentAccounts { get; init; } = 4;
+    public int MaxConcurrentFoldersPerAccount { get; init; } = 1;
+    public int QueueCapacity { get; init; } = 1000;
+    public int TransientRetryMaxAttempts { get; init; } = 3;
+    public int RetryBaseDelaySeconds { get; init; } = 2;
+    public int RetryMaxDelaySeconds { get; init; } = 60;
+    public int MaxConcurrentSyncConnectionsPerHost { get; init; } = 4;
+    public int SyncErrorFailureThreshold { get; init; } = 3;
+
+    public void Validate()
+    {
+        if (PollIntervalSeconds <= 0
+            || FlagSyncIntervalSeconds <= 0
+            || MaxMessagesPerRun <= 0
+            || MaxConcurrentAccounts <= 0
+            || MaxConcurrentFoldersPerAccount <= 0
+            || QueueCapacity <= 0
+            || TransientRetryMaxAttempts <= 0
+            || RetryBaseDelaySeconds <= 0
+            || RetryMaxDelaySeconds <= 0
+            || RetryBaseDelaySeconds > RetryMaxDelaySeconds
+            || MaxConcurrentSyncConnectionsPerHost <= 0
+            || SyncErrorFailureThreshold <= 0)
+        {
+            throw new InvalidOperationException(RuntimePolicyErrors.RuntimeSettingsInvalid);
+        }
+    }
 }
 
 public sealed class RuntimeLimitSettings
