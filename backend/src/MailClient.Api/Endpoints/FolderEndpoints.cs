@@ -26,13 +26,20 @@ public static class FolderEndpoints
                 new Dictionary<string, string?> { ["folders"] = count.ToString() }, correlation.CorrelationId, ct);
             return Results.Accepted(value: new { folders = count });
         }).WithName("RefreshFolders").WithSummary("Refresh mailbox folders").Produces(202).ProducesProblem(409).ProducesProblem(502);
-        api.MapPost("/folders/{id:guid}/sync", async (Guid id, ICurrentMailAccount current, MailFolderAccessService service, InitialSyncQueue queue, AuditLogger audit, CorrelationContext correlation, CancellationToken ct) =>
+        api.MapPost("/folders/{id:guid}/sync", async (Guid id, ICurrentMailAccount current, MailFolderAccessService service, ISyncScheduler scheduler, AuditLogger audit, CorrelationContext correlation, CancellationToken ct) =>
         {
             var folder = await service.GetFolderSyncAvailabilityAsync(current.MailAccountId, id, ct);
             if (folder is null) return Results.NotFound();
             if (!folder.IsAvailable)
                 return Results.Problem(statusCode: 409, extensions: new Dictionary<string, object?> { ["code"] = "mail_folder_unavailable" });
-            await queue.EnqueueAsync(SyncRequest.Folder(current.MailAccountId, id), ct);
+            try
+            {
+                await scheduler.ScheduleFolderAsync(current.MailAccountId, id, SyncOrigin.UserRequested, ct);
+            }
+            catch (SyncQueueFullException)
+            {
+                return Results.Problem(statusCode: 503, extensions: new Dictionary<string, object?> { ["code"] = "sync_queue_full" });
+            }
             await audit.WriteAsync(current.MailAccountId, AuditActions.MailSyncRequested, "MailFolder", id.ToString(), null, correlation.CorrelationId, ct);
             return Results.Accepted();
         }).WithName("SyncFolder").WithSummary("Request folder synchronization").Produces(202).Produces(404).ProducesProblem(409);
