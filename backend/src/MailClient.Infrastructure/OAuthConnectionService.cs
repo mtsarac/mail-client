@@ -27,7 +27,7 @@ public sealed class OAuthConnectionService(
     IMailConnectionValidator connections,
     MailSessionService sessions,
     IJwtTokenIssuer jwt,
-    InitialSyncQueue syncQueue,
+    ISyncScheduler scheduler,
     MailKitFolderExplorer explorer,
     IRuntimePolicyProvider runtimePolicy,
     ILogger<OAuthConnectionService> logger)
@@ -142,7 +142,7 @@ public sealed class OAuthConnectionService(
         await db.SaveChangesAsync(cancellationToken);
         await RefreshFoldersBestEffortAsync(account, payload.Email, token.AccessToken, cancellationToken);
         var session = await sessions.CreateAsync(account.Id, payload.DeviceIdentifier, cancellationToken);
-        await syncQueue.EnqueueAsync(SyncRequest.Account(account.Id), cancellationToken);
+        await scheduler.ScheduleAccountAsync(account.Id, SyncOrigin.Initial, cancellationToken);
         var access = jwt.Issue(account.Id);
         return new TokenResponse(access.Token, session.Token, account.Id, access.ExpiresAt);
     }

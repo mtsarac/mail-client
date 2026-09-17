@@ -21,7 +21,7 @@ public sealed class AccountConnectionService(
     ICredentialProtector protector,
     MailSessionService sessions,
     IJwtTokenIssuer jwt,
-    InitialSyncQueue syncQueue,
+    ISyncScheduler scheduler,
     MailKitFolderExplorer explorer,
     MailCredentialResolver credentialResolver,
     IRuntimePolicyProvider runtimePolicy,
@@ -79,7 +79,7 @@ public sealed class AccountConnectionService(
         await db.SaveChangesAsync(cancellationToken);
         await RefreshFoldersBestEffortAsync(account, working, authentication.Password, cancellationToken);
         var session = await sessions.CreateAsync(account.Id, deviceIdentifier, cancellationToken);
-        await syncQueue.EnqueueAsync(SyncRequest.Account(account.Id), cancellationToken);
+        await scheduler.ScheduleAccountAsync(account.Id, SyncOrigin.Initial, cancellationToken);
         var access = jwt.Issue(account.Id);
         return new(access.Token, session.Token, account.Id, access.ExpiresAt);
     }
