@@ -1,7 +1,9 @@
 using System.Buffers;
+using System.Diagnostics;
 using System.Security.Cryptography;
 using MailClient.Application.Conversations;
 using MailClient.Application.Mail;
+using MailClient.Application.Observability;
 using MailClient.Application.Runtime;
 using MailClient.Infrastructure.Runtime;
 using MailClient.Application.Sync;
@@ -24,7 +26,8 @@ public sealed class MailSendService(
     SendOperationStore operations,
     RuntimeOperationSettings operationSettings,
     AuditLogger audit,
-    ILogger<MailSendService> logger)
+    ILogger<MailSendService> logger,
+    MailClientMetrics? metrics = null)
 {
     public MailSendService(
         AppDbContext db,
@@ -158,17 +161,23 @@ public sealed class MailSendService(
             throw new InvalidOperationException("message_not_constructible");
         }
 
+        using var activity = MailClientTelemetry.StartActivity("mailclient.mail.send");
+        activity?.SetTag("mail.provider", MailClientTelemetry.Provider(account.Provider));
+        var started = Stopwatch.GetTimestamp();
         try
         {
             await transport.SendAsync(account, message, cancellationToken);
         }
         catch (OperationCanceledException)
         {
+            RecordSend(activity, account.Provider, "cancelled", started);
             await MarkUnknownBestEffortAsync(operation);
             throw;
         }
         catch (SmtpDeliveryException ex)
         {
+            MailClientTelemetry.MarkFailed(activity, ex);
+            RecordSend(activity, account.Provider, "delivery_unknown", started);
             logger.LogWarning(ex, "SMTP delivery outcome unknown for account {AccountId}.", account.Id);
             if (operation is not null)
                 await operations.TryMarkUnknownAsync(operation.Id, cancellationToken);
@@ -176,6 +185,8 @@ public sealed class MailSendService(
         }
         catch (MailConnectionException ex)
         {
+            MailClientTelemetry.MarkFailed(activity, ex);
+            RecordSend(activity, account.Provider, "failure", started);
             logger.LogWarning(ex, "SMTP send failed before delivery for account {AccountId}.", account.Id);
             if (operation is not null)
                 await operations.TryFailAsync(operation.Id, "The message could not be sent.", cancellationToken);
@@ -183,11 +194,15 @@ public sealed class MailSendService(
         }
         catch (Exception ex)
         {
+            MailClientTelemetry.MarkFailed(activity, ex);
+            RecordSend(activity, account.Provider, "delivery_unknown", started);
             logger.LogWarning(ex, "SMTP send failed ambiguously for account {AccountId}.", account.Id);
             if (operation is not null)
                 await operations.TryMarkUnknownAsync(operation.Id, cancellationToken);
             throw new InvalidOperationException("delivery_unknown");
         }
+
+        RecordSend(activity, account.Provider, "success", started);
 
         if (operation is not null)
             await operations.TryCompleteAsync(operation.Id, SendOperationStatus.Sent, false, null, CancellationToken.None);
@@ -225,11 +240,18 @@ public sealed class MailSendService(
         }
         catch (Exception ex)
         {
+            metrics?.RecordSentCopyFailure(account.Provider);
             logger.LogWarning(ex, "Sent append failed for account {AccountId}.", account.Id);
             if (operation is not null)
                 await operations.TryCompleteAsync(operation.Id, SendOperationStatus.Sent, false, "Message was sent, but the Sent copy could not be stored.", CancellationToken.None);
             return new SendMailResult(true, false, "Message was sent, but the Sent copy could not be stored.");
         }
+    }
+
+    private void RecordSend(Activity? activity, MailProvider provider, string result, long started)
+    {
+        activity?.SetTag("mail.send.result", result);
+        metrics?.RecordMailSend(provider, result, Stopwatch.GetElapsedTime(started));
     }
 
     private async Task MarkUnknownBestEffortAsync(SendOperation? operation)

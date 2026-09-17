@@ -36,6 +36,23 @@ public sealed class PushNotificationTests
     }
 
     [Fact]
+    public async Task NotifyAsync_InvalidToken_RecordsInvalidTokenMetricWithoutDeviceToken()
+    {
+        using var capture = new MetricsCapture();
+        var dbName = DbName();
+        var accountId = await SeedDeviceAsync(dbName, "device-token-secret");
+        var gateway = new FakeFirebaseGateway { ResultFor = recipient => new FirebaseSendResult(recipient.DbId, false, true) };
+        var service = CreatePushService(dbName, gateway, new FakeRuntimeSettingsStore(new RuntimeSettings()), capture.Metrics);
+
+        await service.NotifyAsync(new PushEvent(PushEventType.NewMail, accountId, Guid.NewGuid(), null, Guid.NewGuid()), CancellationToken.None);
+
+        Assert.Equal(1, capture.Sum("mailclient.push.invalid_tokens", ("event_type", "new_mail")));
+        Assert.Equal(1, capture.Sum("mailclient.push.notifications", ("event_type", "new_mail"), ("result", "failure")));
+        Assert.Single(capture.For("mailclient.push.duration"));
+        Assert.DoesNotContain(capture.All.SelectMany(item => item.Tags.Values), value => Convert.ToString(value)!.Contains("device-token", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task NotifyAsync_TransientFailure_KeepsTokenWithoutThrowing()
     {
         var dbName = DbName();
@@ -292,7 +309,11 @@ public sealed class PushNotificationTests
     private static FirebasePushNotificationService CreatePushService(string dbName, FakeFirebaseGateway gateway, RuntimeSettings settings) =>
         CreatePushService(dbName, gateway, new FakeRuntimeSettingsStore(settings));
 
-    private static FirebasePushNotificationService CreatePushService(string dbName, FakeFirebaseGateway gateway, FakeRuntimeSettingsStore store)
+    private static FirebasePushNotificationService CreatePushService(
+        string dbName,
+        FakeFirebaseGateway gateway,
+        FakeRuntimeSettingsStore store,
+        Application.Observability.MailClientMetrics? metrics = null)
     {
         var services = new ServiceCollection();
         services.AddDbContext<AppDbContext>(options => options.UseInMemoryDatabase(dbName));
@@ -303,7 +324,8 @@ public sealed class PushNotificationTests
         return new FirebasePushNotificationService(
             provider.GetRequiredService<IServiceScopeFactory>(),
             gateway,
-            NullLogger<FirebasePushNotificationService>.Instance);
+            NullLogger<FirebasePushNotificationService>.Instance,
+            metrics);
     }
 
     private static MailFolderSyncService CreateSyncService(AppDbContext db, IPushNotificationService push) =>

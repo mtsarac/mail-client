@@ -1,12 +1,17 @@
 using System.Text.Json;
+using MailClient.Application.Observability;
 using MailClient.Application.Runtime;
 using MailClient.Domain.Entities;
 using MailClient.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace MailClient.Infrastructure.Runtime;
 
-public sealed class RuntimeSettingsStore(AppDbContext db) : IRuntimeSettingsStore
+public sealed class RuntimeSettingsStore(
+    AppDbContext db,
+    ILogger<RuntimeSettingsStore>? logger = null,
+    MailClientMetrics? metrics = null) : IRuntimeSettingsStore
 {
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
 
@@ -67,11 +72,24 @@ public sealed class RuntimeSettingsStore(AppDbContext db) : IRuntimeSettingsStor
         return new RuntimeSettingsSnapshot(settings, row.Version, now);
     }
 
-    private static RuntimeSettingsSnapshot ToSnapshot(RuntimeConfiguration row)
+    private RuntimeSettingsSnapshot ToSnapshot(RuntimeConfiguration row)
     {
-        var settings = JsonSerializer.Deserialize<RuntimeSettings>(row.SettingsJson, SerializerOptions)
-            ?? throw new InvalidOperationException(RuntimePolicyErrors.RuntimeSettingsInvalid);
-        settings.Validate();
+        RuntimeSettings settings;
+        try
+        {
+            settings = JsonSerializer.Deserialize<RuntimeSettings>(row.SettingsJson, SerializerOptions)
+                ?? throw new InvalidOperationException(RuntimePolicyErrors.RuntimeSettingsInvalid);
+            settings.Validate();
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException)
+        {
+            metrics?.RecordRuntimeSettingsLoadFailure();
+            logger?.LogError(
+                "Persisted runtime settings version {Version} are unreadable or invalid ({ErrorType}); operations depending on them will fail until corrected.",
+                row.Version, ex.GetType().Name);
+            throw;
+        }
+
         return new RuntimeSettingsSnapshot(settings, row.Version, row.UpdatedAt);
     }
 }

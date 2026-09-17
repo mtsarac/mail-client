@@ -1,8 +1,11 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Text.Json;
 using MailClient.Application.Accounts;
 using MailClient.Application.Mail;
+using MailClient.Application.Observability;
 using MailClient.Application.Runtime;
+using MailClient.Application.Sync;
 using MailClient.Domain.Entities;
 using MailClient.Domain.Enums;
 using MailClient.Infrastructure.OAuth;
@@ -26,7 +29,8 @@ public sealed class MailCredentialResolver(
     IRuntimePolicyProvider runtimePolicy,
     IPushNotificationService? push = null,
     ILogger<MailCredentialResolver>? logger = null,
-    ISyncLockProvider? syncLocks = null)
+    ISyncLockProvider? syncLocks = null,
+    MailClientMetrics? metrics = null)
 {
     public MailCredentialResolver(AppDbContext db, ICredentialProtector protector)
         : this(db, protector, [], new DefaultRuntimePolicyProvider())
@@ -87,8 +91,10 @@ public sealed class MailCredentialResolver(
             db.ChangeTracker.Clear();
             if (await TryFreshTokenAsync(accountId, cancellationToken) is { } fresh)
                 return fresh;
-            if (distributedLock is not null)
+            if (distributedLock.IsAcquired)
                 return await RefreshOAuthTokenAsync(accountId, cancellationToken);
+            if (distributedLock.Status == SyncLockStatus.InfrastructureFailure)
+                throw new InvalidOperationException(SyncFailureClassifier.OAuthRefreshLockUnavailable);
             await Task.Delay(DistributedLockRetryDelay, cancellationToken);
         }
     }
@@ -112,21 +118,40 @@ public sealed class MailCredentialResolver(
             return await RequireReauthenticationAsync(account, cancellationToken);
         var provider = oauthProviders.SingleOrDefault(item => item.Provider == account.Provider && item.IsConfigured)
             ?? throw new InvalidOperationException("oauth_provider_not_configured");
+        using var activity = MailClientTelemetry.StartActivity("mailclient.oauth.refresh");
+        activity?.SetTag("mail.provider", MailClientTelemetry.Provider(account.Provider));
+        var started = Stopwatch.GetTimestamp();
+        OAuthToken refreshed;
         try
         {
-            var refreshed = await provider.RefreshAsync(material.RefreshToken, cancellationToken);
-            var rotatedRefreshToken = refreshed.RefreshToken ?? material.RefreshToken;
-            credential.EncryptedMaterial = protector.Protect(JsonSerializer.Serialize(new OAuthCredentialMaterial(refreshed.AccessToken, rotatedRefreshToken)));
-            credential.ExpiresAt = refreshed.ExpiresAt;
-            credential.Scopes = refreshed.Scopes;
-            credential.UpdatedAt = DateTime.UtcNow;
-            await db.SaveChangesAsync(cancellationToken);
-            return new ResolvedCredential(account, account.Username, refreshed.AccessToken, AuthenticationMethod.OAuth2);
+            refreshed = await provider.RefreshAsync(material.RefreshToken, cancellationToken);
         }
         catch (InvalidOperationException ex) when (ex.Message == "mail_account_needs_reauthentication")
         {
+            RecordRefresh(activity, account.Provider, "reauthentication_required", started);
             return await RequireReauthenticationAsync(account, cancellationToken);
         }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            MailClientTelemetry.MarkFailed(activity, ex);
+            RecordRefresh(activity, account.Provider, "failure", started);
+            throw;
+        }
+
+        RecordRefresh(activity, account.Provider, "success", started);
+        var rotatedRefreshToken = refreshed.RefreshToken ?? material.RefreshToken;
+        credential.EncryptedMaterial = protector.Protect(JsonSerializer.Serialize(new OAuthCredentialMaterial(refreshed.AccessToken, rotatedRefreshToken)));
+        credential.ExpiresAt = refreshed.ExpiresAt;
+        credential.Scopes = refreshed.Scopes;
+        credential.UpdatedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync(cancellationToken);
+        return new ResolvedCredential(account, account.Username, refreshed.AccessToken, AuthenticationMethod.OAuth2);
+    }
+
+    private void RecordRefresh(Activity? activity, MailProvider provider, string result, long started)
+    {
+        activity?.SetTag("oauth.result", result);
+        metrics?.RecordOAuthTokenRefresh(provider, result, Stopwatch.GetElapsedTime(started));
     }
 
     private async Task<MailAccount> LoadAccountAsync(Guid accountId, CancellationToken cancellationToken)
@@ -160,6 +185,8 @@ public sealed class MailCredentialResolver(
         account.Status = MailAccountStatus.NeedsReauthentication;
         account.UpdatedAt = DateTime.UtcNow;
         await db.SaveChangesAsync(cancellationToken);
+        if (transitioned)
+            metrics?.RecordOAuthReauthenticationRequired(account.Provider);
         if (transitioned && push is not null)
         {
             try

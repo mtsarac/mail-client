@@ -1,6 +1,6 @@
 using System.Buffers.Binary;
 using System.Security.Cryptography;
-using Microsoft.EntityFrameworkCore;
+using MailClient.Application.Observability;
 using Microsoft.Extensions.Logging;
 using Npgsql;
 
@@ -12,13 +12,60 @@ public enum SyncLockPurpose
     OAuthRefresh
 }
 
+public enum SyncLockStatus
+{
+    Acquired,
+    Contended,
+    InfrastructureFailure
+}
+
 public interface ISyncLock : IAsyncDisposable
 {
 }
 
+/// <summary>
+/// Outcome of a lock attempt. Contention is normal; infrastructure failure means lock ownership
+/// could not be determined and callers must not proceed as if they held the lock.
+/// </summary>
+public sealed class SyncLockAcquisition : IAsyncDisposable
+{
+    private readonly ISyncLock? _handle;
+
+    private SyncLockAcquisition(SyncLockStatus status, ISyncLock? handle)
+    {
+        Status = status;
+        _handle = handle;
+    }
+
+    public static SyncLockAcquisition Contended { get; } = new(SyncLockStatus.Contended, null);
+    public static SyncLockAcquisition InfrastructureFailure { get; } = new(SyncLockStatus.InfrastructureFailure, null);
+    public static SyncLockAcquisition Acquired(ISyncLock handle) => new(SyncLockStatus.Acquired, handle);
+
+    public SyncLockStatus Status { get; }
+    public bool IsAcquired => Status == SyncLockStatus.Acquired;
+
+    public ValueTask DisposeAsync() => _handle?.DisposeAsync() ?? ValueTask.CompletedTask;
+}
+
 public interface ISyncLockProvider
 {
-    Task<ISyncLock?> TryAcquireAsync(Guid accountId, SyncLockPurpose purpose, CancellationToken cancellationToken);
+    Task<SyncLockAcquisition> TryAcquireAsync(Guid accountId, SyncLockPurpose purpose, CancellationToken cancellationToken);
+}
+
+internal static class SyncLockMetrics
+{
+    public static SyncLockAcquisition Record(MailClientMetrics? metrics, SyncLockPurpose purpose, SyncLockAcquisition acquisition)
+    {
+        metrics?.RecordLockAcquisition(
+            purpose == SyncLockPurpose.OAuthRefresh ? "oauth_refresh" : "account_sync",
+            acquisition.Status switch
+            {
+                SyncLockStatus.Acquired => "acquired",
+                SyncLockStatus.Contended => "contended",
+                _ => "failed"
+            });
+        return acquisition;
+    }
 }
 
 /// <summary>
@@ -26,9 +73,15 @@ public interface ISyncLockProvider
 /// connection dies. Each lock uses its own dedicated connection; the lock is
 /// held for the lifetime of the returned handle.
 /// </summary>
-public sealed class PostgresSyncLockProvider(string connectionString, ILogger<PostgresSyncLockProvider> logger) : ISyncLockProvider
+public sealed class PostgresSyncLockProvider(
+    string connectionString,
+    ILogger<PostgresSyncLockProvider> logger,
+    MailClientMetrics? metrics = null) : ISyncLockProvider
 {
-    public async Task<ISyncLock?> TryAcquireAsync(Guid accountId, SyncLockPurpose purpose, CancellationToken cancellationToken)
+    public async Task<SyncLockAcquisition> TryAcquireAsync(Guid accountId, SyncLockPurpose purpose, CancellationToken cancellationToken) =>
+        SyncLockMetrics.Record(metrics, purpose, await AcquireAsync(accountId, purpose, cancellationToken));
+
+    private async Task<SyncLockAcquisition> AcquireAsync(Guid accountId, SyncLockPurpose purpose, CancellationToken cancellationToken)
     {
         var connection = new NpgsqlConnection(connectionString);
         try
@@ -43,10 +96,10 @@ public sealed class PostgresSyncLockProvider(string connectionString, ILogger<Po
             if (!acquired)
             {
                 await connection.DisposeAsync();
-                return null;
+                return SyncLockAcquisition.Contended;
             }
 
-            return new PostgresSyncLock(connection, key1, key2, purpose, logger);
+            return SyncLockAcquisition.Acquired(new PostgresSyncLock(connection, key1, key2, purpose, logger));
         }
         catch (OperationCanceledException)
         {
@@ -55,9 +108,9 @@ public sealed class PostgresSyncLockProvider(string connectionString, ILogger<Po
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "Sync lock acquisition failed for purpose {Purpose}.", purpose);
+            logger.LogWarning(ex, "Distributed lock infrastructure failure for purpose {Purpose}.", purpose);
             await connection.DisposeAsync();
-            return null;
+            return SyncLockAcquisition.InfrastructureFailure;
         }
     }
 
@@ -108,16 +161,17 @@ public sealed class PostgresSyncLockProvider(string connectionString, ILogger<Po
 /// Test/fallback lock provider using only in-process exclusion. Cross-instance
 /// safety requires <see cref="PostgresSyncLockProvider"/> with PostgreSQL.
 /// </summary>
-public sealed class InMemorySyncLockProvider : ISyncLockProvider
+public sealed class InMemorySyncLockProvider(MailClientMetrics? metrics = null) : ISyncLockProvider
 {
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<(Guid, SyncLockPurpose), SemaphoreSlim> Locks = new();
 
-    public Task<ISyncLock?> TryAcquireAsync(Guid accountId, SyncLockPurpose purpose, CancellationToken cancellationToken)
+    public Task<SyncLockAcquisition> TryAcquireAsync(Guid accountId, SyncLockPurpose purpose, CancellationToken cancellationToken)
     {
         var gate = Locks.GetOrAdd((accountId, purpose), static _ => new SemaphoreSlim(1, 1));
-        if (!gate.Wait(0, cancellationToken))
-            return Task.FromResult<ISyncLock?>(null);
-        return Task.FromResult<ISyncLock?>(new Handle(gate, accountId, purpose));
+        var acquisition = gate.Wait(0, cancellationToken)
+            ? SyncLockAcquisition.Acquired(new Handle(gate, accountId, purpose))
+            : SyncLockAcquisition.Contended;
+        return Task.FromResult(SyncLockMetrics.Record(metrics, purpose, acquisition));
     }
 
     private sealed class Handle(SemaphoreSlim gate, Guid accountId, SyncLockPurpose purpose) : ISyncLock

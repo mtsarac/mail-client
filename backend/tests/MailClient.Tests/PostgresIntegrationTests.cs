@@ -307,6 +307,18 @@ public sealed class PostgresIntegrationTests(PostgresFixture fixture)
     }
 
     [Fact]
+    public async Task Readiness_PostgresAvailable_Returns200()
+    {
+        if (!IntegrationEnvironment.PostgresEnabled) return;
+        await using var factory = new NpgsqlApiFactory(fixture.ConnectionString);
+
+        var response = await factory.CreateClient().GetAsync("/health/ready");
+
+        Assert.Equal(System.Net.HttpStatusCode.OK, response.StatusCode);
+        Assert.Contains("\"postgres\":\"Healthy\"", await response.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
     public async Task SyncLock_SameAccountSecondHolderBlocked_DifferentAccountsProceed()
     {
         if (!IntegrationEnvironment.PostgresEnabled) return;
@@ -315,12 +327,13 @@ public sealed class PostgresIntegrationTests(PostgresFixture fixture)
         var provider = new PostgresSyncLockProvider(fixture.ConnectionString, NullLogger<PostgresSyncLockProvider>.Instance);
 
         await using var first = await provider.TryAcquireAsync(accountId, SyncLockPurpose.AccountSync, CancellationToken.None);
-        Assert.NotNull(first);
-        Assert.Null(await provider.TryAcquireAsync(accountId, SyncLockPurpose.AccountSync, CancellationToken.None));
+        Assert.Equal(SyncLockStatus.Acquired, first.Status);
+        await using var contended = await provider.TryAcquireAsync(accountId, SyncLockPurpose.AccountSync, CancellationToken.None);
+        Assert.Equal(SyncLockStatus.Contended, contended.Status);
         await using var other = await provider.TryAcquireAsync(otherAccountId, SyncLockPurpose.AccountSync, CancellationToken.None);
-        Assert.NotNull(other);
+        Assert.Equal(SyncLockStatus.Acquired, other.Status);
         await using var refresh = await provider.TryAcquireAsync(accountId, SyncLockPurpose.OAuthRefresh, CancellationToken.None);
-        Assert.NotNull(refresh);
+        Assert.Equal(SyncLockStatus.Acquired, refresh.Status);
     }
 
     [Fact]
@@ -332,11 +345,11 @@ public sealed class PostgresIntegrationTests(PostgresFixture fixture)
 
         await using (var first = await provider.TryAcquireAsync(accountId, SyncLockPurpose.AccountSync, CancellationToken.None))
         {
-            Assert.NotNull(first);
+            Assert.Equal(SyncLockStatus.Acquired, first.Status);
         }
 
         await using var second = await provider.TryAcquireAsync(accountId, SyncLockPurpose.AccountSync, CancellationToken.None);
-        Assert.NotNull(second);
+        Assert.Equal(SyncLockStatus.Acquired, second.Status);
     }
 
     [Fact]
@@ -347,7 +360,7 @@ public sealed class PostgresIntegrationTests(PostgresFixture fixture)
         var provider = new PostgresSyncLockProvider(fixture.ConnectionString, NullLogger<PostgresSyncLockProvider>.Instance);
 
         await using var first = await provider.TryAcquireAsync(accountId, SyncLockPurpose.AccountSync, CancellationToken.None);
-        Assert.NotNull(first);
+        Assert.Equal(SyncLockStatus.Acquired, first.Status);
         using var cancelled = new CancellationTokenSource();
         await cancelled.CancelAsync();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>

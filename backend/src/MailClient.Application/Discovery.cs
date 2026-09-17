@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using MailClient.Application.Observability;
 using MailClient.Application.Runtime;
 using MailClient.Domain.Enums;
 
@@ -17,9 +19,45 @@ public interface IMailServerCandidateValidator
     Task<bool> ValidateAsync(MailServerCandidate candidate, CancellationToken cancellationToken);
 }
 
-public sealed class MailServerDiscoveryService(IEnumerable<IMailDiscoveryStrategy> strategies, IMailServerCandidateValidator validator, MailDiscoveryOptions options, IRuntimePolicyProvider? runtimePolicy = null)
+public sealed class MailServerDiscoveryService(
+    IEnumerable<IMailDiscoveryStrategy> strategies,
+    IMailServerCandidateValidator validator,
+    MailDiscoveryOptions options,
+    IRuntimePolicyProvider? runtimePolicy = null,
+    MailClientMetrics? metrics = null)
 {
     public async Task<MailServerCandidate?> DiscoverAsync(string email, CancellationToken cancellationToken)
+    {
+        using var activity = MailClientTelemetry.StartActivity("mailclient.discovery");
+        var started = Stopwatch.GetTimestamp();
+        try
+        {
+            var candidate = await DiscoverCoreAsync(email, cancellationToken);
+            var result = candidate is null ? "not_found" : "found";
+            activity?.SetTag("discovery.result", result);
+            if (candidate is not null)
+            {
+                activity?.SetTag("discovery.source", MailClientTelemetry.DiscoverySourceName(candidate.Source));
+                activity?.SetTag("mail.provider", MailClientTelemetry.Provider(candidate.Provider));
+            }
+
+            metrics?.RecordDiscovery(result, candidate?.Source, candidate?.Provider, Stopwatch.GetElapsedTime(started));
+            return candidate;
+        }
+        catch (OperationCanceledException)
+        {
+            metrics?.RecordDiscovery("cancelled", null, null, Stopwatch.GetElapsedTime(started));
+            throw;
+        }
+        catch (Exception ex)
+        {
+            MailClientTelemetry.MarkFailed(activity, ex);
+            metrics?.RecordDiscovery("failure", null, null, Stopwatch.GetElapsedTime(started));
+            throw;
+        }
+    }
+
+    private async Task<MailServerCandidate?> DiscoverCoreAsync(string email, CancellationToken cancellationToken)
     {
         using var overallCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         overallCts.CancelAfter(TimeSpan.FromSeconds(options.OverallTimeoutSeconds));

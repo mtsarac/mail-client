@@ -5,6 +5,7 @@ using MailClient.Domain.Enums;
 using MailClient.Infrastructure.Mail;
 using MailClient.Infrastructure.Observability;
 using MailClient.Infrastructure.Persistence;
+using MailClient.Infrastructure.Runtime;
 using MailClient.Infrastructure.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -87,6 +88,25 @@ public sealed class SendServiceTests
     }
 
     [Fact]
+    public async Task SendAsync_RecordsSuccessAndFailureMetricsWithoutMessageContent()
+    {
+        using var capture = new MetricsCapture();
+        await using var db = CreateDb();
+        var accountId = await SeedAccountAsync(db, saveSentCopy: false);
+        var sent = CreateService(db, new FakeMailTransport(), capture.Metrics);
+        var failed = CreateService(db, new FakeMailTransport { SendFailure = new MailConnectionException(MailConnectionFailure.Network, "down") }, capture.Metrics);
+
+        await sent.SendAsync(accountId, new SendMailCommand(accountId, "friend@example.test", "Quarterly numbers", null, "body", []) { IdempotencyKey = "metrics-1" }, null, CancellationToken.None);
+        await failed.SendAsync(accountId, new SendMailCommand(accountId, "friend@example.test", "Quarterly numbers", null, "body", []) { IdempotencyKey = "metrics-2" }, null, CancellationToken.None);
+
+        Assert.Equal(1, capture.Sum("mailclient.mail.send", ("result", "success")));
+        Assert.Equal(1, capture.Sum("mailclient.mail.send", ("result", "failure")));
+        Assert.Equal(2, capture.For("mailclient.mail.send.duration").Count);
+        Assert.DoesNotContain(capture.All.SelectMany(item => item.Tags.Values), value =>
+            Convert.ToString(value)!.Contains("friend", StringComparison.Ordinal) || Convert.ToString(value)!.Contains("Quarterly", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task SendAsync_ReplySource_DerivesThreadingHeaders()
     {
         await using var db = CreateDb();
@@ -162,6 +182,9 @@ public sealed class SendServiceTests
 
     private static MailSendService CreateService(AppDbContext db, FakeMailTransport transport) =>
         new(db, transport, CreateStore(db), new MailSyncOptions(), new AuditLogger(db), NullLogger<MailSendService>.Instance);
+
+    private static MailSendService CreateService(AppDbContext db, FakeMailTransport transport, Application.Observability.MailClientMetrics metrics) =>
+        new(db, transport, CreateStore(db), RuntimeOperationSettings.FromMailSyncOptions(new MailSyncOptions()), new AuditLogger(db), NullLogger<MailSendService>.Instance, metrics);
 
     private static SendOperationStore CreateStore(AppDbContext db) =>
         new(db, NullLogger<SendOperationStore>.Instance);

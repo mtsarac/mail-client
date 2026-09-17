@@ -1,5 +1,7 @@
+using System.Diagnostics;
 using System.Threading.Channels;
 using MailClient.Application.Mail;
+using MailClient.Application.Observability;
 using MailClient.Application.Runtime;
 using MailClient.Application.Sync;
 using MailClient.Domain.Entities;
@@ -21,6 +23,7 @@ public sealed class SyncCoordinator : BackgroundService, ISyncScheduler
     private readonly ISyncConnectionBudget _connectionBudget;
     private readonly Func<double> _jitterSource;
     private readonly ILogger<SyncCoordinator> _logger;
+    private readonly MailClientMetrics? _metrics;
     private readonly Channel<SyncScheduleSignal> _signals = Channel.CreateUnbounded<SyncScheduleSignal>();
 
     public SyncCoordinator(
@@ -29,7 +32,8 @@ public sealed class SyncCoordinator : BackgroundService, ISyncScheduler
         ISyncClock clock,
         ISyncConnectionBudget connectionBudget,
         ILogger<SyncCoordinator> logger,
-        Func<double>? jitterSource = null)
+        Func<double>? jitterSource = null,
+        MailClientMetrics? metrics = null)
     {
         _scopes = scopes;
         _queue = queue;
@@ -37,12 +41,44 @@ public sealed class SyncCoordinator : BackgroundService, ISyncScheduler
         _connectionBudget = connectionBudget;
         _logger = logger;
         _jitterSource = jitterSource ?? Random.Shared.NextDouble;
+        _metrics = metrics;
     }
+
+    internal static readonly TimeSpan LockFailureRequeueDelay = TimeSpan.FromSeconds(30);
 
     public ValueTask ScheduleAsync(ScheduledSyncRequest request, CancellationToken cancellationToken)
     {
-        _queue.Enqueue(request);
+        Enqueue(request, newWork: true);
         return _signals.Writer.WriteAsync(new SyncScheduleSignal(), cancellationToken);
+    }
+
+    private void Enqueue(ScheduledSyncRequest request, bool newWork = false)
+    {
+        SyncEnqueueResult result;
+        try
+        {
+            result = _queue.Enqueue(request);
+        }
+        catch (SyncQueueFullException)
+        {
+            _metrics?.RecordSyncQueueRejected(request.Origin, "queue_full");
+            throw;
+        }
+
+        switch (result)
+        {
+            case SyncEnqueueResult.Rejected:
+                _metrics?.RecordSyncQueueRejected(request.Origin, "queue_full");
+                break;
+            case SyncEnqueueResult.EnqueuedAfterShedding:
+                _metrics?.RecordSyncQueueRejected(SyncOrigin.Periodic, "shed");
+                if (newWork)
+                    _metrics?.RecordSyncScheduled(request.Origin);
+                break;
+            case SyncEnqueueResult.Enqueued when newWork:
+                _metrics?.RecordSyncScheduled(request.Origin);
+                break;
+        }
     }
 
     public async ValueTask ScheduleAccountAsync(Guid accountId, SyncOrigin origin, CancellationToken cancellationToken)
@@ -139,7 +175,7 @@ public sealed class SyncCoordinator : BackgroundService, ISyncScheduler
         }
 
         foreach (var item in deferred)
-            _queue.Enqueue(item);
+            Enqueue(item);
 
         var tasks = groups.Values.Select(group => RunAccountGroupAsync(group, settings, cancellationToken));
         await Task.WhenAll(tasks);
@@ -161,29 +197,49 @@ public sealed class SyncCoordinator : BackgroundService, ISyncScheduler
         var provider = scope.ServiceProvider;
         var locks = provider.GetRequiredService<ISyncLockProvider>();
         await using var accountLock = await locks.TryAcquireAsync(item.Request.AccountId, SyncLockPurpose.AccountSync, cancellationToken);
-        if (accountLock is null)
+        if (accountLock.Status == SyncLockStatus.Contended)
         {
-            _queue.Enqueue(item);
+            Enqueue(item);
             return;
         }
 
-        var db = provider.GetRequiredService<AppDbContext>();
-        var account = await db.MailAccounts.AsNoTracking()
-            .SingleOrDefaultAsync(entry => entry.Id == item.Request.AccountId, cancellationToken);
-        if (account is null || account.Status is MailAccountStatus.Disabled or MailAccountStatus.NeedsReauthentication)
+        if (accountLock.Status == SyncLockStatus.InfrastructureFailure)
+        {
+            _logger.LogWarning(
+                "Sync lock unavailable; {Origin} sync deferred for {DelaySeconds} seconds.",
+                MailClientTelemetry.Origin(item.Origin), LockFailureRequeueDelay.TotalSeconds);
+            RequeueAfter(item, LockFailureRequeueDelay, cancellationToken);
             return;
-        if (!await ProviderAllowsAsync(provider, account, cancellationToken))
-            return;
+        }
 
-        var folders = await SelectFoldersAsync(db, item, cancellationToken);
-        if (folders.Count == 0)
-            return;
+        using var activity = MailClientTelemetry.StartActivity("mailclient.sync.account");
+        activity?.SetTag("sync.origin", MailClientTelemetry.Origin(item.Origin));
+        _metrics?.AddActiveSyncAccounts(1);
+        try
+        {
+            var db = provider.GetRequiredService<AppDbContext>();
+            var account = await db.MailAccounts.AsNoTracking()
+                .SingleOrDefaultAsync(entry => entry.Id == item.Request.AccountId, cancellationToken);
+            if (account is null || account.Status is MailAccountStatus.Disabled or MailAccountStatus.NeedsReauthentication)
+                return;
+            activity?.SetTag("mail.provider", MailClientTelemetry.Provider(account.Provider));
+            if (!await ProviderAllowsAsync(provider, account, cancellationToken))
+                return;
 
-        var folderBudget = Math.Max(1, settings.Sync.MaxConcurrentFoldersPerAccount);
-        using var folderGate = new SemaphoreSlim(folderBudget, folderBudget);
-        var host = account.ImapHost.Trim().ToLowerInvariant();
-        var tasks = folders.Select(folder => RunFolderAsync(item, folder, settings, host, folderGate, cancellationToken));
-        await Task.WhenAll(tasks);
+            var folders = await SelectFoldersAsync(db, item, cancellationToken);
+            if (folders.Count == 0)
+                return;
+
+            var folderBudget = Math.Max(1, settings.Sync.MaxConcurrentFoldersPerAccount);
+            using var folderGate = new SemaphoreSlim(folderBudget, folderBudget);
+            var host = account.ImapHost.Trim().ToLowerInvariant();
+            var tasks = folders.Select(folder => RunFolderAsync(item, folder, settings, host, folderGate, cancellationToken));
+            await Task.WhenAll(tasks);
+        }
+        finally
+        {
+            _metrics?.AddActiveSyncAccounts(-1);
+        }
     }
 
     private async Task RunFolderAsync(
@@ -206,56 +262,107 @@ public sealed class SyncCoordinator : BackgroundService, ISyncScheduler
             var state = await db.SyncStates.SingleOrDefaultAsync(entry => entry.MailFolderId == folder.FolderId, cancellationToken);
             if (state?.NextRetryAt is { } nextRetry && nextRetry > _clock.UtcNow)
                 return;
+            var previousFailures = state?.ConsecutiveFailures ?? 0;
 
-            using var hostLease = await _connectionBudget.AcquireAsync(
-                host,
-                settings.Sync.MaxConcurrentSyncConnectionsPerHost,
-                cancellationToken);
+            using var activity = MailClientTelemetry.StartActivity("mailclient.sync.folder");
+            activity?.SetTag("sync.origin", MailClientTelemetry.Origin(item.Origin));
+            activity?.SetTag("mail.folder_type", MailClientTelemetry.FolderType(folder.FolderType));
+            _metrics?.AddActiveSyncFolders(1);
+            var started = Stopwatch.GetTimestamp();
             try
             {
-                var executor = provider.GetRequiredService<ISyncExecutor>();
-                await executor.SyncFolderAsync(item.Request.AccountId, folder.FolderId, cancellationToken);
-                await RecordSuccessAsync(db, folder.FolderId, cancellationToken);
+                using var hostLease = await _connectionBudget.AcquireAsync(
+                    host,
+                    settings.Sync.MaxConcurrentSyncConnectionsPerHost,
+                    cancellationToken);
+                _metrics?.RecordSyncConnectionBudgetWait(Stopwatch.GetElapsedTime(started));
+                await ExecuteFolderAsync(provider, db, item, folder, previousFailures, settings, started, activity, cancellationToken);
             }
             catch (OperationCanceledException)
             {
+                _metrics?.RecordSyncFolderCancelled(item.Origin, folder.FolderType, Stopwatch.GetElapsedTime(started));
                 throw;
             }
-            catch (Exception ex)
+            finally
             {
-                var handled = await RecordFailureAsync(provider, db, item, folder.FolderId, ex, settings, cancellationToken);
-                if (handled == SyncFailureOutcome.RetryTransient)
-                {
-                    var retry = SyncRetryPolicy.FromSettings(
-                        settings.Sync.TransientRetryMaxAttempts,
-                        settings.Sync.RetryBaseDelaySeconds,
-                        settings.Sync.RetryMaxDelaySeconds,
-                        _clock,
-                        _jitterSource);
-                    var attempts = await ConsecutiveFailuresAsync(db, folder.FolderId, cancellationToken);
-                    if (retry.ShouldRetry(attempts, SyncFailureClassifier.Classify(ex), cancellationToken))
-                    {
-                        var requeue = item with { Sequence = _queue.NextSequence() };
-                        _ = Task.Run(async () =>
-                        {
-                            try
-                            {
-                                await retry.WaitForRetryAsync(attempts, cancellationToken);
-                                _queue.Enqueue(requeue);
-                                _signals.Writer.TryWrite(new SyncScheduleSignal());
-                            }
-                            catch (OperationCanceledException)
-                            {
-                            }
-                        }, cancellationToken);
-                    }
-                }
+                _metrics?.AddActiveSyncFolders(-1);
             }
         }
         finally
         {
             folderGate.Release();
         }
+    }
+
+    private async Task ExecuteFolderAsync(
+        IServiceProvider provider,
+        AppDbContext db,
+        ScheduledSyncRequest item,
+        FolderTarget folder,
+        int previousFailures,
+        RuntimeSettings settings,
+        long started,
+        Activity? activity,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var executor = provider.GetRequiredService<ISyncExecutor>();
+            await executor.SyncFolderAsync(item.Request.AccountId, folder.FolderId, cancellationToken);
+            await RecordSuccessAsync(db, folder.FolderId, cancellationToken);
+            activity?.SetTag("sync.result", "success");
+            _metrics?.RecordSyncFolderCompleted(item.Origin, folder.FolderType, Stopwatch.GetElapsedTime(started), previousFailures > 0);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            var category = MapFailure(ex);
+            activity?.SetTag("sync.result", "failure");
+            activity?.SetTag("sync.failure_category", MailClientTelemetry.FailureCategory(category));
+            MailClientTelemetry.MarkFailed(activity, ex);
+            _metrics?.RecordSyncFolderFailed(item.Origin, folder.FolderType, category, Stopwatch.GetElapsedTime(started));
+
+            var handled = await RecordFailureAsync(provider, db, item, folder, ex, settings, cancellationToken);
+            if (handled == SyncFailureOutcome.RetryTransient)
+            {
+                var retry = SyncRetryPolicy.FromSettings(
+                    settings.Sync.TransientRetryMaxAttempts,
+                    settings.Sync.RetryBaseDelaySeconds,
+                    settings.Sync.RetryMaxDelaySeconds,
+                    _clock,
+                    _jitterSource);
+                var attempts = await ConsecutiveFailuresAsync(db, folder.FolderId, cancellationToken);
+                if (retry.ShouldRetry(attempts, SyncFailureClassifier.Classify(ex), cancellationToken))
+                {
+                    _metrics?.RecordSyncRetryScheduled(item.Origin);
+                    RequeueAfter(item, retry.DelayForAttempt(attempts), cancellationToken);
+                }
+                else if (attempts == retry.MaxAttempts)
+                {
+                    _metrics?.RecordSyncRetriesExhausted(item.Origin);
+                }
+            }
+        }
+    }
+
+    private void RequeueAfter(ScheduledSyncRequest item, TimeSpan delay, CancellationToken cancellationToken)
+    {
+        var requeue = item with { Sequence = _queue.NextSequence() };
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await _clock.DelayAsync(delay, cancellationToken);
+                Enqueue(requeue);
+                _signals.Writer.TryWrite(new SyncScheduleSignal());
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }, cancellationToken);
     }
 
     private static async Task<bool> ProviderAllowsAsync(IServiceProvider provider, MailAccount account, CancellationToken cancellationToken)
@@ -316,7 +423,7 @@ public sealed class SyncCoordinator : BackgroundService, ISyncScheduler
         IServiceProvider provider,
         AppDbContext db,
         ScheduledSyncRequest item,
-        Guid folderId,
+        FolderTarget folder,
         Exception exception,
         RuntimeSettings settings,
         CancellationToken cancellationToken)
@@ -328,6 +435,7 @@ public sealed class SyncCoordinator : BackgroundService, ISyncScheduler
         if (category == SyncFailureCategory.Authentication)
             return SyncFailureOutcome.Authentication;
 
+        var folderId = folder.FolderId;
         var state = await db.SyncStates.SingleOrDefaultAsync(entry => entry.MailFolderId == folderId, cancellationToken);
         if (state is null)
             return category == SyncFailureCategory.Transient ? SyncFailureOutcome.RetryTransient : SyncFailureOutcome.Recorded;
@@ -375,8 +483,11 @@ public sealed class SyncCoordinator : BackgroundService, ISyncScheduler
         }
 
         _logger.LogWarning(
-            "Mail sync failed for account {AccountId} folder {FolderId} ({Category}, attempt {Attempts}).",
-            item.Request.AccountId, folderId, category, state.ConsecutiveFailures);
+            "Mail sync failed ({FailureCategory}, origin {Origin}, folder type {FolderType}, attempt {Attempts}).",
+            MailClientTelemetry.FailureCategory(category),
+            MailClientTelemetry.Origin(item.Origin),
+            MailClientTelemetry.FolderType(folder.FolderType),
+            state.ConsecutiveFailures);
         return category == SyncFailureCategory.Transient ? SyncFailureOutcome.RetryTransient : SyncFailureOutcome.Recorded;
     }
 
@@ -423,7 +534,7 @@ public sealed class SyncCoordinator : BackgroundService, ISyncScheduler
                 .ToListAsync(cancellationToken);
             foreach (var request in pending)
             {
-                _queue.Enqueue(SyncScheduling.ForReconciliationFolder(request.MailAccountId, request.FolderId, _queue.NextSequence()));
+                Enqueue(SyncScheduling.ForReconciliationFolder(request.MailAccountId, request.FolderId, _queue.NextSequence()), newWork: true);
             }
 
             if (pending.Count > 0)

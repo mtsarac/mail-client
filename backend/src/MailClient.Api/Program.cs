@@ -14,6 +14,7 @@ using MailClient.Application.Authentication;
 using MailClient.Application.Accounts;
 using MailClient.Application.Discovery;
 using MailClient.Application.Mail;
+using MailClient.Application.Observability;
 using MailClient.Application.Runtime;
 using MailClient.Application.Sync;
 using MailClient.Domain;
@@ -44,16 +45,27 @@ using Serilog;
 using Serilog.Formatting.Json;
 
 var builder = WebApplication.CreateBuilder(args);
+var observabilityOptions = builder.Configuration.GetSection("Observability").Get<ObservabilityOptions>() ?? new ObservabilityOptions();
+observabilityOptions.Validate();
+var logFiles = observabilityOptions.Logs;
 builder.Host.UseSerilog((context, services, configuration) => configuration
     .ReadFrom.Configuration(context.Configuration)
     .ReadFrom.Services(services)
     .Enrich.FromLogContext()
     .WriteTo.Logger(appLog => appLog
         .Filter.ByExcluding(log => log.Properties.ContainsKey("RequestPath"))
-        .WriteTo.File(new JsonFormatter(), "logs/app-.json", rollingInterval: RollingInterval.Day))
+        .WriteTo.File(new JsonFormatter(), "logs/app-.json", rollingInterval: RollingInterval.Day,
+            retainedFileCountLimit: logFiles.App.RetainedFileCountLimit,
+            fileSizeLimitBytes: logFiles.App.FileSizeLimitBytes,
+            rollOnFileSizeLimit: true))
     .WriteTo.Logger(httpLog => httpLog
         .Filter.ByIncludingOnly(log => log.Properties.ContainsKey("RequestPath"))
-        .WriteTo.File(new JsonFormatter(), "logs/http-.json", rollingInterval: RollingInterval.Day)));
+        .WriteTo.File(new JsonFormatter(), "logs/http-.json", rollingInterval: RollingInterval.Day,
+            retainedFileCountLimit: logFiles.Http.RetainedFileCountLimit,
+            fileSizeLimitBytes: logFiles.Http.FileSizeLimitBytes,
+            rollOnFileSizeLimit: true)));
+builder.AddMailClientTelemetry(observabilityOptions);
+builder.Services.AddMailClientHealthChecks();
 builder.Services.Configure<HttpLoggingOptions>(builder.Configuration.GetSection("HttpLogging"));
 builder.Services.AddSingleton<Serilog.ILogger>(_ => Serilog.Log.Logger);
 builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
@@ -181,9 +193,10 @@ builder.Services.AddScoped<ISyncLockProvider>(sp =>
     var configuration = sp.GetRequiredService<IConfiguration>();
     var connection = configuration.GetConnectionString("Default");
     var logger = sp.GetRequiredService<ILogger<PostgresSyncLockProvider>>();
+    var metrics = sp.GetRequiredService<MailClientMetrics>();
     return string.IsNullOrWhiteSpace(connection)
-        ? new InMemorySyncLockProvider()
-        : new PostgresSyncLockProvider(connection, logger);
+        ? new InMemorySyncLockProvider(metrics)
+        : new PostgresSyncLockProvider(connection, logger, metrics);
 });
 if (!builder.Environment.IsEnvironment("Test"))
     builder.Services.AddHostedService<MailSyncService>();
@@ -305,6 +318,7 @@ app.MapConversationEndpoints();
 app.MapDeviceEndpoints();
 app.MapManagementEndpoints();
 app.MapHealthEndpoints();
+app.MapMailClientTelemetry(observabilityOptions);
 
 app.Run();
 
