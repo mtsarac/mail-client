@@ -1,6 +1,7 @@
 using System.Net;
 using MailClient.Application.Accounts;
 using MailClient.Application.Mail;
+using MailClient.Application.Sync;
 using MailClient.Domain.Entities;
 using MailClient.Domain.Enums;
 using MailClient.Infrastructure.Email;
@@ -136,6 +137,37 @@ internal sealed class FakeFileStorage : IFileStorage
     public Task DeleteAsync(string relativePath, CancellationToken cancellationToken)
     {
         Deleted.Add(relativePath);
+        return Task.CompletedTask;
+    }
+}
+
+internal sealed class FakeSyncScheduler : ISyncScheduler
+{
+    public List<(Guid AccountId, Guid? FolderId, SyncOrigin Origin)> Scheduled { get; } = [];
+    public ValueTask ScheduleAccountAsync(Guid accountId, SyncOrigin origin, CancellationToken cancellationToken)
+    {
+        Scheduled.Add((accountId, null, origin));
+        return ValueTask.CompletedTask;
+    }
+
+    public ValueTask ScheduleFolderAsync(Guid accountId, Guid folderId, SyncOrigin origin, CancellationToken cancellationToken)
+    {
+        Scheduled.Add((accountId, folderId, origin));
+        return ValueTask.CompletedTask;
+    }
+}
+
+internal sealed class FakeSyncClock(DateTime now) : ISyncClock
+{
+    private readonly List<TimeSpan> _delays = [];
+    public DateTime Current { get; set; } = now;
+    public IReadOnlyList<TimeSpan> Delays => _delays;
+    public DateTime UtcNow => Current;
+    public Task DelayAsync(TimeSpan delay, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        _delays.Add(delay);
+        Current += delay;
         return Task.CompletedTask;
     }
 }
