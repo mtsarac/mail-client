@@ -82,6 +82,10 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         model.Entity<SendOperation>().HasIndex(x => new { x.MailAccountId, x.IdempotencyKey }).IsUnique();
         model.Entity<SendOperation>().HasOne<MailAccount>().WithMany().HasForeignKey(x => x.MailAccountId).OnDelete(DeleteBehavior.Cascade);
         model.Entity<DeviceToken>().HasIndex(x => new { x.MailAccountId, x.Token }).IsUnique();
+        model.Entity<DeviceToken>().Property(x => x.Token).HasMaxLength(500);
+        model.Entity<DeviceToken>().Property(x => x.Platform).HasMaxLength(100);
+        model.Entity<DeviceToken>().Property(x => x.AppVersion).HasMaxLength(50);
+        model.Entity<DeviceToken>().Property(x => x.Locale).HasMaxLength(35);
         model.Entity<DeviceToken>().HasOne<MailAccount>().WithMany().HasForeignKey(x => x.MailAccountId).OnDelete(DeleteBehavior.Cascade);
         model.Entity<AuditLog>().HasIndex(x => new { x.MailAccountId, x.TimestampUtc });
         // Audit history is deliberately not destroyed with the mailbox: the row survives with a null account id.

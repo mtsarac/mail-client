@@ -1,4 +1,5 @@
 using MailClient.Application.Mail;
+using MailClient.Application.Runtime;
 using MailClient.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -11,11 +12,11 @@ public sealed class FirebasePushNotificationService(
     IFirebaseGateway gateway,
     ILogger<FirebasePushNotificationService> logger) : IPushNotificationService
 {
-    public async Task NotifyNewMailAsync(NewMailNotification notification, CancellationToken cancellationToken)
+    public async Task NotifyAsync(PushEvent pushEvent, CancellationToken cancellationToken)
     {
         try
         {
-            await NotifyCoreAsync(notification, cancellationToken);
+            await NotifyCoreAsync(pushEvent, cancellationToken);
         }
         catch (OperationCanceledException)
         {
@@ -27,29 +28,29 @@ public sealed class FirebasePushNotificationService(
         }
     }
 
-    private async Task NotifyCoreAsync(NewMailNotification notification, CancellationToken cancellationToken)
+    private async Task NotifyCoreAsync(PushEvent pushEvent, CancellationToken cancellationToken)
     {
         await using var scope = scopes.CreateAsyncScope();
-        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var provider = scope.ServiceProvider;
+        var db = provider.GetRequiredService<AppDbContext>();
+        var push = (await provider.GetRequiredService<IRuntimeSettingsStore>().GetAsync(cancellationToken)).Settings.Push;
+        if (!push.Enabled || !IsEventEnabled(push, pushEvent.Type))
+            return;
+
         var tokens = await db.DeviceTokens
             .AsNoTracking()
-            .Where(token => token.MailAccountId == notification.MailAccountId)
+            .Where(token => token.MailAccountId == pushEvent.MailAccountId)
             .Select(token => new { token.Id, token.Token })
             .ToListAsync(cancellationToken);
         if (tokens.Count == 0)
             return;
 
-        var data = new Dictionary<string, string>
-        {
-            ["type"] = "new_mail",
-            ["mailId"] = notification.MailId.ToString(),
-            ["accountId"] = notification.MailAccountId.ToString(),
-            ["folderId"] = notification.FolderId.ToString()
-        };
-        var results = await gateway.SendNewMailAsync(
+        var (title, body) = NotificationText(pushEvent, push.IncludeMailPreview);
+        var data = EventData(pushEvent);
+        var results = await gateway.SendAsync(
             tokens.Select(token => new FirebaseRecipient(token.Id, token.Token)).ToList(),
-            notification.Sender,
-            notification.Subject,
+            title,
+            body,
             data,
             cancellationToken);
 
@@ -57,16 +58,62 @@ public sealed class FirebasePushNotificationService(
         if (invalidIds.Count > 0)
         {
             var invalid = await db.DeviceTokens
-                .Where(token => invalidIds.Contains(token.Id) && token.MailAccountId == notification.MailAccountId)
+                .Where(token => invalidIds.Contains(token.Id) && token.MailAccountId == pushEvent.MailAccountId)
                 .ToListAsync(cancellationToken);
             db.DeviceTokens.RemoveRange(invalid);
             await db.SaveChangesAsync(cancellationToken);
             logger.LogInformation("Removed {Count} invalid device tokens.", invalid.Count);
         }
     }
+
+    private static bool IsEventEnabled(RuntimePushSettings push, PushEventType type) => type switch
+    {
+        PushEventType.NewMail => push.NewMailEnabled,
+        PushEventType.MailStateChanged => push.MailStateChangedEnabled,
+        PushEventType.AccountReauthenticationRequired => push.ReauthenticationEnabled,
+        PushEventType.SyncError => push.SyncErrorEnabled,
+        _ => false
+    };
+
+    private static (string? Title, string? Body) NotificationText(PushEvent pushEvent, bool includePreview) => pushEvent.Type switch
+    {
+        PushEventType.NewMail when includePreview => (
+            string.IsNullOrWhiteSpace(pushEvent.SenderPreview) ? "New mail" : pushEvent.SenderPreview,
+            pushEvent.SubjectPreview ?? string.Empty),
+        PushEventType.NewMail => ("New mail", "You have a new message."),
+        PushEventType.MailStateChanged => (null, null),
+        PushEventType.AccountReauthenticationRequired => ("Mail account needs attention", "Reconnect your mail account to continue syncing."),
+        PushEventType.SyncError => ("Mail sync delayed", "Mail synchronization is having trouble. Open the app for details."),
+        _ => (null, null)
+    };
+
+    private static IReadOnlyDictionary<string, string> EventData(PushEvent pushEvent)
+    {
+        var data = new Dictionary<string, string>
+        {
+            ["type"] = pushEvent.Type switch
+            {
+                PushEventType.NewMail => "new_mail",
+                PushEventType.MailStateChanged => "mail_state_changed",
+                PushEventType.AccountReauthenticationRequired => "account_reauthentication_required",
+                PushEventType.SyncError => "sync_error",
+                _ => throw new InvalidOperationException("Unknown push event type.")
+            },
+            ["accountId"] = pushEvent.MailAccountId.ToString()
+        };
+        if (pushEvent.MailId is { } mailId)
+            data["mailId"] = mailId.ToString();
+        if (pushEvent.ConversationId is { } conversationId)
+            data["conversationId"] = conversationId.ToString();
+        if (pushEvent.FolderId is { } folderId)
+            data["folderId"] = folderId.ToString();
+        if (!string.IsNullOrWhiteSpace(pushEvent.Operation))
+            data["operation"] = pushEvent.Operation;
+        return data;
+    }
 }
 
 public sealed class NoOpPushNotificationService : IPushNotificationService
 {
-    public Task NotifyNewMailAsync(NewMailNotification notification, CancellationToken cancellationToken) => Task.CompletedTask;
+    public Task NotifyAsync(PushEvent pushEvent, CancellationToken cancellationToken) => Task.CompletedTask;
 }

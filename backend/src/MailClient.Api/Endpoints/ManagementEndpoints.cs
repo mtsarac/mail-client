@@ -38,6 +38,7 @@ public static class ManagementEndpoints
         if (!Same(before.Sync, after.Sync)) sections.Add("sync");
         if (!Same(before.Limits, after.Limits)) sections.Add("limits");
         if (!Same(before.Search, after.Search)) sections.Add("search");
+        if (!Same(before.Push, after.Push)) sections.Add("push");
         return [.. sections];
 
         static bool Same<T>(T beforeSection, T afterSection) =>

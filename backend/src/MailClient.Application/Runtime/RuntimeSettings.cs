@@ -8,6 +8,7 @@ public sealed class RuntimeSettings
     public RuntimeSyncSettings Sync { get; init; } = new();
     public RuntimeLimitSettings Limits { get; init; } = new();
     public RuntimeSearchSettings Search { get; init; } = new();
+    public RuntimePushSettings Push { get; init; } = new();
 
     public void Validate()
     {
@@ -78,6 +79,16 @@ public sealed class RuntimeSearchSettings
 {
     public int MaxPageSize { get; init; } = 100;
     public int MaxQueryLength { get; init; } = 200;
+}
+
+public sealed class RuntimePushSettings
+{
+    public bool Enabled { get; init; } = true;
+    public bool NewMailEnabled { get; init; } = true;
+    public bool MailStateChangedEnabled { get; init; } = true;
+    public bool ReauthenticationEnabled { get; init; } = true;
+    public bool SyncErrorEnabled { get; init; } = true;
+    public bool IncludeMailPreview { get; init; } = true;
 }
 
 public sealed record RuntimeSettingsSnapshot(RuntimeSettings Settings, int Version, DateTime UpdatedAt);

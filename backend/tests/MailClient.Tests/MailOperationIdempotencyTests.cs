@@ -25,7 +25,7 @@ public sealed class MailOperationIdempotencyTests
         db.Mails.Add(new Mail { Id = mailId, MailAccountId = accountId, MailFolderId = folderId, Uid = 1, UidValidity = 7, Flagged = true });
         await db.SaveChangesAsync();
         var remote = new CountingRemote(7);
-        var service = new MailOperationService(db, new FakeMailFolderClient(remote), new MailReadService(db, new FakeMailFolderClient(remote), new AuditLogger(db), NullLogger<MailReadService>.Instance), new AuditLogger(db), new InitialSyncQueue(), NullLogger<MailOperationService>.Instance);
+        var service = new MailOperationService(db, new FakeMailFolderClient(remote), new MailReadService(db, new FakeMailFolderClient(remote), new AuditLogger(db), NullLogger<MailReadService>.Instance), new AuditLogger(db), new InitialSyncQueue(), NullLogger<MailOperationService>.Instance, new FakePushNotificationService());
 
         var result = await service.ExecuteAsync(accountId, new(mailId, MailOperationKind.Star), null, CancellationToken.None);
 

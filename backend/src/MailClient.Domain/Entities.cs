@@ -180,5 +180,5 @@ public sealed class SendOperation
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 }
-public sealed class DeviceToken { public Guid Id { get; set; } public Guid MailAccountId { get; set; } public Guid? MailSessionId { get; set; } public string Token { get; set; } = ""; public string Platform { get; set; } = ""; public DateTime RegisteredAt { get; set; } public DateTime? LastSeenAt { get; set; } }
+public sealed class DeviceToken { public Guid Id { get; set; } public Guid MailAccountId { get; set; } public Guid? MailSessionId { get; set; } public string Token { get; set; } = ""; public string Platform { get; set; } = ""; public string? AppVersion { get; set; } public string? Locale { get; set; } public DateTime RegisteredAt { get; set; } public DateTime? LastSeenAt { get; set; } }
 public sealed class AuditLog { public Guid Id { get; set; } public Guid? MailAccountId { get; set; } public string Action { get; set; } = ""; public string EntityType { get; set; } = ""; public string? EntityId { get; set; } public DateTime TimestampUtc { get; set; } public string? CorrelationId { get; set; } public string? Metadata { get; set; } }

@@ -78,9 +78,24 @@ public sealed class MailFolderSyncService(
         var account = await db.MailAccounts.SingleOrDefaultAsync(item => item.Id == accountId, cancellationToken);
         if (account is null)
             return;
+        var alreadyNotified = account.Status == MailAccountStatus.NeedsReauthentication;
         account.Status = MailAccountStatus.NeedsReauthentication;
         account.UpdatedAt = DateTime.UtcNow;
         await db.SaveChangesAsync(cancellationToken);
+        if (alreadyNotified)
+            return;
+        try
+        {
+            await push.NotifyAsync(new PushEvent(PushEventType.AccountReauthenticationRequired, accountId), cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Reauthentication push failed. Account state is unaffected.");
+        }
     }
 
     public Task SyncAccountAsync(Guid accountId, CancellationToken cancellationToken) =>
@@ -302,13 +317,15 @@ public sealed class MailFolderSyncService(
         {
             try
             {
-                await push.NotifyNewMailAsync(
-                    new NewMailNotification(
+                await push.NotifyAsync(
+                    new PushEvent(
+                        PushEventType.NewMail,
                         accountId,
                         candidate.MailId,
+                        candidate.ConversationId,
                         folderId,
-                        string.IsNullOrWhiteSpace(candidate.FromDisplayName) ? candidate.FromAddress : candidate.FromDisplayName,
-                        candidate.Subject),
+                        SenderPreview: string.IsNullOrWhiteSpace(candidate.FromDisplayName) ? candidate.FromAddress : candidate.FromDisplayName,
+                        SubjectPreview: candidate.Subject),
                     cancellationToken);
             }
             catch (OperationCanceledException)
@@ -322,7 +339,7 @@ public sealed class MailFolderSyncService(
         }
     }
 
-    private sealed record NewMailCandidate(Guid MailId, string FromAddress, string FromDisplayName, string Subject);
+    private sealed record NewMailCandidate(Guid MailId, string FromAddress, string FromDisplayName, string Subject, Guid? ConversationId);
 
     private static long CursorAfter(uint scannedMaxUid) =>
         scannedMaxUid == uint.MaxValue ? (long)uint.MaxValue + 1 : (long)scannedMaxUid + 1;
@@ -573,7 +590,7 @@ public sealed class MailFolderSyncService(
                 throw;
             }
 
-            var candidate = new NewMailCandidate(mail.Id, mail.FromAddress, mail.FromDisplayName, mail.Subject);
+            var candidate = new NewMailCandidate(mail.Id, mail.FromAddress, mail.FromDisplayName, mail.Subject, mail.ConversationId);
             Detach(mail);
             return candidate;
         }

@@ -38,11 +38,38 @@ public sealed record SendMailCommand(
     public string? TrustedReferences { get; init; }
 }
 
-public sealed record NewMailNotification(Guid MailAccountId, Guid MailId, Guid FolderId, string Sender, string Subject);
+public enum PushEventType
+{
+    NewMail,
+    MailStateChanged,
+    AccountReauthenticationRequired,
+    /// <summary>Contract-reserved. Not emitted yet: nothing can reliably distinguish
+    /// persistent sync failure from transient errors before Phase 9 retry classification.</summary>
+    SyncError
+}
 
+/// <summary>
+/// Typed push event. Payloads stay minimal: identifiers the client uses to fetch
+/// authoritative state from the API. Never attach mail bodies, HTML, credentials,
+/// tokens, attachment contents, or raw exception messages.
+/// </summary>
+public sealed record PushEvent(
+    PushEventType Type,
+    Guid MailAccountId,
+    Guid? MailId = null,
+    Guid? ConversationId = null,
+    Guid? FolderId = null,
+    string? Operation = null,
+    string? SenderPreview = null,
+    string? SubjectPreview = null);
+
+/// <summary>
+/// Best-effort push delivery. Implementations must never let a push failure fail
+/// the mail/sync operation that triggered the event.
+/// </summary>
 public interface IPushNotificationService
 {
-    Task NotifyNewMailAsync(NewMailNotification notification, CancellationToken cancellationToken);
+    Task NotifyAsync(PushEvent pushEvent, CancellationToken cancellationToken);
 }
 
 public interface IFileStorage

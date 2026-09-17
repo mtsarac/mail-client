@@ -124,7 +124,7 @@ public sealed class MailOperationServiceTests
     }
 
     private static MailOperationService CreateService(AppDbContext db, IMailFolderClient folders) =>
-        new(db, folders, new MailReadService(db, folders, new AuditLogger(db), NullLogger<MailReadService>.Instance), new AuditLogger(db), new InitialSyncQueue(), NullLogger<MailOperationService>.Instance);
+        new(db, folders, new MailReadService(db, folders, new AuditLogger(db), NullLogger<MailReadService>.Instance), new AuditLogger(db), new InitialSyncQueue(), NullLogger<MailOperationService>.Instance, new FakePushNotificationService());
 
     private static async Task<(Guid AccountId, Guid FolderId, Guid MailId)> SeedAsync(AppDbContext db)
     {

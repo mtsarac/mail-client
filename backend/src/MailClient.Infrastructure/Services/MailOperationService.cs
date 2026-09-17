@@ -11,6 +11,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using MailKit;
 using MailFolderEntity = MailClient.Domain.Entities.MailFolder;
+using MailEntity = MailClient.Domain.Entities.Mail;
 
 namespace MailClient.Infrastructure.Services;
 
@@ -20,7 +21,8 @@ public sealed class MailOperationService(
     MailReadService readService,
     AuditLogger audit,
     InitialSyncQueue syncQueue,
-    ILogger<MailOperationService> logger) : IMailOperationService
+    ILogger<MailOperationService> logger,
+    IPushNotificationService push) : IMailOperationService
 {
     public async Task<MailOperationResult> ExecuteAsync(Guid accountId, MailOperationRequest request, string? correlationId, CancellationToken cancellationToken)
     {
@@ -33,13 +35,15 @@ public sealed class MailOperationService(
         if (request.Kind is MailOperationKind.Read or MailOperationKind.Unread)
         {
             var outcome = await readService.SetReadAsync(accountId, request.MailId, request.Kind == MailOperationKind.Read, correlationId, cancellationToken);
-            return outcome switch
-            {
-                { Found: false } => new(false, MailOperationError.NotFound),
-                { Conflict: true } => new(false, MailOperationError.Conflict),
-                { ProviderError: true } => new(false, MailOperationError.ProviderUnavailable),
-                _ => new(true)
-            };
+            if (!outcome.Found)
+                return new(false, MailOperationError.NotFound);
+            if (outcome.Conflict)
+                return new(false, MailOperationError.Conflict);
+            if (outcome.ProviderError)
+                return new(false, MailOperationError.ProviderUnavailable);
+            if (outcome.Applied)
+                await NotifyStateChangedAsync(accountId, mail, mail.MailFolderId, OperationName(request.Kind), cancellationToken);
+            return new(true);
         }
         var auditKind = request.Kind;
         if (request.Kind == MailOperationKind.Restore)
@@ -92,6 +96,7 @@ public sealed class MailOperationService(
                     mail.IsRestoreReconciliation = auditKind == MailOperationKind.Restore;
                     await syncQueue.EnqueueAsync(SyncRequest.Folder(accountId, target.Id), cancellationToken);
                     await db.SaveChangesAsync(cancellationToken);
+                    await NotifyStateChangedAsync(accountId, mail, target.Id, OperationName(auditKind), cancellationToken);
                     return await AuditSuccess(accountId, auditKind, mail.Id, correlationId, cancellationToken, new(true, MailOperationError.None, true));
                 }
                 mail.PreviousMailFolderId = auditKind is MailOperationKind.Restore
@@ -109,9 +114,13 @@ public sealed class MailOperationService(
             else if (request.Kind is MailOperationKind.Star or MailOperationKind.Unstar)
                 mail.Flagged = request.Kind == MailOperationKind.Star;
             else if (request.Kind == MailOperationKind.Copy)
+            {
+                await NotifyStateChangedAsync(accountId, mail, target!.Id, OperationName(auditKind), cancellationToken);
                 return await AuditSuccess(accountId, auditKind, mail.Id, correlationId, cancellationToken, new(true));
+            }
 
             await db.SaveChangesAsync(cancellationToken);
+            await NotifyStateChangedAsync(accountId, mail, target?.Id ?? mail.MailFolderId, OperationName(auditKind), cancellationToken);
             return await AuditSuccess(accountId, auditKind, mail.Id, correlationId, cancellationToken, new(true));
         }
         catch (MailOperationConflictException)
@@ -156,6 +165,40 @@ public sealed class MailOperationService(
         await remote.SetFlaggedAsync(uid, value, cancellationToken);
         return null;
     }
+
+    private async Task NotifyStateChangedAsync(Guid accountId, MailEntity mail, Guid folderId, string operation, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await push.NotifyAsync(
+                new PushEvent(PushEventType.MailStateChanged, accountId, mail.Id, mail.ConversationId, folderId, operation),
+                cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "State-change push failed for mail {MailId}. Operation result is unaffected.", mail.Id);
+        }
+    }
+
+    private static string OperationName(MailOperationKind kind) => kind switch
+    {
+        MailOperationKind.Read => "read",
+        MailOperationKind.Unread => "unread",
+        MailOperationKind.Star => "star",
+        MailOperationKind.Unstar => "unstar",
+        MailOperationKind.Move => "move",
+        MailOperationKind.Copy => "copy",
+        MailOperationKind.Trash => "trash",
+        MailOperationKind.Restore => "restore",
+        MailOperationKind.Archive => "archive",
+        MailOperationKind.Spam => "spam",
+        MailOperationKind.NotSpam => "not_spam",
+        _ => kind.ToString().ToLowerInvariant()
+    };
 
     private async Task<MailOperationResult> AuditSuccess(Guid accountId, MailOperationKind kind, Guid mailId, string? correlationId, CancellationToken cancellationToken, MailOperationResult result)
     {
