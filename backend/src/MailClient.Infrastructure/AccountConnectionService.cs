@@ -103,9 +103,12 @@ public sealed class AccountConnectionService(
     /// </summary>
     public async Task<TokenResponse> LoginAsync(string email, string password, string? deviceIdentifier, CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(email) || !email.Contains('@', StringComparison.Ordinal) || string.IsNullOrWhiteSpace(password))
+        if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(password))
             throw new InvalidOperationException("invalid_email");
         if (!await allowlist.IsAllowedAsync(email, cancellationToken)) throw new InvalidOperationException(RuntimePolicyErrors.EmailNotAllowlisted);
+        // No separate "well-formed email" check: a malformed address simply won't match any stored
+        // NormalizedEmailAddress, so the lookup itself is the format check and reports the same
+        // mail_account_not_found either way.
         var normalizedEmail = email.Trim().ToUpperInvariant();
         var account = await db.MailAccounts.SingleOrDefaultAsync(item => item.NormalizedEmailAddress == normalizedEmail, cancellationToken)
             ?? throw new InvalidOperationException("mail_account_not_found");
