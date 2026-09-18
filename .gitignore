@@ -90,6 +90,7 @@ backend/docs/
 # OpenCode / agent artifacts
 .omo/
 .worktrees/
+.serena/
 
 secrets/
 

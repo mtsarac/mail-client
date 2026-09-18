@@ -25,11 +25,7 @@ public class MailConnectionHelper(
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(DiscoveryTimeout);
         using var client = new ImapClient { Timeout = OperationTimeoutMs };
-        await RunAsync(client, endpoint, null, null, "DiscoverImap", static async (service, ct) =>
-        {
-            await ((ImapClient)service).NoOpAsync(ct);
-            return true;
-        }, timeout.Token);
+        await RunAsync(client, endpoint, null, null, "DiscoverImap", static (_, _) => Task.FromResult(true), timeout.Token);
     }
 
     public async Task ProbeSmtpAsync(MailServerEndpoint endpoint, CancellationToken cancellationToken)

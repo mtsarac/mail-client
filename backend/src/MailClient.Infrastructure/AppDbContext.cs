@@ -22,6 +22,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<MailClient.Domain.Entities.MailHeader> MailHeaders => Set<MailClient.Domain.Entities.MailHeader>();
     public DbSet<RuntimeConfiguration> RuntimeConfigurations => Set<RuntimeConfiguration>();
     public DbSet<OAuthStateNonce> OAuthStateNonces => Set<OAuthStateNonce>();
+    public DbSet<AllowlistedEmail> AllowlistedEmails => Set<AllowlistedEmail>();
 
     protected override void OnModelCreating(ModelBuilder model)
     {
@@ -95,5 +96,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         model.Entity<RuntimeConfiguration>().Property(x => x.SettingsJson).HasColumnType("jsonb");
         model.Entity<OAuthStateNonce>().HasIndex(x => x.NonceHash).IsUnique();
         model.Entity<OAuthStateNonce>().Property(x => x.NonceHash).HasMaxLength(128);
+        model.Entity<AllowlistedEmail>().HasIndex(x => x.NormalizedEmail).IsUnique();
+        model.Entity<AllowlistedEmail>().Property(x => x.Email).HasMaxLength(320);
+        model.Entity<AllowlistedEmail>().Property(x => x.NormalizedEmail).HasMaxLength(320);
     }
 }

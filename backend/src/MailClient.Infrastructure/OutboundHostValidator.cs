@@ -8,11 +8,11 @@ public sealed record HostValidationResult(bool Allowed, string? Reason = null);
 
 public sealed record ValidatedHost(string Host, IPAddress Address);
 
-public class OutboundHostValidator(IDnsResolver dns)
+public class OutboundHostValidator(IDnsResolver dns, bool allowPrivateHosts = false)
 {
     public virtual async Task<HostValidationResult> ValidateAsync(string host, CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(host) || host.Equals("localhost", StringComparison.OrdinalIgnoreCase)) return new(false, "Invalid or local host.");
+        if (string.IsNullOrWhiteSpace(host) || (!allowPrivateHosts && host.Equals("localhost", StringComparison.OrdinalIgnoreCase))) return new(false, "Invalid or local host.");
         IPAddress[] addresses;
         if (IPAddress.TryParse(host, out var literal)) addresses = [literal];
         else
@@ -20,12 +20,12 @@ public class OutboundHostValidator(IDnsResolver dns)
             try { addresses = await dns.ResolveAsync(host, cancellationToken); }
             catch (Exception exception) when (exception is not OperationCanceledException) { return new(false, "DNS resolution failed."); }
         }
-        return addresses.Length > 0 && addresses.All(IsPublic) ? new(true) : new(false, "Host resolves to blocked address.");
+        return addresses.Length > 0 && addresses.All(address => allowPrivateHosts || IsPublic(address)) ? new(true) : new(false, "Host resolves to blocked address.");
     }
 
     public virtual async Task<ValidatedHost> ResolveAllowedAsync(string host, CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(host) || host.Equals("localhost", StringComparison.OrdinalIgnoreCase))
+        if (string.IsNullOrWhiteSpace(host) || (!allowPrivateHosts && host.Equals("localhost", StringComparison.OrdinalIgnoreCase)))
             throw new InvalidOperationException("Invalid or local host.");
         IPAddress[] addresses;
         if (IPAddress.TryParse(host, out var literal))
@@ -44,9 +44,10 @@ public class OutboundHostValidator(IDnsResolver dns)
 
         if (addresses.Length == 0)
             throw new InvalidOperationException("Host resolved to no addresses.");
-        foreach (var address in addresses)
-            if (!IsPublic(address))
-                throw new InvalidOperationException("Host resolves to blocked address.");
+        if (!allowPrivateHosts)
+            foreach (var address in addresses)
+                if (!IsPublic(address))
+                    throw new InvalidOperationException("Host resolves to blocked address.");
         var selected = addresses[0];
         return new ValidatedHost(host, selected.IsIPv4MappedToIPv6 ? selected.MapToIPv4() : selected);
     }
