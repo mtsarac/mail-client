@@ -97,6 +97,46 @@ public sealed class AccountConnectionService(
     }
 
     /// <summary>
+    /// Anonymous sign-in to an already-registered mailbox from a new device. Unlike /connect (create-only) this
+    /// never creates or modifies an account; it only verifies the submitted password against the account's stored
+    /// server settings and, on success, mints a new session so the same mailbox can be used from another device.
+    /// </summary>
+    public async Task<TokenResponse> LoginAsync(string email, string password, string? deviceIdentifier, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(password))
+            throw new InvalidOperationException("invalid_email");
+        if (!await allowlist.IsAllowedAsync(email, cancellationToken)) throw new InvalidOperationException(RuntimePolicyErrors.EmailNotAllowlisted);
+        // No separate "well-formed email" check: a malformed address simply won't match any stored
+        // NormalizedEmailAddress, so the lookup itself is the format check and reports the same
+        // mail_account_not_found either way.
+        var normalizedEmail = email.Trim().ToUpperInvariant();
+        var account = await db.MailAccounts.SingleOrDefaultAsync(item => item.NormalizedEmailAddress == normalizedEmail, cancellationToken)
+            ?? throw new InvalidOperationException("mail_account_not_found");
+        if (account.Status == MailAccountStatus.Disabled) throw new InvalidOperationException("mail_account_disabled");
+        var policy = await runtimePolicy.GetAsync(cancellationToken);
+        policy.EnsureExistingAccountAllowed(account.Provider);
+        policy.EnsureAuthenticationMethodAllowed(account.Provider, account.AuthenticationMethod);
+
+        var candidate = new MailServerCandidate(
+            account.Provider,
+            new MailEndpoint(account.ImapHost, account.ImapPort, account.ImapSecurity),
+            new MailEndpoint(account.SmtpHost, account.SmtpPort, account.SmtpSecurity),
+            [AuthenticationMethod.Password, AuthenticationMethod.AppSpecificPassword],
+            account.DiscoverySource);
+        await connections.ValidateCredentialsAsync(candidate, account.Username, password, cancellationToken);
+
+        var now = DateTime.UtcNow;
+        account.Status = MailAccountStatus.Active;
+        account.LastAuthenticatedAt = now;
+        account.UpdatedAt = now;
+        await db.SaveChangesAsync(cancellationToken);
+
+        var session = await sessions.CreateAsync(account.Id, deviceIdentifier, cancellationToken);
+        var access = jwt.Issue(account.Id);
+        return new(access.Token, session.Token, account.Id, access.ExpiresAt);
+    }
+
+    /// <summary>
     /// Authenticated credential/server update for the caller's own account. The account is located by the
     /// authenticated id, never by a submitted email address.
     /// </summary>

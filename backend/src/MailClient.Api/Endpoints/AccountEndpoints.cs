@@ -63,6 +63,24 @@ public static class AccountEndpoints
             await audit.WriteAsync(tokens.MailAccountId, AuditActions.MailAccountManualSetupSucceeded, "MailAccount", tokens.MailAccountId.ToString(), null, correlation.CorrelationId, ct);
             return Results.Ok(tokens);
         }).AllowAnonymous().WithName("ConnectManualAccount").WithSummary("Connect mailbox with manual server settings").WithDescription("Fallback only. Host, IP, TLS, IMAP, SMTP, and credentials receive the same validation as automatic discovery.").Produces<TokenResponse>().ProducesProblem(422);
+        accounts.MapPost("/login", async (LoginRequest request, AccountConnectionService service, AuditLogger audit, CorrelationContext correlation, CancellationToken ct) =>
+        {
+            try
+            {
+                var tokens = await service.LoginAsync(request.Email, request.Password, request.DeviceIdentifier, ct);
+                await audit.WriteAsync(tokens.MailAccountId, AuditActions.MailAccountLoggedIn, "MailAccount", tokens.MailAccountId.ToString(),
+                    new Dictionary<string, string?> { ["deviceIdentifier"] = request.DeviceIdentifier }, correlation.CorrelationId, ct);
+                return Results.Ok(tokens);
+            }
+            catch (InvalidOperationException ex) when (ex.Message == "mail_authentication_failed")
+            {
+                await audit.WriteAsync(null, AuditActions.MailAccountAuthenticationFailed, "MailAccount", null,
+                    new Dictionary<string, string?> { ["email"] = request.Email }, correlation.CorrelationId, ct);
+                throw;
+            }
+        }).AllowAnonymous().WithName("LoginMailAccount").WithSummary("Sign in to an existing mailbox from another device")
+            .WithDescription("Verifies credentials against the account's stored server settings and issues a new session. Does not create or modify the account; use /connect for that.")
+            .Produces<TokenResponse>().ProducesProblem(404).ProducesProblem(422);
 
         var api = app.MapGroup("/api").RequireAuthorization();
         api.MapGet("/account", async (ICurrentMailAccount current, AppDbContext db, CancellationToken ct) => await db.MailAccounts.Where(x => x.Id == current.MailAccountId).Select(x => new AccountResponse(x.Id, x.EmailAddress, x.DisplayName, x.Provider, x.Status)).SingleOrDefaultAsync(ct) is { } account ? Results.Ok(account) : Results.NotFound()).WithName("GetCurrentAccount").WithSummary("Get current mailbox account").Produces<AccountResponse>().Produces(404);
@@ -78,5 +96,21 @@ public static class AccountEndpoints
         api.MapDelete("/account", async (ICurrentMailAccount current, AccountDeletionService deletion, CancellationToken ct) =>
             await deletion.DeleteAsync(current.MailAccountId, ct) ? Results.NoContent() : Results.NotFound()
         ).WithName("DeleteCurrentAccount").WithSummary("Delete mailbox and cached data").Produces(204).Produces(404);
+        api.MapGet("/account/sessions", async (ICurrentMailAccount current, MailSessionService sessions, CancellationToken ct) =>
+        {
+            var active = await sessions.ListActiveAsync(current.MailAccountId, ct);
+            return Results.Ok(active.Select(x => new MailSessionResponse(x.Id, x.DeviceIdentifier, x.CreatedAt, x.LastUsedAt, x.ExpiresAt)));
+        }).WithName("ListAccountSessions").WithSummary("List active sessions (signed-in devices) for the current mailbox").Produces<IEnumerable<MailSessionResponse>>();
+        api.MapDelete("/account/sessions/{sessionId:guid}", async (Guid sessionId, ICurrentMailAccount current, MailSessionService sessions, AuditLogger audit, CorrelationContext correlation, CancellationToken ct) =>
+            await sessions.RevokeAsync(current.MailAccountId, sessionId, ct)
+                ? await Audited(audit, current.MailAccountId, sessionId, correlation, ct)
+                : Results.NotFound()
+        ).WithName("RevokeAccountSession").WithSummary("Sign out a device by revoking its session").Produces(204).Produces(404);
+    }
+
+    private static async Task<IResult> Audited(AuditLogger audit, Guid accountId, Guid sessionId, CorrelationContext correlation, CancellationToken ct)
+    {
+        await audit.WriteAsync(accountId, AuditActions.MailSessionRevoked, "MailSession", sessionId.ToString(), null, correlation.CorrelationId, ct);
+        return Results.NoContent();
     }
 }
