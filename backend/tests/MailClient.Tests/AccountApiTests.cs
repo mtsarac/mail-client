@@ -335,4 +335,103 @@ public sealed class AccountApiTests(AcceptingApiFactory factory) : IClassFixture
         Assert.Equal(HttpStatusCode.Unauthorized, afterLogout.StatusCode);
     }
 
+    [Fact]
+    public async Task Login_ExistingAccount_IssuesSeparateSessionForSecondDevice()
+    {
+        var factory = _accepting;
+        var deviceA = factory.CreateClient();
+        var connect = await deviceA.PostAsJsonAsync("/api/accounts/connect-manual", new
+        {
+            email = "multi-device@mail.test.invalid",
+            username = "multi-device@mail.test.invalid",
+            authentication = new { type = "Password", password = "ExamplePassword123!" },
+            imap = new { host = "mail.test.invalid", port = 993, security = "SslOnConnect" },
+            smtp = new { host = "mail.test.invalid", port = 465, security = "SslOnConnect" },
+            deviceIdentifier = "device-a"
+        });
+        connect.EnsureSuccessStatusCode();
+        var accountId = (await connect.Content.ReadFromJsonAsync<JsonDocument>())!.RootElement.GetProperty("mailAccountId").GetGuid();
+
+        var deviceB = factory.CreateClient();
+        var login = await deviceB.PostAsJsonAsync("/api/accounts/login", new { email = "multi-device@mail.test.invalid", password = "ExamplePassword123!", deviceIdentifier = "device-b" });
+
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+        var loginBody = await login.Content.ReadFromJsonAsync<JsonDocument>();
+        Assert.Equal(accountId, loginBody!.RootElement.GetProperty("mailAccountId").GetGuid());
+        var tokenB = loginBody.RootElement.GetProperty("accessToken").GetString()!;
+
+        var asB = factory.CreateClient();
+        asB.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", tokenB);
+        var sessions = await asB.GetFromJsonAsync<JsonDocument>("/api/account/sessions");
+        var deviceIdentifiers = sessions!.RootElement.EnumerateArray().Select(x => x.GetProperty("deviceIdentifier").GetString()).ToList();
+        Assert.Contains("device-a", deviceIdentifiers);
+        Assert.Contains("device-b", deviceIdentifiers);
+    }
+
+    [Fact]
+    public async Task Login_UnknownEmail_ReturnsNotFound()
+    {
+        var response = await _accepting.CreateClient().PostAsJsonAsync("/api/accounts/login", new { email = "nobody@mail.test.invalid", password = "ExamplePassword123!" });
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonDocument>();
+        Assert.Equal("mail_account_not_found", body!.RootElement.GetProperty("code").GetString());
+    }
+
+    [Fact]
+    public async Task Login_RejectedCredentials_DoesNotIssueSession()
+    {
+        var factory = new RejectingApiFactory();
+        var accountId = Guid.NewGuid();
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            db.MailAccounts.Add(new MailAccount
+            {
+                Id = accountId,
+                EmailAddress = "wrong-pass@mail.test.invalid",
+                NormalizedEmailAddress = "WRONG-PASS@MAIL.TEST.INVALID",
+                Username = "wrong-pass@mail.test.invalid",
+                ImapHost = "mail.test.invalid",
+                ImapPort = 993,
+                SmtpHost = "mail.test.invalid",
+                SmtpPort = 465,
+                Status = MailAccountStatus.Active
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var response = await factory.CreateClient().PostAsJsonAsync("/api/accounts/login", new { email = "wrong-pass@mail.test.invalid", password = "WrongPassword!" });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        using var scope2 = factory.Services.CreateScope();
+        Assert.Equal(0, await scope2.ServiceProvider.GetRequiredService<AppDbContext>().MailSessions.CountAsync());
+    }
+
+    [Fact]
+    public async Task RevokeSession_ForeignSession_ReturnsNotFound()
+    {
+        var factory = _accepting;
+        var connectA = await factory.CreateClient().PostAsJsonAsync("/api/accounts/connect-manual", ManualRequestBuilder.Build("mail.test.invalid", "mail.test.invalid", "revoke-a@mail.test.invalid"));
+        connectA.EnsureSuccessStatusCode();
+        var bodyA = await connectA.Content.ReadFromJsonAsync<JsonDocument>();
+        var accountAId = bodyA!.RootElement.GetProperty("mailAccountId").GetGuid();
+        Guid sessionAId;
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            sessionAId = await db.MailSessions.Where(x => x.MailAccountId == accountAId).Select(x => x.Id).SingleAsync();
+        }
+
+        var connectB = await factory.CreateClient().PostAsJsonAsync("/api/accounts/connect-manual", ManualRequestBuilder.Build("mail.test.invalid", "mail.test.invalid", "revoke-b@mail.test.invalid"));
+        connectB.EnsureSuccessStatusCode();
+        var tokenB = (await connectB.Content.ReadFromJsonAsync<JsonDocument>())!.RootElement.GetProperty("accessToken").GetString()!;
+
+        var asB = factory.CreateClient();
+        asB.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", tokenB);
+        var response = await asB.DeleteAsync($"/api/account/sessions/{sessionAId}");
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
 }

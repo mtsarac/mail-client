@@ -63,6 +63,26 @@ public sealed class MailSessionService(AppDbContext db, SessionOptions options)
         return true;
     }
 
+    public Task<List<MailSession>> ListActiveAsync(Guid accountId, CancellationToken cancellationToken)
+    {
+        var now = DateTime.UtcNow;
+        return db.MailSessions
+            .Where(x => x.MailAccountId == accountId && x.RevokedAt == null && x.ExpiresAt > now)
+            .OrderByDescending(x => x.LastUsedAt)
+            .ToListAsync(cancellationToken);
+    }
+
+    // Scoped to the caller's own account so one signed-in device can only ever revoke sessions of the same
+    // mailbox, never another account's session by guessing an id.
+    public async Task<bool> RevokeAsync(Guid accountId, Guid sessionId, CancellationToken cancellationToken)
+    {
+        var session = await db.MailSessions.SingleOrDefaultAsync(x => x.Id == sessionId && x.MailAccountId == accountId, cancellationToken);
+        if (session is null || session.RevokedAt is not null) return false;
+        session.RevokedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync(cancellationToken);
+        return true;
+    }
+
     // Sliding rotation renews from the refresh instant; a fixed lifetime keeps the
     // original absolute expiry so a session can never outlive its initial bound.
     private static TimeSpan RenewedLifetime(MailSession current, TimeSpan lifetime, bool slide, DateTime now) =>
