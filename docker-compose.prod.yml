@@ -1,0 +1,70 @@
+# Production stack: Postgres + one-shot migrator + API. Single-host, single-instance.
+# No GreenMail (real mail providers only). TLS/reverse-proxy is not this file's job —
+# put Caddy/nginx/Traefik in front and point it at api:8080.
+#
+# Usage:
+#   cp .env.example .env   # fill in real secrets, see docs/DOCKER.md
+#   docker compose -f docker-compose.prod.yml up --build -d
+
+name: mailclient
+
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-mailclient_v2}
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  migrate:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: migrator
+    command:
+      - "--connection"
+      - "Host=postgres;Port=5432;Database=${POSTGRES_DB:-mailclient_v2};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: runtime
+    env_file:
+      - .env
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ConnectionStrings__Default: Host=postgres;Port=5432;Database=${POSTGRES_DB:-mailclient_v2};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      DataProtection__KeyPath: /app/data/protection-keys
+      DataProtection__CertificatePath: /run/secrets/dataprotection.pfx
+    ports:
+      - "8080:8080"
+    volumes:
+      - attachments:/app/data/attachments
+      - protection-keys:/app/data/protection-keys
+      - logs:/app/logs
+      - ${DATAPROTECTION_CERT_HOST_PATH:?set DATAPROTECTION_CERT_HOST_PATH in .env}:/run/secrets/dataprotection.pfx:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  attachments:
+  protection-keys:
+  logs:
