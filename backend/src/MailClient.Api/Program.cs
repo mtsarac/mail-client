@@ -112,7 +112,7 @@ if (!string.IsNullOrWhiteSpace(certificatePath))
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<CorrelationContext>();
 builder.Services.AddSingleton<IDnsResolver, SystemDnsResolver>();
-builder.Services.AddSingleton<OutboundHostValidator>();
+builder.Services.AddSingleton(sp => new OutboundHostValidator(sp.GetRequiredService<IDnsResolver>(), allowPrivateHosts: builder.Environment.IsDevelopment()));
 builder.Services.AddSingleton<DiscoveryStateStore>();
 builder.Services.AddSingleton(new DnsClient.LookupClient());
 var mailDiscoveryOptions = builder.Configuration.GetSection("MailDiscovery").Get<MailDiscoveryOptions>() ?? new MailDiscoveryOptions();
