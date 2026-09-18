@@ -123,6 +123,32 @@ public sealed class MailOperationServiceTests
         Assert.NotEqual(destinationId, mail.MailFolderId);
     }
 
+    [Fact]
+    public async Task ExecuteBulkAsync_MixedIds_AppliesEachIndependently()
+    {
+        await using var db = CreateDb();
+        var (accountId, folderId, mailId) = await SeedAsync(db);
+        var secondMailId = Guid.NewGuid();
+        db.Mails.Add(new Mail { Id = secondMailId, MailAccountId = accountId, MailFolderId = folderId, Uid = 6, UidValidity = 7, Subject = "second" });
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+        var missingMailId = Guid.NewGuid();
+        var remote = new RecordingRemoteFolder(7);
+        var service = CreateService(db, new FakeMailFolderClient(remote));
+
+        var result = await service.ExecuteBulkAsync(accountId, [mailId, missingMailId, secondMailId], MailOperationKind.Star, null, "corr", CancellationToken.None);
+
+        Assert.Equal(3, result.Results.Count);
+        Assert.True(result.Results.Single(item => item.MailId == mailId).Success);
+        Assert.True(result.Results.Single(item => item.MailId == secondMailId).Success);
+        var missing = result.Results.Single(item => item.MailId == missingMailId);
+        Assert.False(missing.Success);
+        Assert.Equal(MailOperationError.NotFound, missing.Error);
+        // Both real mails were flagged even though the missing one failed in between.
+        Assert.True((await db.Mails.SingleAsync(x => x.Id == mailId)).Flagged);
+        Assert.True((await db.Mails.SingleAsync(x => x.Id == secondMailId)).Flagged);
+    }
+
     private static MailOperationService CreateService(AppDbContext db, IMailFolderClient folders) =>
         new(db, folders, new MailReadService(db, folders, new AuditLogger(db), NullLogger<MailReadService>.Instance), new AuditLogger(db), new FakeSyncScheduler(), NullLogger<MailOperationService>.Instance, new FakePushNotificationService());
 
