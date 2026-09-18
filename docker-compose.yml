@@ -1,0 +1,72 @@
+# Local development / test stack: Postgres + GreenMail (fake IMAP/SMTP) + one-shot
+# migrator + API. Not for production — see docker-compose.prod.yml.
+#
+# Usage:
+#   cp .env.example .env   # fill in Jwt__Key at minimum
+#   docker compose up --build
+
+name: mailclient-dev
+
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: mailclient_v2
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  greenmail:
+    image: greenmail/standalone:2.1.8
+    environment:
+      GREENMAIL_OPTS: -Dgreenmail.setup.test.all -Dgreenmail.hostname=0.0.0.0 -Dgreenmail.users=test@localhost:test123
+    ports:
+      - "${GREENMAIL_IMAP_PORT:-3143}:3143" # IMAP
+      - "${GREENMAIL_SMTP_PORT:-3025}:3025" # SMTP
+
+  migrate:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: migrator
+    command: ["--connection", "Host=postgres;Port=5432;Database=mailclient_v2;Username=postgres;Password=postgres"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: runtime
+    env_file:
+      - .env
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__Default: Host=postgres;Port=5432;Database=mailclient_v2;Username=postgres;Password=postgres
+    ports:
+      - "${API_PORT:-8080}:8080"
+    volumes:
+      - attachments:/app/data/attachments
+      - protection-keys:/app/data/protection-keys
+      - logs:/app/logs
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  attachments:
+  protection-keys:
+  logs:
