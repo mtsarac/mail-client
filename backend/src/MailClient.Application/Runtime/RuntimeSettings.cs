@@ -9,10 +9,12 @@ public sealed class RuntimeSettings
     public RuntimeLimitSettings Limits { get; init; } = new();
     public RuntimeSearchSettings Search { get; init; } = new();
     public RuntimePushSettings Push { get; init; } = new();
+    public RuntimeWhitelistSettings Whitelist { get; init; } = new();
 
     public void Validate()
     {
         Sync.Validate();
+        Whitelist.Validate();
         if (Limits.MaxAttachmentBytes <= 0
             || Limits.MaxMessageAttachmentBytes < Limits.MaxAttachmentBytes
             || Limits.MaxMessageBytes <= 0
@@ -116,6 +118,20 @@ public sealed class RuntimePushSettings
     public bool IncludeMailPreview { get; init; } = true;
 }
 
+public sealed class RuntimeWhitelistSettings
+{
+    /// <summary>Gates account creation and continued access to a configured email allowlist. Off by default; forced off outside Production.</summary>
+    public bool Enabled { get; init; } = false;
+    public int ReconciliationIntervalMinutes { get; init; } = 15;
+    public int DataRetentionGraceDays { get; init; } = 30;
+
+    public void Validate()
+    {
+        if (ReconciliationIntervalMinutes <= 0 || DataRetentionGraceDays <= 0)
+            throw new InvalidOperationException(RuntimePolicyErrors.RuntimeSettingsInvalid);
+    }
+}
+
 public sealed record RuntimeSettingsSnapshot(RuntimeSettings Settings, int Version, DateTime UpdatedAt);
 public sealed record ProviderCapabilities(bool GoogleOAuth2, bool MicrosoftOAuth2);
 
@@ -130,10 +146,26 @@ public interface IRuntimePolicyProvider
     Task<RuntimeProviderPolicy> GetAsync(CancellationToken cancellationToken);
 }
 
+public interface IEmailAllowlistService
+{
+    /// <summary>True when the allowlist is disabled, or the email is on it. Always true outside Production.</summary>
+    Task<bool> IsAllowedAsync(string email, CancellationToken cancellationToken);
+
+    /// <summary>True only when allowlist side effects (rejecting signups, disabling/restoring accounts,
+    /// grace-period deletion) should actually apply right now: enabled, and running in Production.</summary>
+    Task<bool> IsEnforcedAsync(CancellationToken cancellationToken);
+}
+
 public sealed class DefaultRuntimePolicyProvider : IRuntimePolicyProvider
 {
     public Task<RuntimeProviderPolicy> GetAsync(CancellationToken cancellationToken) =>
         Task.FromResult(RuntimeProviderPolicy.Create(new RuntimeSettings(), new ProviderCapabilities(false, false)));
+}
+
+public sealed class DefaultEmailAllowlistService : IEmailAllowlistService
+{
+    public Task<bool> IsAllowedAsync(string email, CancellationToken cancellationToken) => Task.FromResult(true);
+    public Task<bool> IsEnforcedAsync(CancellationToken cancellationToken) => Task.FromResult(false);
 }
 
 public static class RuntimePolicyErrors
@@ -144,4 +176,5 @@ public static class RuntimePolicyErrors
     public const string ProviderNewAccountsDisabled = "provider_new_accounts_disabled";
     public const string ProviderExistingAccountsDisabled = "provider_existing_accounts_disabled";
     public const string AuthenticationMethodDisabled = "authentication_method_disabled";
+    public const string EmailNotAllowlisted = "email_not_allowlisted";
 }

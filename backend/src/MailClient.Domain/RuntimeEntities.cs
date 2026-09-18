@@ -15,3 +15,11 @@ public sealed class OAuthStateNonce
     public string NonceHash { get; set; } = "";
     public DateTime ExpiresAt { get; set; }
 }
+
+public sealed class AllowlistedEmail
+{
+    public Guid Id { get; set; }
+    public string Email { get; set; } = "";
+    public string NormalizedEmail { get; set; } = "";
+    public DateTime AddedAt { get; set; }
+}

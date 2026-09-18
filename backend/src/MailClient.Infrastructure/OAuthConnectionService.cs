@@ -31,6 +31,7 @@ public sealed class OAuthConnectionService(
     ISyncScheduler scheduler,
     MailKitFolderExplorer explorer,
     IRuntimePolicyProvider runtimePolicy,
+    IEmailAllowlistService allowlist,
     ILogger<OAuthConnectionService> logger,
     MailClientMetrics? metrics = null)
 {
@@ -94,6 +95,8 @@ public sealed class OAuthConnectionService(
         }
         if (payload.Provider != provider)
             throw new InvalidOperationException("oauth_state_invalid");
+        if (!await allowlist.IsAllowedAsync(payload.Email, cancellationToken))
+            throw new InvalidOperationException(RuntimePolicyErrors.EmailNotAllowlisted);
         (await runtimePolicy.GetAsync(cancellationToken)).EnsureNewAccountAllowed(provider, AuthenticationMethod.OAuth2);
         var oauthProvider = oauthProviders.SingleOrDefault(p => p.Provider == provider && p.IsConfigured)
             ?? throw new InvalidOperationException("oauth_provider_not_configured");

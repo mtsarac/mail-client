@@ -163,6 +163,7 @@ public sealed class AuthenticationPropagationTests
             new MailKitFolderExplorer(connections),
             new MailCredentialResolver(db, protector),
             new DefaultRuntimePolicyProvider(),
+            new DefaultEmailAllowlistService(),
             NullLogger<AccountConnectionService>.Instance);
     }
 

@@ -18,4 +18,9 @@ public static class AuditActions
     public const string MailSent = "mail.sent";
     public const string DeviceRegistered = "device.registered";
     public const string DeviceRemoved = "device.removed";
+    public const string AllowlistEmailAdded = "allowlist.email-added";
+    public const string AllowlistEmailRemoved = "allowlist.email-removed";
+    public const string MailAccountAccessRevoked = "mail-account.access-revoked";
+    public const string MailAccountAccessRestored = "mail-account.access-restored";
+    public const string MailAccountDeletedGracePeriodExpired = "mail-account.deleted-grace-period-expired";
 }
