@@ -134,6 +134,19 @@ public sealed class MailOperationService(
         }
     }
 
+    public async Task<BulkMailOperationResult> ExecuteBulkAsync(Guid accountId, IReadOnlyList<Guid> mailIds, MailOperationKind kind, Guid? destinationFolderId, string? correlationId, CancellationToken cancellationToken)
+    {
+        var results = new List<BulkMailOperationItemResult>(mailIds.Count);
+        foreach (var mailId in mailIds)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var result = await ExecuteAsync(accountId, new MailOperationRequest(mailId, kind, destinationFolderId), correlationId, cancellationToken);
+            results.Add(new BulkMailOperationItemResult(mailId, result.Success, result.Error));
+        }
+
+        return new BulkMailOperationResult(results);
+    }
+
     private async Task<MailFolderEntity?> ResolveDestinationAsync(Guid accountId, MailOperationRequest request, CancellationToken cancellationToken)
     {
         if (request.Kind is MailOperationKind.Move or MailOperationKind.Copy)

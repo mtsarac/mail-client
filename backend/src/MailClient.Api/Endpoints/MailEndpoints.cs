@@ -14,6 +14,9 @@ namespace MailClient.Api.Endpoints;
 
 public sealed record ReadRequest(bool IsRead);
 public sealed record FolderOperationRequest(Guid FolderId);
+public sealed record BulkMailOperationRequest(IReadOnlyList<Guid> MailIds, Guid? FolderId = null);
+public sealed record BulkMailOperationItemResponse(Guid MailId, bool Success, string? Code);
+public sealed record BulkMailOperationResponse(IReadOnlyList<BulkMailOperationItemResponse> Results);
 
 public static class MailEndpoints
 {
@@ -82,6 +85,24 @@ public static class MailEndpoints
         MapOperation(api, "not-spam", MailOperationKind.NotSpam);
         api.MapPost("/mails/{id:guid}/move", async (Guid id, FolderOperationRequest request, ICurrentMailAccount current, CorrelationContext correlation, IMailOperationService operations, CancellationToken ct) => OperationResult(await operations.ExecuteAsync(current.MailAccountId, new MailOperationRequest(id, MailOperationKind.Move, request.FolderId), correlation.CorrelationId, ct), correlation.CorrelationId));
         api.MapPost("/mails/{id:guid}/copy", async (Guid id, FolderOperationRequest request, ICurrentMailAccount current, CorrelationContext correlation, IMailOperationService operations, CancellationToken ct) => OperationResult(await operations.ExecuteAsync(current.MailAccountId, new MailOperationRequest(id, MailOperationKind.Copy, request.FolderId), correlation.CorrelationId, ct), correlation.CorrelationId));
+        api.MapPost("/mails/bulk/{action}", async (string action, BulkMailOperationRequest request, ICurrentMailAccount current, CorrelationContext correlation, IMailOperationService operations, CancellationToken ct) =>
+        {
+            if (ParseBulkAction(action) is not { } kind)
+                return Results.NotFound();
+            if (request.MailIds is not { Count: > 0 })
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["mailIds"] = ["At least one mail id is required."] });
+            if (request.MailIds.Count > MaxBulkOperationSize)
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["mailIds"] = [$"At most {MaxBulkOperationSize} mail ids are allowed per request."] });
+            if (kind == MailOperationKind.Move && request.FolderId is null)
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["folderId"] = ["folderId is required for move."] });
+
+            var result = await operations.ExecuteBulkAsync(current.MailAccountId, request.MailIds, kind, request.FolderId, correlation.CorrelationId, ct);
+            return Results.Ok(new BulkMailOperationResponse(result.Results
+                .Select(item => new BulkMailOperationItemResponse(item.MailId, item.Success, item.Success ? null : MapOperationError(item.Error).Code))
+                .ToList()));
+        }).WithName("BulkMailOperation").WithSummary("Apply a mail operation to multiple mails")
+            .WithDescription("action: read, unread, archive, trash, or move (move requires folderId). Each mail is applied independently, so one failure does not block the rest of the batch — check the per-item results.")
+            .Produces<BulkMailOperationResponse>().ProducesValidationProblem();
         api.MapGet("/mails/{mailId:guid}/attachments/{attachmentId:guid}", async (Guid mailId, Guid attachmentId, ICurrentMailAccount current, AppDbContext db, IFileStorage storage, CancellationToken ct) =>
         {
             var attachment = await db.Attachments.SingleOrDefaultAsync(x => x.Id == attachmentId && x.MailId == mailId && x.MailAccountId == current.MailAccountId, ct);
@@ -137,6 +158,18 @@ public static class MailEndpoints
     private static async Task<IResult> ComposeResult(Task<ComposeContextResponse?> response) =>
         await response is { } context ? Results.Ok(context) : Results.NotFound();
 
+    private const int MaxBulkOperationSize = 100;
+
+    private static MailOperationKind? ParseBulkAction(string action) => action switch
+    {
+        "read" => MailOperationKind.Read,
+        "unread" => MailOperationKind.Unread,
+        "archive" => MailOperationKind.Archive,
+        "trash" => MailOperationKind.Trash,
+        "move" => MailOperationKind.Move,
+        _ => null
+    };
+
     private static void MapOperation(RouteGroupBuilder api, string route, MailOperationKind kind) =>
         api.MapPost($"/mails/{{id:guid}}/{route}", async (Guid id, ICurrentMailAccount current, CorrelationContext correlation, IMailOperationService operations, CancellationToken ct) =>
             OperationResult(await operations.ExecuteAsync(current.MailAccountId, new MailOperationRequest(id, kind), correlation.CorrelationId, ct), correlation.CorrelationId));
@@ -145,18 +178,20 @@ public static class MailEndpoints
     {
         if (result.Success)
             return Results.NoContent();
-        var (status, title, code) = result.Error switch
-        {
-            MailOperationError.NotFound => (404, "Mail not found.", "mail_not_found"),
-            MailOperationError.FolderNotFound => (404, "Mail folder not found.", "mail_folder_not_found"),
-            MailOperationError.NeedsReauthentication => (409, "Mailbox needs reauthentication.", "mail_account_needs_reauthentication"),
-            MailOperationError.ProviderUnavailable => (502, "Mail provider unavailable.", "mail_provider_unavailable"),
-            MailOperationError.Conflict when legacyRead => (409, "Mailbox folder changed.", "mailbox_changed"),
-            MailOperationError.Conflict => (409, "Mailbox state changed.", "mail_operation_conflict"),
-            MailOperationError.MoveFailed => (502, "Mail move failed.", "mail_move_failed"),
-            MailOperationError.NotSupported => (422, "Mail operation is not supported.", "mail_operation_not_supported"),
-            _ => (500, "Mail operation failed.", "mail_operation_failed")
-        };
+        var (status, title, code) = MapOperationError(result.Error, legacyRead);
         return Results.Problem(title: title, statusCode: status, extensions: new Dictionary<string, object?> { ["code"] = code, ["correlationId"] = correlationId });
     }
+
+    private static (int Status, string Title, string Code) MapOperationError(MailOperationError error, bool legacyRead = false) => error switch
+    {
+        MailOperationError.NotFound => (404, "Mail not found.", "mail_not_found"),
+        MailOperationError.FolderNotFound => (404, "Mail folder not found.", "mail_folder_not_found"),
+        MailOperationError.NeedsReauthentication => (409, "Mailbox needs reauthentication.", "mail_account_needs_reauthentication"),
+        MailOperationError.ProviderUnavailable => (502, "Mail provider unavailable.", "mail_provider_unavailable"),
+        MailOperationError.Conflict when legacyRead => (409, "Mailbox folder changed.", "mailbox_changed"),
+        MailOperationError.Conflict => (409, "Mailbox state changed.", "mail_operation_conflict"),
+        MailOperationError.MoveFailed => (502, "Mail move failed.", "mail_move_failed"),
+        MailOperationError.NotSupported => (422, "Mail operation is not supported.", "mail_operation_not_supported"),
+        _ => (500, "Mail operation failed.", "mail_operation_failed")
+    };
 }
