@@ -232,7 +232,8 @@ public sealed class MailKitRemoteMailFolder(IMailFolder folder, Func<string, Can
             throw new NotSupportedException("Destination folder resolution is unavailable.");
         var destination = await resolveFolder(destinationFullName, cancellationToken);
         var result = await folder.MoveToAsync(uid, destination, cancellationToken);
-        return new(result, destination.UidValidity);
+        var uidValidity = await ResolveUidValidityAsync(destination, cancellationToken);
+        return new(result, uidValidity);
     }
 
     public async Task<RemoteMoveResult> CopyAsync(UniqueId uid, string destinationFullName, CancellationToken cancellationToken)
@@ -241,7 +242,16 @@ public sealed class MailKitRemoteMailFolder(IMailFolder folder, Func<string, Can
             throw new NotSupportedException("Destination folder resolution is unavailable.");
         var destination = await resolveFolder(destinationFullName, cancellationToken);
         var result = await folder.CopyToAsync(uid, destination, cancellationToken);
-        return new(result, destination.UidValidity);
+        var uidValidity = await ResolveUidValidityAsync(destination, cancellationToken);
+        return new(result, uidValidity);
+    }
+
+    private static async Task<uint> ResolveUidValidityAsync(IMailFolder destination, CancellationToken cancellationToken)
+    {
+        if (destination.UidValidity != 0)
+            return destination.UidValidity;
+        await destination.StatusAsync(StatusItems.UidValidity, cancellationToken);
+        return destination.UidValidity;
     }
 
     public async Task<RemoteAppendResult> AppendAsync(

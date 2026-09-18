@@ -75,21 +75,8 @@ public static class AccountEndpoints
         }).WithName("ReconnectCurrentAccount").WithSummary("Update credentials or server settings for the signed-in mailbox")
             .WithDescription("Account-scoped credential/server update. Anonymous connect endpoints only create new accounts.")
             .Produces<AccountResponse>().Produces(401).ProducesProblem(422);
-        api.MapDelete("/account", async (ICurrentMailAccount current, AppDbContext db, IFileStorage storage, ILogger<Program> logger, CancellationToken ct) =>
-        {
-            var account = await db.MailAccounts.FindAsync([current.MailAccountId], ct);
-            if (account is null) return Results.NotFound();
-            db.Remove(account);
-            await db.SaveChangesAsync(ct);
-            try
-            {
-                await storage.DeleteAccountAsync(current.MailAccountId, CancellationToken.None);
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Attachment cleanup failed after mailbox deletion.");
-            }
-            return Results.NoContent();
-        }).WithName("DeleteCurrentAccount").WithSummary("Delete mailbox and cached data").Produces(204).Produces(404);
+        api.MapDelete("/account", async (ICurrentMailAccount current, AccountDeletionService deletion, CancellationToken ct) =>
+            await deletion.DeleteAsync(current.MailAccountId, ct) ? Results.NoContent() : Results.NotFound()
+        ).WithName("DeleteCurrentAccount").WithSummary("Delete mailbox and cached data").Produces(204).Produces(404);
     }
 }

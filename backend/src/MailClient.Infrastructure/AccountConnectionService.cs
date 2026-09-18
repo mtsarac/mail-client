@@ -25,6 +25,7 @@ public sealed class AccountConnectionService(
     MailKitFolderExplorer explorer,
     MailCredentialResolver credentialResolver,
     IRuntimePolicyProvider runtimePolicy,
+    IEmailAllowlistService allowlist,
     ILogger<AccountConnectionService> logger)
 {
     public async Task<TokenResponse> ConnectAsync(DiscoveryState state, AuthenticationInput authentication, string? deviceIdentifier, CancellationToken cancellationToken) =>
@@ -41,6 +42,7 @@ public sealed class AccountConnectionService(
         if (authentication.Type is not (AuthenticationMethod.Password or AuthenticationMethod.AppSpecificPassword) || string.IsNullOrWhiteSpace(authentication.Password)) throw new InvalidOperationException("unsupported_authentication_method");
         (await runtimePolicy.GetAsync(cancellationToken)).EnsureNewAccountAllowed(candidate.Provider, authentication.Type);
         if (!email.Contains('@', StringComparison.Ordinal)) throw new InvalidOperationException("invalid_email");
+        if (!await allowlist.IsAllowedAsync(email, cancellationToken)) throw new InvalidOperationException(RuntimePolicyErrors.EmailNotAllowlisted);
         var normalizedEmail = email.Trim().ToUpperInvariant();
         // Anonymous connection creates accounts only. Re-pointing an existing mailbox at different servers or
         // credentials would let any caller claim someone else's account with a mail server they control, so it

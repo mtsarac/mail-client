@@ -20,6 +20,8 @@ public sealed class MailAccount
     public DiscoverySource DiscoverySource { get; set; }
     public bool SaveSentCopy { get; set; } = true;
     public MailAccountStatus Status { get; set; } = MailAccountStatus.Active;
+    /// <summary>Set when the account is disabled because its email left the production allowlist; cleared if it is re-added. Drives grace-period deletion.</summary>
+    public DateTime? AccessRevokedAt { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
     public DateTime? LastAuthenticatedAt { get; set; }

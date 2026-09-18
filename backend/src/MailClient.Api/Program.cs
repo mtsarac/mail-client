@@ -112,7 +112,7 @@ if (!string.IsNullOrWhiteSpace(certificatePath))
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<CorrelationContext>();
 builder.Services.AddSingleton<IDnsResolver, SystemDnsResolver>();
-builder.Services.AddSingleton<OutboundHostValidator>();
+builder.Services.AddSingleton(sp => new OutboundHostValidator(sp.GetRequiredService<IDnsResolver>(), allowPrivateHosts: builder.Environment.IsDevelopment()));
 builder.Services.AddSingleton<DiscoveryStateStore>();
 builder.Services.AddSingleton(new DnsClient.LookupClient());
 var mailDiscoveryOptions = builder.Configuration.GetSection("MailDiscovery").Get<MailDiscoveryOptions>() ?? new MailDiscoveryOptions();
@@ -139,6 +139,7 @@ var oauthOptions = builder.Configuration.GetSection("OAuth").Get<OAuthOptions>()
 builder.Services.AddSingleton(oauthOptions);
 builder.Services.AddScoped<IRuntimeSettingsStore, RuntimeSettingsStore>();
 builder.Services.AddScoped<IRuntimePolicyProvider, RuntimePolicyProvider>();
+builder.Services.AddScoped<IEmailAllowlistService, EmailAllowlistService>();
 builder.Services.AddScoped<RuntimeOperationSettings>();
 builder.Services.AddScoped<IOAuthStateNonceStore, OAuthStateNonceStore>();
 builder.Services.AddHttpClient("OAuth");
@@ -151,6 +152,7 @@ builder.Services.AddSingleton<IMailServerCandidateValidator>(sp => (MailKitConne
 builder.Services.AddScoped<ICredentialProtector, DataProtectionCredentialProtector>();
 builder.Services.AddScoped<MailSessionService>();
 builder.Services.AddScoped<AccountConnectionService>();
+builder.Services.AddScoped<AccountDeletionService>();
 builder.Services.AddScoped<IMailTransport, MailKitMailTransport>();
 builder.Services.AddScoped<IMailFolderClient, MailFolderClient>();
 builder.Services.AddScoped<MailFolderSyncService>();
@@ -200,7 +202,10 @@ builder.Services.AddScoped<ISyncLockProvider>(sp =>
         : new PostgresSyncLockProvider(connection, logger, metrics);
 });
 if (!builder.Environment.IsEnvironment("Test"))
+{
     builder.Services.AddHostedService<MailSyncService>();
+    builder.Services.AddHostedService<AllowlistReconciliationService>();
+}
 var storageOptions = builder.Configuration.GetSection("Storage").Get<StorageOptions>() ?? new StorageOptions();
 storageOptions.Validate();
 builder.Services.AddSingleton(storageOptions);
@@ -246,11 +251,15 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJw
             }
 
             var db = context.HttpContext.RequestServices.GetRequiredService<AppDbContext>();
-            var exists = await db.MailAccounts
+            var status = await db.MailAccounts
                 .AsNoTracking()
-                .AnyAsync(account => account.Id == mailAccountId, context.HttpContext.RequestAborted);
-            if (!exists)
+                .Where(account => account.Id == mailAccountId)
+                .Select(account => (MailAccountStatus?)account.Status)
+                .SingleOrDefaultAsync(context.HttpContext.RequestAborted);
+            if (status is null)
                 context.Fail("Mail account no longer exists.");
+            else if (status == MailAccountStatus.Disabled)
+                context.Fail("Mail account access has been revoked.");
         }
     };
 });
@@ -328,6 +337,7 @@ app.MapMailEndpoints();
 app.MapConversationEndpoints();
 app.MapDeviceEndpoints();
 app.MapManagementEndpoints();
+app.MapWhitelistManagementEndpoints();
 app.MapHealthEndpoints();
 app.MapMailClientTelemetry(observabilityOptions);
 
