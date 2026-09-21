@@ -18,7 +18,7 @@ public static class DeviceEndpoints
 {
     public static void MapDeviceEndpoints(this WebApplication app)
     {
-        var api = app.MapGroup("/api").RequireAuthorization();
+        var api = app.MapGroup("/api").RequireAuthorization().WithTags("Devices");
         api.MapPost("/devices", async (DeviceRegistrationRequest request, ICurrentMailAccount current, AppDbContext db, AuditLogger audit, CorrelationContext correlation, CancellationToken ct) =>
         {
             var errors = Validate(request);
@@ -51,7 +51,7 @@ public static class DeviceEndpoints
             await db.SaveChangesAsync(ct);
             await audit.WriteAsync(current.MailAccountId, AuditActions.DeviceRegistered, "DeviceToken", existing.Id.ToString(), null, correlation.CorrelationId, ct);
             return Results.Created($"/api/devices/{existing.Id}", ToResponse(existing));
-        }).WithName("RegisterDevice").WithSummary("Register device for current mailbox").Produces<DeviceResponse>(201).ProducesValidationProblem();
+        }).WithName("RegisterDevice").WithSummary("Register device for current mailbox").WithDescription("Idempotent per (mailbox, token): re-registering the same push token updates it instead of duplicating. Always answers 201.").Produces<DeviceResponse>(201).ProducesValidationProblem();
         api.MapDelete("/devices/{id:guid}", async (Guid id, ICurrentMailAccount current, AppDbContext db, AuditLogger audit, CorrelationContext correlation, CancellationToken ct) =>
         {
             var token = await db.DeviceTokens.SingleOrDefaultAsync(x => x.Id == id && x.MailAccountId == current.MailAccountId, ct);

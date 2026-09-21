@@ -6,11 +6,13 @@ using Microsoft.EntityFrameworkCore;
 
 namespace MailClient.Api.Endpoints;
 
+public sealed record ConversationListResponse(IReadOnlyList<ConversationSummaryResponse> Items, int Page, int PageSize, int Total);
+
 public static class ConversationEndpoints
 {
     public static void MapConversationEndpoints(this WebApplication app)
     {
-        var api = app.MapGroup("/api").RequireAuthorization();
+        var api = app.MapGroup("/api").RequireAuthorization().WithTags("Conversations");
         api.MapGet("/conversations", async (int? page, int? pageSize, ICurrentMailAccount current, AppDbContext db, CancellationToken ct) =>
         {
             var size = pageSize is < 1 ? 50 : Math.Min(pageSize ?? 50, 100);
@@ -42,8 +44,8 @@ public static class ConversationEndpoints
                     conversation.StartedAt,
                     conversation.LastMessageAt))
                 .ToListAsync(ct);
-            return Results.Ok(new { Items = items, Page = number, PageSize = size, Total = total });
-        }).WithName("ListConversations").WithSummary("List account conversations").Produces(200);
+            return Results.Ok(new ConversationListResponse(items, number, size, total));
+        }).WithName("ListConversations").WithSummary("List account conversations").WithDescription("Newest first. pageSize is capped at 100.").Produces<ConversationListResponse>();
 
         api.MapGet("/conversations/{id:guid}", async (Guid id, ICurrentMailAccount current, AppDbContext db, CancellationToken ct) =>
         {
