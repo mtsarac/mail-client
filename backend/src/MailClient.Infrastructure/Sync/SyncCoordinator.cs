@@ -113,7 +113,11 @@ public sealed class SyncCoordinator : BackgroundService, ISyncScheduler
         return SyncScheduling.ForPeriodicFolder(accountId, folderId, folderType ?? MailFolderType.Unknown, _queue.NextSequence());
     }
 
-    public void NotifySettingsChanged() => _signals.Writer.TryWrite(new SyncScheduleSignal());
+    public void NotifySettingsChanged()
+    {
+        Interlocked.Exchange(ref _settingsExpiresAt, 0);
+        _signals.Writer.TryWrite(new SyncScheduleSignal());
+    }
 
     public int PendingCount => _queue.Count;
 
@@ -146,11 +150,22 @@ public sealed class SyncCoordinator : BackgroundService, ISyncScheduler
         await DispatchReadyWorkAsync(settings, cancellationToken);
     }
 
+    // ponytail: the loop ticks every 250 ms; re-reading settings from the DB each tick is wasteful. Settings edits apply within SettingsCacheTtl.
+    private static readonly TimeSpan SettingsCacheTtl = TimeSpan.FromSeconds(5);
+    private RuntimeSettings? _settings;
+    private long _settingsExpiresAt;
+
     private async Task<RuntimeSettings> CurrentSettingsAsync(CancellationToken cancellationToken)
     {
+        if (_settings is not null && Environment.TickCount64 < Interlocked.Read(ref _settingsExpiresAt))
+            return _settings;
+
         await using var scope = _scopes.CreateAsyncScope();
         var operationSettings = scope.ServiceProvider.GetRequiredService<RuntimeOperationSettings>();
-        return (await operationSettings.GetAsync(cancellationToken)).Settings;
+        var settings = (await operationSettings.GetAsync(cancellationToken)).Settings;
+        _settings = settings;
+        Interlocked.Exchange(ref _settingsExpiresAt, Environment.TickCount64 + (long)SettingsCacheTtl.TotalMilliseconds);
+        return settings;
     }
 
     private async Task DispatchReadyWorkAsync(RuntimeSettings settings, CancellationToken cancellationToken)
