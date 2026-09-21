@@ -84,8 +84,8 @@ flutter_client/macos/Pods/
 **/data/attachments/
 
 # Private planning docs
-docs/
-backend/docs/
+docs-dev/
+docs/superpowers/
 
 # OpenCode / agent artifacts
 .omo/
