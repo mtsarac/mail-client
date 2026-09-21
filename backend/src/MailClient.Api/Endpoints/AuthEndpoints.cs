@@ -1,3 +1,4 @@
+using MailClient.Api.OpenApi;
 using MailClient.Application;
 using MailClient.Application.Accounts;
 using MailClient.Application.Authentication;
@@ -35,13 +36,13 @@ public static class AuthEndpoints
             var access = tokens.Issue(rotation.Value.Session.MailAccountId);
             await audit.WriteAsync(rotation.Value.Session.MailAccountId, AuditActions.MailSessionRefreshed, "MailSession", rotation.Value.Session.Id.ToString(), null, correlation.CorrelationId, ct);
             return Results.Ok(new TokenResponse(access.Token, rotation.Value.Token, rotation.Value.Session.MailAccountId, access.ExpiresAt));
-        }).AllowAnonymous().WithName("RefreshSession").WithSummary("Rotate refresh session").Produces<TokenResponse>().ProducesProblem(401);
+        }).AllowAnonymous().WithName("RefreshSession").WithSummary("Rotate refresh session").WithDescription("Exchanges a refresh token for a new access token AND a new refresh token. The presented refresh token is revoked; store the new one.").Produces<TokenResponse>().ProblemCodes(401, "invalid_refresh_token");
         auth.MapPost("/logout", async (LogoutRequest request, MailSessionService sessions, AuditLogger audit, CorrelationContext correlation, CancellationToken ct) =>
         {
             if (!await sessions.RevokeAsync(request.RefreshToken, ct))
                 return Results.Problem(statusCode: 401, extensions: new Dictionary<string, object?> { ["code"] = "session_revoked" });
             await audit.WriteAsync(null, AuditActions.MailSessionRevoked, "MailSession", null, null, correlation.CorrelationId, ct);
             return Results.NoContent();
-        }).AllowAnonymous().WithName("LogoutSession").WithSummary("Revoke client session").Produces(204).ProducesProblem(401);
+        }).AllowAnonymous().WithName("LogoutSession").WithSummary("Revoke client session").WithDescription("Signs out one device by revoking the session behind the refresh token. Access tokens already issued stay valid until they expire.").Produces(204).ProblemCodes(401, "session_revoked");
     }
 }

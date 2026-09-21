@@ -1,3 +1,4 @@
+using MailClient.Api.OpenApi;
 using MailClient.Application;
 using MailClient.Application.Runtime;
 using MailClient.Domain;
@@ -18,7 +19,7 @@ public static class WhitelistManagementEndpoints
 {
     public static void MapWhitelistManagementEndpoints(this WebApplication app)
     {
-        var whitelist = app.MapGroup("/api/management/whitelist").AddEndpointFilter<ManagementApiKeyFilter>();
+        var whitelist = app.MapGroup("/api/management/whitelist").AddEndpointFilter<ManagementApiKeyFilter>().WithTags("Management");
 
         whitelist.MapGet("/", async (AppDbContext db, CancellationToken ct) =>
         {
@@ -27,7 +28,8 @@ public static class WhitelistManagementEndpoints
                 .Select(item => new AllowlistEmailResponse(item.Email, item.AddedAt))
                 .ToListAsync(ct);
             return Results.Ok(emails);
-        });
+        }).WithName("ListAllowlistEmails").WithSummary("List allowlisted emails").WithDescription("Requires the X-Management-Key header.")
+            .Produces<List<AllowlistEmailResponse>>().ProblemCodes(401, "management_unauthorized");
 
         whitelist.MapPost("/emails", async (AddAllowlistEmailsRequest request, AppDbContext db, IEmailAllowlistService allowlist, AuditLogger audit, CorrelationContext correlation, CancellationToken ct) =>
         {
@@ -64,7 +66,9 @@ public static class WhitelistManagementEndpoints
             if (added.Count > 0)
                 await audit.WriteAsync(null, AuditActions.AllowlistEmailAdded, "AllowlistedEmail", null, new { emails = added }, correlation.CorrelationId, ct);
             return Results.Ok(new AddAllowlistEmailsResponse(added));
-        });
+        }).WithName("AddAllowlistEmails").WithSummary("Add emails to the allowlist")
+            .WithDescription("Requires the X-Management-Key header. Duplicates and invalid values are skipped. When enforcement is on, re-enables a mailbox that was disabled for being removed.")
+            .Produces<AddAllowlistEmailsResponse>().ProducesValidationProblem().ProblemCodes(401, "management_unauthorized");
 
         whitelist.MapDelete("/emails/{email}", async (string email, AppDbContext db, IEmailAllowlistService allowlist, AuditLogger audit, CorrelationContext correlation, CancellationToken ct) =>
         {
@@ -91,6 +95,8 @@ public static class WhitelistManagementEndpoints
             await db.SaveChangesAsync(ct);
             await audit.WriteAsync(null, AuditActions.AllowlistEmailRemoved, "AllowlistedEmail", entry.Id.ToString(), new { email = entry.Email }, correlation.CorrelationId, ct);
             return Results.NoContent();
-        });
+        }).WithName("RemoveAllowlistEmail").WithSummary("Remove an email from the allowlist")
+            .WithDescription("Requires the X-Management-Key header. When enforcement is on, immediately disables that mailbox.")
+            .Produces(204).Produces(404).ProblemCodes(401, "management_unauthorized");
     }
 }

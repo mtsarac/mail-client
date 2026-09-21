@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using MailClient.Api.OpenApi;
 using MailClient.Application;
 using MailClient.Application.Runtime;
 using MailClient.Infrastructure.Observability;
@@ -11,12 +12,14 @@ public static class ManagementEndpoints
 {
     public static void MapManagementEndpoints(this WebApplication app)
     {
-        var management = app.MapGroup("/api/management/runtime-settings").AddEndpointFilter<ManagementApiKeyFilter>();
+        var management = app.MapGroup("/api/management/runtime-settings").AddEndpointFilter<ManagementApiKeyFilter>().WithTags("Management");
         management.MapGet("/", async (IRuntimeSettingsStore store, CancellationToken cancellationToken) =>
         {
             var snapshot = await store.GetAsync(cancellationToken);
             return Results.Ok(new RuntimeSettingsResponse(snapshot.Settings, snapshot.Version, snapshot.UpdatedAt));
-        });
+        }).WithName("GetRuntimeSettings").WithSummary("Get runtime settings")
+            .WithDescription("Requires the X-Management-Key header. Returns the current settings and their `version`.")
+            .Produces<RuntimeSettingsResponse>().ProblemCodes(401, "management_unauthorized");
         management.MapPut("/", async (RuntimeSettingsUpdateRequest request, IRuntimeSettingsStore store, AuditLogger audit, CorrelationContext correlation, CancellationToken cancellationToken) =>
         {
             var before = await store.GetAsync(cancellationToken);
@@ -28,7 +31,9 @@ public static class ManagementEndpoints
                 changedSections = ChangedSections(before.Settings, after.Settings)
             }, correlation.CorrelationId, cancellationToken);
             return Results.Ok(new RuntimeSettingsResponse(after.Settings, after.Version, after.UpdatedAt));
-        });
+        }).WithName("ReplaceRuntimeSettings").WithSummary("Replace runtime settings")
+            .WithDescription("Requires the X-Management-Key header. Full replace guarded by `expectedVersion` (optimistic concurrency); applies without a restart.")
+            .Produces<RuntimeSettingsResponse>().ProblemCodes(400, "runtime_settings_invalid").ProblemCodes(401, "management_unauthorized").ProblemCodes(409, "runtime_settings_conflict");
     }
 
     private static string[] ChangedSections(RuntimeSettings before, RuntimeSettings after)

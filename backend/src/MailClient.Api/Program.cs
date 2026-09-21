@@ -9,6 +9,7 @@ using MailClient.Api;
 using MailClient.Api.Auth;
 using MailClient.Api.Endpoints;
 using MailClient.Api.Observability;
+using MailClient.Api.OpenApi;
 using MailClient.Application;
 using MailClient.Application.Authentication;
 using MailClient.Application.Accounts;
@@ -41,7 +42,6 @@ using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Amazon.S3;
-using Microsoft.OpenApi;
 using Serilog;
 using Serilog.Formatting.Json;
 
@@ -76,22 +76,7 @@ builder.Services.AddProblemDetails(options => options.CustomizeProblemDetails = 
     if (!string.IsNullOrEmpty(correlation?.CorrelationId))
         context.ProblemDetails.Extensions["correlationId"] = correlation.CorrelationId;
 });
-builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen(options =>
-{
-    options.SwaggerDoc("v2", new OpenApiInfo
-    {
-        Title = "Mail Client API",
-        Version = "v2",
-        Description = """
-            MailAccount-principal API. Automatic discovery is preferred; manual setup remains SSRF/TLS/auth validated. Credentials are never returned.
-            Discovery failure example (HTTP 422): { "title": "Mail server discovery failed.", "status": 422, "code": "mail_discovery_failed", "manualSetupAvailable": true }.
-            Manual connect example: { "email": "person@example.com", "username": "person@example.com", "authentication": { "type": "Password", "password": "ExamplePassword123!" }, "imap": { "host": "imap.example.com", "port": 993, "security": "SslOnConnect" }, "smtp": { "host": "smtp.example.com", "port": 465, "security": "SslOnConnect" } }.
-            """
-    });
-    options.AddSecurityDefinition("bearer", new OpenApiSecurityScheme { Type = SecuritySchemeType.Http, Scheme = "bearer", BearerFormat = "JWT" });
-    options.OperationFilter<IdempotencyKeyOperationFilter>();
-});
+builder.Services.AddMailClientSwagger();
 var isProduction = !builder.Environment.IsDevelopment() && !builder.Environment.IsEnvironment("Test");
 StartupConfig.Validate(
     builder.Configuration.GetConnectionString("Default"),
@@ -327,7 +312,8 @@ app.UseAuthentication();
 app.UseMiddleware<AuthenticatedLogEnrichmentMiddleware>();
 app.UseRateLimiter();
 app.UseAuthorization();
-if (app.Environment.IsDevelopment()) { app.UseSwagger(); app.UseSwaggerUI(options => options.SwaggerEndpoint("/swagger/v2/swagger.json", "Mail Client v2")); }
+if (app.Environment.IsDevelopment())
+    app.UseMailClientSwaggerUi();
 
 app.MapAccountEndpoints();
 app.MapOAuthEndpoints();
