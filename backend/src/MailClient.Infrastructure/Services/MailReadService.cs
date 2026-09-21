@@ -30,6 +30,10 @@ public sealed class MailReadService(
         if (mail is null)
             return null;
 
+        var isFromMe = await db.MailFolders.AnyAsync(folder => folder.Id == mail.MailFolderId
+                && (folder.FolderType == MailFolderType.Sent || folder.FolderType == MailFolderType.Drafts), cancellationToken)
+            || await db.MailAccounts.AnyAsync(account => account.Id == accountId
+                && account.NormalizedEmailAddress == mail.FromAddress.ToLower(), cancellationToken);
         var body = HtmlMailBodyRenderer.Render(mail, mail.BodyHtml);
         var bodyContract = new MailBodyResponse(body.Html, body.HasRemoteContent, body.RemoteContentHosts, body.TrackingPixelHosts);
 
@@ -70,7 +74,9 @@ public sealed class MailReadService(
                     attachment.IsInline,
                     attachment.ContentId,
                     attachment.ContentDisposition))
-                .ToList());
+                .ToList(),
+            mail.ConversationId,
+            isFromMe);
     }
 
     private static List<MailParticipantResponse> ToParticipantResponses(IEnumerable<MailParticipant> participants, ParticipantType type) =>

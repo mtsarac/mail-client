@@ -78,14 +78,14 @@ arayüzüne bakın (`/swagger`, yalnızca Development). Mobil istemci için örn
 | PATCH | `/api/mails/{id}/read` | bearer | Okundu durumunu ayarlar (body) |
 | POST | `/api/mails/{id}/{op}` | bearer | `op`: read, unread, star, unstar, trash, restore, archive, spam, not-spam (204, gövdesiz) |
 | POST | `/api/mails/{id}/move · copy` | bearer | Klasöre taşır/kopyalar (body) |
-| POST | `/api/mails/bulk/{action}` | bearer | En fazla 100 `mailIds` üzerinde toplu işlem; `read`, `unread`, `archive`, `trash`, `move` |
+| POST | `/api/mails/bulk/{action}` | bearer | En fazla 100 `mailIds` üzerinde toplu işlem; `read`, `unread`, `star`, `unstar`, `archive`, `trash`, `restore`, `spam`, `not-spam`, `move` |
 
 ### Conversations
 
 | Metot | Yol | Yetki | Açıklama |
 |---|---|---|---|
 | GET | `/api/conversations` | bearer | Konuşmaları yeniden eskiye listeler (`page`, `pageSize` ≤ 100) |
-| GET | `/api/conversations/{id}` | bearer | Konuşma ve mesajları |
+| GET | `/api/conversations/{id}` | bearer | Konuşma ve mesajları (`includeTrash`, `include=body`) |
 
 ### Devices
 

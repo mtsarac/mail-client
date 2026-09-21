@@ -98,7 +98,7 @@ public static class IncomingMailMapper
             from.Count > 0 ? from[0].DisplayName : string.Empty,
             to.Count > 0 ? to[0].Address : string.Empty,
             message.HtmlBody ?? string.Empty,
-            message.TextBody ?? string.Empty,
+            message.TextBody ?? (message.HtmlBody is { Length: > 0 } html ? HtmlToPlainText(html) : string.Empty),
             sentAt,
             internalDate ?? sentAt,
             receivedAt,
@@ -189,5 +189,13 @@ public static class IncomingMailMapper
             inline,
             MailFieldNormalizer.ContentId(part.ContentId),
             inline ? ContentDisposition.Inline : ContentDisposition.Attachment);
+    }
+
+    private static string HtmlToPlainText(string html)
+    {
+        var document = new AngleSharp.Html.Parser.HtmlParser().ParseDocument(html);
+        foreach (var element in document.QuerySelectorAll("script,style,head").ToList())
+            element.Remove();
+        return System.Text.RegularExpressions.Regex.Replace(document.Body?.TextContent ?? "", @"[ \t]*\r?\n\s*", "\n").Trim();
     }
 }

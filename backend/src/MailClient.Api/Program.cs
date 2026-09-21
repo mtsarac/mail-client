@@ -252,6 +252,12 @@ builder.Services.AddAuthorization();
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = 429;
+    options.OnRejected = (context, _) =>
+    {
+        if (context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter))
+            context.HttpContext.Response.Headers.RetryAfter = ((int)Math.Ceiling(retryAfter.TotalSeconds)).ToString();
+        return ValueTask.CompletedTask;
+    };
     options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context => RateLimitPartition.GetFixedWindowLimiter(
         MailAccountClaims.GetAccountIdOrNull(context.User) ?? context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
         _ => new FixedWindowRateLimiterOptions { PermitLimit = 60, Window = TimeSpan.FromMinutes(1) }));

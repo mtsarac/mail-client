@@ -15,7 +15,7 @@ namespace MailClient.Api.Endpoints;
 
 public sealed record ReadRequest(bool IsRead);
 public sealed record FolderOperationRequest(Guid FolderId);
-public sealed record SendMailResponse(bool Sent, bool SentCopySaved, string? Warning);
+public sealed record SendMailResponse(bool Sent, bool SentCopySaved, string? Warning, Guid? MailId, Guid? ConversationId);
 public sealed record BulkMailOperationRequest(IReadOnlyList<Guid> MailIds, Guid? FolderId = null);
 public sealed record BulkMailOperationItemResponse(Guid MailId, bool Success, string? Code);
 public sealed record BulkMailOperationResponse(IReadOnlyList<BulkMailOperationItemResponse> Results);
@@ -112,7 +112,7 @@ public static class MailEndpoints
                 .Select(item => new BulkMailOperationItemResponse(item.MailId, item.Success, item.Success ? null : MapOperationError(item.Error).Code))
                 .ToList()));
         }).WithTags(OperationsTag).WithName("BulkMailOperation").WithSummary("Apply a mail operation to multiple mails")
-            .WithDescription("action: read, unread, archive, trash, or move (move requires folderId). 1-100 ids. Each mail is applied independently, so one failure does not block the rest of the batch — always 200 for a valid request; check per-item `success`/`code`.")
+            .WithDescription("action: read, unread, star, unstar, archive, trash, restore, spam, not-spam, or move (move requires folderId). 1-100 ids. Each mail is applied independently, so one failure does not block the rest of the batch — always 200 for a valid request; check per-item `success`/`code`.")
             .Produces<BulkMailOperationResponse>().ProducesValidationProblem().Produces(404);
         api.MapGet("/mails/{mailId:guid}/attachments/{attachmentId:guid}", async (Guid mailId, Guid attachmentId, ICurrentMailAccount current, AppDbContext db, IFileStorage storage, CancellationToken ct) =>
         {
@@ -144,7 +144,7 @@ public static class MailEndpoints
                 IdempotencyKey = key
             };
             var result = await sender.SendAsync(current.MailAccountId, command, request.HttpContext.RequestServices.GetRequiredService<CorrelationContext>().CorrelationId, ct);
-            return Results.Ok(new SendMailResponse(result.Sent, result.SentCopySaved, result.Warning));
+            return Results.Ok(new SendMailResponse(result.Sent, result.SentCopySaved, result.Warning, result.MailId, result.ConversationId));
         }).WithTags(ComposeTag).WithName("SendMail").WithSummary("Send mail idempotently").WithDescription("multipart/form-data: to, subject, bodyHtml and/or bodyText, up to 20 attachments. Idempotency-Key header is required; retrying with the same key never sends twice.")
             .Accepts<IFormCollection>("multipart/form-data").Produces<SendMailResponse>()
             .ProblemCodes(400, "recipient_required", "invalid_recipient", "body_required", "body_too_large", "too_many_attachments", "attachment_too_large", "idempotency_key_required", "idempotency_key_too_long")
@@ -182,6 +182,11 @@ public static class MailEndpoints
         "archive" => MailOperationKind.Archive,
         "trash" => MailOperationKind.Trash,
         "move" => MailOperationKind.Move,
+        "star" => MailOperationKind.Star,
+        "unstar" => MailOperationKind.Unstar,
+        "spam" => MailOperationKind.Spam,
+        "not-spam" => MailOperationKind.NotSpam,
+        "restore" => MailOperationKind.Restore,
         _ => null
     };
 

@@ -78,14 +78,14 @@ mobile client: [Flutter guide](../flutter-api-integration.md) (Turkish).
 | PATCH | `/api/mails/{id}/read` | bearer | Set read state (body) |
 | POST | `/api/mails/{id}/{op}` | bearer | `op`: read, unread, star, unstar, trash, restore, archive, spam, not-spam (204, no body) |
 | POST | `/api/mails/{id}/move · copy` | bearer | Move/copy to a folder (body) |
-| POST | `/api/mails/bulk/{action}` | bearer | Bulk op on up to 100 `mailIds`; `read`, `unread`, `archive`, `trash`, `move` |
+| POST | `/api/mails/bulk/{action}` | bearer | Bulk op on up to 100 `mailIds`; `read`, `unread`, `star`, `unstar`, `archive`, `trash`, `restore`, `spam`, `not-spam`, `move` |
 
 ### Conversations
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | GET | `/api/conversations` | bearer | List threads, newest first (`page`, `pageSize` ≤ 100) |
-| GET | `/api/conversations/{id}` | bearer | Thread with its messages |
+| GET | `/api/conversations/{id}` | bearer | Thread with its messages (`includeTrash`, `include=body`) |
 
 ### Devices
 

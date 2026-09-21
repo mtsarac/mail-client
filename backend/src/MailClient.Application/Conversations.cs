@@ -21,7 +21,10 @@ public sealed record ConversationMessageResponse(
     DateTime SentAt,
     DateTime ReceivedAt,
     bool IsRead,
-    bool HasAttachments);
+    bool HasAttachments,
+    bool IsFromMe = false,
+    string? BodyText = null,
+    MailClient.Application.Mail.MailBodyResponse? Body = null);
 
 public sealed record ConversationDetailResponse(
     Guid Id,
@@ -36,7 +39,7 @@ public static class ConversationEngine
         var value = subject?.Trim() ?? string.Empty;
         value = Regex.Replace(
             value,
-            @"^(?:(?:RE|FWD|FW|SV|TR|ENC|ANTW|VV|VO)\s*:\s*)+",
+            @"^(?:(?:RE|FWD|FW|SV|TR|ENC|ANTW|VV|VO|YNT|İLT|ILT|AW|WG)\s*:\s*)+",
             string.Empty,
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
             TimeSpan.FromSeconds(1));
