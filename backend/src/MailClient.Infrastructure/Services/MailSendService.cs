@@ -274,7 +274,7 @@ public sealed class MailSendService(
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "Sent copy could not be resolved after send for account {AccountId}.", accountId);
+            logger.LogWarning(ex, "Sent copy could not be resolved after send.");
             return (null, null);
         }
     }
