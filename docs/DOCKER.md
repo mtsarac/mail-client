@@ -13,7 +13,7 @@ self-contained EF Core **migration bundle**:
 - `migrator` — just the migration bundle executable, no SDK/ASP.NET. Applies
   pending EF Core migrations and exits. Run it as a separate step, never inside
   the API process (avoids running `Database.Migrate()` at API startup, which the
-  project's migration strategy in `docs/Mail-Client-Backend-Ana-Geliştirme-Planı.md`
+  project's migration strategy
   treats as a deliberate, reviewable step rather than something silently baked
   into app boot).
 

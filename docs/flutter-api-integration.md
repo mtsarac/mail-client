@@ -1,6 +1,6 @@
 # Mail Client API — Flutter Entegrasyon Rehberi
 
-> İç kullanım · Flutter istemci ekibi için. Bu doküman `docs/` altında tutulur (gitignore'lu, repoya commit edilmez).
+> Flutter istemci ekibi için entegrasyon rehberi.
 
 Bir IMAP/SMTP posta istemcisi API'si. Bir hesap aynı anda birden çok cihazdan oturum açabilir — her cihaz kendi refresh token'ıyla bağımsız bir `MailSession` alır, biri diğerini geçersiz kılmaz. Bu rehber, Flutter uygulamasının kimlik doğrulamadan gönderim akışına kadar backend'e doğru şekilde bağlanması için gereken her uç noktayı, alan adını ve hata kodunu kapsar.
 
@@ -734,4 +734,4 @@ Production ortamında, belirlenmiş bir email listesi dışındaki kullanıcıla
 
 ---
 
-*Mail Client API — v2 · Flutter entegrasyon rehberi · `docs/` altında tutulur, repoya commit edilmez.*
+*Mail Client API — v2 · Flutter entegrasyon rehberi*
