@@ -67,7 +67,7 @@
 
 ## Change boundaries
 
-* Keep secrets and private planning artifacts out of commits; `docs/`, `backend/docs/`, `secrets/`, `.omo/`, and `.worktrees/` are intentionally ignored.
+* Keep secrets and private planning artifacts out of commits; `docs-dev/`, `docs/superpowers/`, `secrets/`, `.omo/`, and `.worktrees/` are intentionally ignored.
 * Do not touch frontend/Flutter unless explicitly requested.
 * Keep changes scoped to the requested task.
 * Do not use subagents unless explicitly requested.
