@@ -41,7 +41,8 @@ public sealed record MailListItemResponse(
     string ToAddress,
     bool IsRead,
     bool HasAttachments,
-    DateTime ReceivedAt);
+    DateTime ReceivedAt,
+    Guid? ConversationId = null);
 
 public sealed record MailListResponse(
     IReadOnlyList<MailListItemResponse> Items,
@@ -90,4 +91,6 @@ public sealed record MailDetailResponse(
     DateTime ReceivedAt,
     DateTime InternalDate,
     IReadOnlyList<MailHeaderResponse> Headers,
-    IReadOnlyList<AttachmentResponse> Attachments);
+    IReadOnlyList<AttachmentResponse> Attachments,
+    Guid? ConversationId = null,
+    bool IsFromMe = false);

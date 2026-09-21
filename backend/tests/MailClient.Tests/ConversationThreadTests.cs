@@ -15,6 +15,9 @@ public sealed class ConversationThreadTests
     [InlineData("FW: Mail: özet", "Mail: özet")]
     [InlineData("RE: FWD: SV: TR: zincir", "zincir")]
     [InlineData("Vv: küçük harf", "küçük harf")]
+    [InlineData("Ynt: konu", "konu")]
+    [InlineData("İLT: konu", "konu")]
+    [InlineData("AW: WG: konu", "konu")]
     [InlineData("  Yıllık   Rapor  ", "Yıllık Rapor")]
     [InlineData("Sorun: gündüz", "Sorun: gündüz")]
     public void NormalizeSubject_RemovesPrefixes_AndCollapsesWhitespace(string input, string expected)

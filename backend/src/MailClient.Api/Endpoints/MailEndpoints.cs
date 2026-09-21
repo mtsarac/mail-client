@@ -15,7 +15,7 @@ namespace MailClient.Api.Endpoints;
 
 public sealed record ReadRequest(bool IsRead);
 public sealed record FolderOperationRequest(Guid FolderId);
-public sealed record SendMailResponse(bool Sent, bool SentCopySaved, string? Warning);
+public sealed record SendMailResponse(bool Sent, bool SentCopySaved, string? Warning, Guid? MailId, Guid? ConversationId);
 public sealed record BulkMailOperationRequest(IReadOnlyList<Guid> MailIds, Guid? FolderId = null);
 public sealed record BulkMailOperationItemResponse(Guid MailId, bool Success, string? Code);
 public sealed record BulkMailOperationResponse(IReadOnlyList<BulkMailOperationItemResponse> Results);
@@ -144,7 +144,7 @@ public static class MailEndpoints
                 IdempotencyKey = key
             };
             var result = await sender.SendAsync(current.MailAccountId, command, request.HttpContext.RequestServices.GetRequiredService<CorrelationContext>().CorrelationId, ct);
-            return Results.Ok(new SendMailResponse(result.Sent, result.SentCopySaved, result.Warning));
+            return Results.Ok(new SendMailResponse(result.Sent, result.SentCopySaved, result.Warning, result.MailId, result.ConversationId));
         }).WithTags(ComposeTag).WithName("SendMail").WithSummary("Send mail idempotently").WithDescription("multipart/form-data: to, subject, bodyHtml and/or bodyText, up to 20 attachments. Idempotency-Key header is required; retrying with the same key never sends twice.")
             .Accepts<IFormCollection>("multipart/form-data").Produces<SendMailResponse>()
             .ProblemCodes(400, "recipient_required", "invalid_recipient", "body_required", "body_too_large", "too_many_attachments", "attachment_too_large", "idempotency_key_required", "idempotency_key_too_long")

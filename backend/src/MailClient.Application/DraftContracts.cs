@@ -27,4 +27,4 @@ public sealed record DraftLookupResult(MailDetailResponse? Draft, DraftLookupErr
 public sealed record DraftWriteResult(bool Created, Guid? MailId, bool ReconciliationPending, string? Warning);
 
 public sealed record DraftDeleteResult(bool Deleted, string? Warning);
-public sealed record DraftSendResult(bool Sent, bool SentCopySaved, bool DraftRemoved, string? Warning);
+public sealed record DraftSendResult(bool Sent, bool SentCopySaved, bool DraftRemoved, string? Warning, Guid? MailId = null, Guid? ConversationId = null);

@@ -18,7 +18,7 @@ using MimeKit;
 
 namespace MailClient.Infrastructure.Services;
 
-public sealed record SendMailResult(bool Sent, bool SentCopySaved, string? Warning);
+public sealed record SendMailResult(bool Sent, bool SentCopySaved, string? Warning, Guid? MailId = null, Guid? ConversationId = null);
 
 public sealed class MailSendService(
     AppDbContext db,
@@ -27,7 +27,8 @@ public sealed class MailSendService(
     RuntimeOperationSettings operationSettings,
     AuditLogger audit,
     ILogger<MailSendService> logger,
-    MailClientMetrics? metrics = null)
+    MailClientMetrics? metrics = null,
+    ISyncExecutor? sync = null)
 {
     public MailSendService(
         AppDbContext db,
@@ -232,7 +233,8 @@ public sealed class MailSendService(
             await transport.AppendToSentAsync(account, sentFullName, message, cancellationToken);
             if (operation is not null)
                 await operations.TryCompleteAsync(operation.Id, SendOperationStatus.SentWithCopy, true, null, CancellationToken.None);
-            return new SendMailResult(true, true, null);
+            var (mailId, conversationId) = await FindSentCopyAsync(account.Id, sentFullName, message.MessageId, cancellationToken);
+            return new SendMailResult(true, true, null, mailId, conversationId);
         }
         catch (OperationCanceledException)
         {
@@ -245,6 +247,35 @@ public sealed class MailSendService(
             if (operation is not null)
                 await operations.TryCompleteAsync(operation.Id, SendOperationStatus.Sent, false, "Message was sent, but the Sent copy could not be stored.", CancellationToken.None);
             return new SendMailResult(true, false, "Message was sent, but the Sent copy could not be stored.");
+        }
+    }
+
+    /// <summary>Best effort: pulls the Sent folder so the reply is queryable at once. Null ids just mean sync will catch up.</summary>
+    private async Task<(Guid? MailId, Guid? ConversationId)> FindSentCopyAsync(Guid accountId, string sentFullName, string? messageId, CancellationToken cancellationToken)
+    {
+        if (sync is null || messageId is null)
+            return (null, null);
+        try
+        {
+            var folderId = await db.MailFolders
+                .Where(folder => folder.MailAccountId == accountId && folder.FullName == sentFullName)
+                .Select(folder => folder.Id)
+                .SingleAsync(cancellationToken);
+            await sync.SyncFolderAsync(accountId, folderId, cancellationToken);
+            var found = await db.Mails.AsNoTracking()
+                .Where(mail => mail.MailAccountId == accountId && mail.MailFolderId == folderId && mail.MessageId == messageId)
+                .Select(mail => new { mail.Id, mail.ConversationId })
+                .FirstOrDefaultAsync(cancellationToken);
+            return (found?.Id, found?.ConversationId);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Sent copy could not be resolved after send for account {AccountId}.", accountId);
+            return (null, null);
         }
     }
 

@@ -47,7 +47,7 @@ public static class ConversationEndpoints
             return Results.Ok(new ConversationListResponse(items, number, size, total));
         }).WithName("ListConversations").WithSummary("List account conversations").WithDescription("Newest first. pageSize is capped at 100.").Produces<ConversationListResponse>();
 
-        api.MapGet("/conversations/{id:guid}", async (Guid id, ICurrentMailAccount current, AppDbContext db, CancellationToken ct) =>
+        api.MapGet("/conversations/{id:guid}", async (Guid id, bool? includeTrash, ICurrentMailAccount current, AppDbContext db, CancellationToken ct) =>
         {
             var accountId = current.MailAccountId;
             var conversation = await db.Conversations
@@ -55,9 +55,15 @@ public static class ConversationEndpoints
                 .SingleOrDefaultAsync(item => item.Id == id && item.MailAccountId == accountId, ct);
             if (conversation is null)
                 return Results.NotFound();
+            var self = await db.MailAccounts.Where(a => a.Id == accountId).Select(a => a.NormalizedEmailAddress).SingleAsync(ct);
+            var folderTypes = db.MailFolders.Where(folder => folder.MailAccountId == accountId);
+            var noTrash = includeTrash == false;
             var messages = await db.Mails
                 .AsNoTracking()
-                .Where(mail => mail.ConversationId == id && mail.MailAccountId == accountId)
+                .Where(mail => mail.ConversationId == id && mail.MailAccountId == accountId
+                    && !(noTrash && folderTypes.Any(folder => folder.Id == mail.MailFolderId
+                        && (folder.FolderType == MailClient.Domain.Enums.MailFolderType.Trash
+                            || folder.FolderType == MailClient.Domain.Enums.MailFolderType.Junk))))
                 .OrderBy(mail => mail.SentAt)
                 .ThenBy(mail => mail.Uid)
                 .Select(mail => new ConversationMessageResponse(
@@ -69,9 +75,13 @@ public static class ConversationEndpoints
                     mail.SentAt,
                     mail.ReceivedAt,
                     mail.IsRead,
-                    mail.HasAttachments))
+                    mail.HasAttachments,
+                    folderTypes.Any(folder => folder.Id == mail.MailFolderId
+                        && (folder.FolderType == MailClient.Domain.Enums.MailFolderType.Sent
+                            || folder.FolderType == MailClient.Domain.Enums.MailFolderType.Drafts))
+                        || mail.FromAddress.ToLower() == self))
                 .ToListAsync(ct);
             return Results.Ok(new ConversationDetailResponse(conversation.Id, conversation.NormalizedSubject, messages));
-        }).WithName("GetConversation").WithSummary("Get conversation with messages").Produces<ConversationDetailResponse>().Produces(404);
+        }).WithName("GetConversation").WithSummary("Get conversation with messages").WithDescription("Messages from all folders. includeTrash=false omits Trash and Junk. isFromMe is true for Sent/Drafts mails or the account address.").Produces<ConversationDetailResponse>().Produces(404);
     }
 }

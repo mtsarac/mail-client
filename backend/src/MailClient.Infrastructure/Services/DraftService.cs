@@ -93,7 +93,7 @@ public sealed class DraftService(
             try
             {
                 await MoveToTrashAsync(accountId, draftId, correlationId, CancellationToken.None);
-                return new(true, result.SentCopySaved, true, result.Warning);
+                return new(true, result.SentCopySaved, true, result.Warning, result.MailId, result.ConversationId);
             }
             catch (Exception ex)
             {
@@ -101,7 +101,7 @@ public sealed class DraftService(
                 var warning = string.IsNullOrWhiteSpace(result.Warning)
                     ? "Message was sent, but draft cleanup failed."
                     : $"{result.Warning} Draft cleanup failed.";
-                return new(true, result.SentCopySaved, false, warning);
+                return new(true, result.SentCopySaved, false, warning, result.MailId, result.ConversationId);
             }
         }
         catch
