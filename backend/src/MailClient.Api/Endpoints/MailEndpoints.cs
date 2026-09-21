@@ -112,7 +112,7 @@ public static class MailEndpoints
                 .Select(item => new BulkMailOperationItemResponse(item.MailId, item.Success, item.Success ? null : MapOperationError(item.Error).Code))
                 .ToList()));
         }).WithTags(OperationsTag).WithName("BulkMailOperation").WithSummary("Apply a mail operation to multiple mails")
-            .WithDescription("action: read, unread, archive, trash, or move (move requires folderId). 1-100 ids. Each mail is applied independently, so one failure does not block the rest of the batch — always 200 for a valid request; check per-item `success`/`code`.")
+            .WithDescription("action: read, unread, star, unstar, archive, trash, restore, spam, not-spam, or move (move requires folderId). 1-100 ids. Each mail is applied independently, so one failure does not block the rest of the batch — always 200 for a valid request; check per-item `success`/`code`.")
             .Produces<BulkMailOperationResponse>().ProducesValidationProblem().Produces(404);
         api.MapGet("/mails/{mailId:guid}/attachments/{attachmentId:guid}", async (Guid mailId, Guid attachmentId, ICurrentMailAccount current, AppDbContext db, IFileStorage storage, CancellationToken ct) =>
         {
@@ -182,6 +182,11 @@ public static class MailEndpoints
         "archive" => MailOperationKind.Archive,
         "trash" => MailOperationKind.Trash,
         "move" => MailOperationKind.Move,
+        "star" => MailOperationKind.Star,
+        "unstar" => MailOperationKind.Unstar,
+        "spam" => MailOperationKind.Spam,
+        "not-spam" => MailOperationKind.NotSpam,
+        "restore" => MailOperationKind.Restore,
         _ => null
     };
 

@@ -17,14 +17,14 @@ namespace MailClient.Api.Endpoints;
 public sealed record RefreshFoldersResponse(int Folders);
 
 /// <summary>Documented shape of a folder item; the response may carry additional null/empty navigation fields.</summary>
-public sealed record MailFolderResponse(Guid Id, Guid MailAccountId, string Name, string FullName, MailClient.Domain.Enums.MailFolderType FolderType, uint UidValidity, bool IsSyncEnabled, bool IsAvailable);
+public sealed record MailFolderResponse(Guid Id, Guid MailAccountId, string Name, string FullName, MailClient.Domain.Enums.MailFolderType FolderType, uint UidValidity, bool IsSyncEnabled, bool IsAvailable, int UnreadCount = 0, int TotalCount = 0);
 
 public static class FolderEndpoints
 {
     public static void MapFolderEndpoints(this WebApplication app)
     {
         var api = app.MapGroup("/api").RequireAuthorization().WithTags("Folders");
-        api.MapGet("/folders", async (ICurrentMailAccount current, AppDbContext db, CancellationToken ct) => Results.Ok(await db.MailFolders.Where(x => x.MailAccountId == current.MailAccountId).ToListAsync(ct))).WithName("ListFolders").WithSummary("List mailbox folders").WithDescription("Cached folders of the current mailbox. Use `id` as folderId elsewhere. Empty until folders are refreshed.").Produces<List<MailFolderResponse>>();
+        api.MapGet("/folders", async (ICurrentMailAccount current, AppDbContext db, CancellationToken ct) => Results.Ok(await db.MailFolders.AsNoTracking().Where(x => x.MailAccountId == current.MailAccountId).Select(x => new MailFolderResponse(x.Id, x.MailAccountId, x.Name, x.FullName, x.FolderType, x.UidValidity, x.IsSyncEnabled, x.IsAvailable, db.Mails.Count(m => m.MailFolderId == x.Id && !m.IsRead && !m.Deleted), db.Mails.Count(m => m.MailFolderId == x.Id && !m.Deleted))).ToListAsync(ct))).WithName("ListFolders").WithSummary("List mailbox folders").WithDescription("Cached folders of the current mailbox. Use `id` as folderId elsewhere. Empty until folders are refreshed.").Produces<List<MailFolderResponse>>();
         api.MapPost("/folders/refresh", async (ICurrentMailAccount current, AccountConnectionService connector, AuditLogger audit, CorrelationContext correlation, CancellationToken ct) =>
         {
             var count = await connector.RefreshFoldersAsync(current.MailAccountId, ct);

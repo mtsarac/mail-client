@@ -47,7 +47,7 @@ Bir posta kutusunu bağlamaktan ilk mail listesini çekmeye kadar gerçek istek 
 
 **2. Idempotency-Key zorunlu.** Mail gönderen iki uç (`/mails/send`, `/drafts/{id}/send`) `Idempotency-Key` header'ı ister; yoksa `400 idempotency_key_required`. Uygulama içi bir UUID üret, aynı gönderim denemesinde aynı key'i tekrar kullan (retry'da çift mail gitmesin diye). Aynı key + aynı gövdeyle tekrar çağrı, gönderimi tekrarlamaz — kayıtlı sonuç aynen döner.
 
-**3. Hız sınırı.** Hesap (girişliyse) ya da IP başına dakikada 60 istek (sabit pencere). Aşımda `429` döner, gövdesiz — kısa bir backoff uygula. `/health`, `/metrics` hariçtir.
+**3. Hız sınırı.** Hesap (girişliyse) ya da IP başına dakikada 60 istek (sabit pencere). Aşımda `429` döner, gövdesiz; `Retry-After` header'ı (saniye) beklenmesi gereken süreyi verir — backoff'u ona göre yap. `/health`, `/metrics` hariçtir.
 
 **4. Sayfalama.** `/mails`, `/search`, `/conversations` `page` (1'den başlar) ve `pageSize` alır, `{ items, page, pageSize, total }` zarfıyla döner. `pageSize` sunucuda 100'e kırpılır. `/folders`, `/account/sessions` sayfalanmaz (düz dizi).
 
@@ -306,9 +306,13 @@ Hesabın tüm klasörlerini döner (dizi, sayfalama yok).
   "folderType": "Inbox",
   "uidValidity": 1789380474,
   "isSyncEnabled": true,
-  "isAvailable": true
+  "isAvailable": true,
+  "unreadCount": 3,
+  "totalCount": 142
 }
 ```
+
+`unreadCount` / `totalCount` silinmiş işaretli (`deleted`) mailler hariç, sunucudaki önbellekten sayılır — drawer rozetleri için sayfalardan hesap yapma, bunları kullan.
 
 `folderType` filtrelemede kullanışlı: `Inbox · Sent · Drafts · Trash · Junk · Archive · Custom`. `isAvailable: false` olan klasörler sunucudan silinmiş demektir, UI'da gizle.
 
@@ -339,7 +343,7 @@ Belirli bir klasörün mail senkronizasyonunu kuyruğa alır (pull-to-refresh i�
 ### `GET /api/mails`
 **Auth:** Bearer
 
-Hesap kapsamında liste, en yeni önce (`receivedAt`). Query: `folderId`, `isRead`, `hasAttachments`, `search`, `page`, `pageSize` (üst sınır 100). Liste öğesinde önizleme/yıldız bilgisi yoktur; `flagged` gibi alanlar için detay ya da `/search?flagged=` kullan. Veri sunucudaki önbellekten gelir; taze içerik için önce `POST /folders/{id}/sync`.
+Hesap kapsamında liste, en yeni önce (`receivedAt`). Query: `folderId`, `isRead`, `hasAttachments`, `search`, `page`, `pageSize` (üst sınır 100). Liste öğesi `snippet` (gövdenin ilk ~120 karakteri, düz metin), `flagged`, `answered`, `attachmentCount` ve `conversationId` taşır. Veri sunucudaki önbellekten gelir; taze içerik için önce `POST /folders/{id}/sync`.
 
 ```json
 // 200 OK
@@ -350,7 +354,10 @@ Hesap kapsamında liste, en yeni önce (`receivedAt`). Query: `folderId`, `isRea
     "fromAddress": "sender@example.com", "fromDisplayName": "Gönderen",
     "toAddress": "person@example.com",
     "isRead": true, "hasAttachments": false,
-    "receivedAt": "2026-09-17T01:56:58Z"
+    "receivedAt": "2026-09-17T01:56:58Z",
+    "conversationId": "806acf4c-…",
+    "snippet": "Merhaba, toplantı notları ekte…",
+    "flagged": false, "answered": false, "attachmentCount": 0
   }],
   "page": 1, "pageSize": 20, "total": 142
 }
@@ -380,6 +387,7 @@ Tam mail içeriği: gövde, katılımcılar, header'lar, ekler.
   "isRead": true, "answered": false, "flagged": false, "draft": false,
   "deleted": false, "recent": false, "hasAttachments": true,
   "sentAt": "…", "receivedAt": "…", "internalDate": "…",
+  "conversationId": "806acf4c-…", "isFromMe": false,
   "headers": [{ "name": "X-Mailer", "value": "…" }],
   "attachments": [{
     "id": "…", "fileName": "rapor.pdf", "contentType": "application/pdf",
@@ -388,7 +396,7 @@ Tam mail içeriği: gövde, katılımcılar, header'lar, ekler.
 }
 ```
 
-`body.html` sunucuda üretilen render edilebilir HTML'dir; yalnızca metin gerekirse `bodyText`. `isInline: true` ekler HTML içinde `cid:<contentId>` ile referanslanır — WebView'de bu URL'leri ek indirme ucuyla eşleştirmen gerekir. Bulunamazsa `404 mail_not_found`.
+`conversationId` her zaman dolu gelir (tek mailse kendi konuşması); `isFromMe` Gönderilmiş/Taslak klasöründeki mailler ya da gönderen hesabın kendi adresi ise `true`. HTML-only maillerde `bodyText` sunucuda HTML'den üretilir (yalnızca yeni senkronlanan mailler için). `body.html` sunucuda üretilen render edilebilir HTML'dir; yalnızca metin gerekirse `bodyText`. `isInline: true` ekler HTML içinde `cid:<contentId>` ile referanslanır — WebView'de bu URL'leri ek indirme ucuyla eşleştirmen gerekir. Bulunamazsa `404 mail_not_found`.
 
 `body.hasRemoteContent` true ise HTML gövdede dış kaynaklı içerik (izleme pikseli olabilir) var — `WebView`'de uzak içerik yüklemeden önce kullanıcıya sor.
 
@@ -447,7 +455,7 @@ Aynı hata kodu seti yukarıdaki eylem tablosuyla birebir aynıdır (`mail_not_f
 ### `POST /api/mails/bulk/{action}`
 **Auth:** Bearer
 
-Aynı işlemi birden çok maile tek istekte uygular. `action`: `read`, `unread`, `archive`, `trash`, `move` (`move` için gövdede `folderId` zorunlu). Her mail **birbirinden bağımsız** işlenir — biri hata verse (çakışma, bulunamama) bile diğerleri uygulanmaya devam eder; sonucu her zaman `200 OK` ile item bazında oku.
+Aynı işlemi birden çok maile tek istekte uygular. `action`: `read`, `unread`, `star`, `unstar`, `archive`, `trash`, `restore`, `spam`, `not-spam`, `move` (`move` için gövdede `folderId` zorunlu). Her mail **birbirinden bağımsız** işlenir — biri hata verse (çakışma, bulunamama) bile diğerleri uygulanmaya devam eder; sonucu her zaman `200 OK` ile item bazında oku.
 
 ```json
 // İstek
@@ -543,8 +551,11 @@ Taslağı olduğu gibi gönderir, gövde yok. `Idempotency-Key` header'ı **zoru
 
 ```json
 // 200 OK
-{ "sent": true, "sentCopySaved": true, "draftRemoved": true, "warning": null }
+{ "sent": true, "sentCopySaved": true, "draftRemoved": true, "warning": null,
+  "mailId": "…", "conversationId": "…" }
 ```
+
+`mailId` / `conversationId` gönderilen mailin Gönderilmiş klasöründeki kaydıdır; `sentCopySaved: false` iken ya da kayıt hemen bulunamazsa `null` gelir.
 
 ### `POST /api/mails/send`
 **Auth:** Bearer · **Gövde:** `multipart/form-data`
@@ -553,8 +564,11 @@ Taslaksız doğrudan gönderim. Form alanları: `To` (çoklu, en az bir tane), `
 
 ```json
 // 200 OK
-{ "sent": true, "sentCopySaved": true, "warning": null }
+{ "sent": true, "sentCopySaved": true, "warning": null,
+  "mailId": "…", "conversationId": "…" }
 ```
+
+Kopya kaydedildiyse sunucu Gönderilmiş klasörünü hemen senkronlar; `mailId` / `conversationId` yanıtla birlikte gelir ve mail `GET /api/conversations/{id}` içinde hemen görünür. Yerel geçici kopyayı bu id ile değiştir. `sentCopySaved: false` iken ya da aynı `Idempotency-Key` ile tekrarlanan çağrıda (kayıtlı sonuç) ikisi `null` döner.
 
 `sent: true` ama `sentCopySaved: false` → mail gitti, Gönderilmiş klasörüne kopya yazılamadı (`warning` dolu); başarı say, uyarıyı göster.
 
@@ -576,7 +590,7 @@ Taslaksız doğrudan gönderim. Form alanları: `To` (çoklu, en az bir tane), `
 
 ## 6. Konuşmalar
 
-Aynı konu başlığındaki mailleri gruplar (normalize edilmiş subject üzerinden).
+Mailleri `Message-ID` / `In-Reply-To` / `References` zincirine göre gruplar; zincir yoksa normalize edilmiş subject + ortak katılımcı yedeği kullanılır (`Re:`, `Fwd:`, `Ynt:`, `İlt:`, `AW:`, `WG:` vb. önekler temizlenir).
 
 ### `GET /api/conversations`
 **Auth:** Bearer
@@ -598,6 +612,8 @@ Query: `page`, `pageSize` (üst sınır 100).
 ### `GET /api/conversations/{id}`
 **Auth:** Bearer
 
+Query: `includeTrash=false` Çöp ve Spam klasörlerindeki mesajları dışarıda bırakır (varsayılan: tüm klasörler). `include=body` her mesaja `bodyText` ve `body` (`GET /api/mails/{id}` ile aynı şekil) ekler — thread'i N istek yerine tek istekte çekmek için.
+
 ```json
 // 200 OK
 {
@@ -606,7 +622,8 @@ Query: `page`, `pageSize` (üst sınır 100).
     "id": "…", "folderId": "…", "subject": "…",
     "fromAddress": "…", "fromDisplayName": "…",
     "sentAt": "…", "receivedAt": "…",
-    "isRead": true, "hasAttachments": false
+    "isRead": true, "hasAttachments": false,
+    "isFromMe": false
   }]
 }
 ```

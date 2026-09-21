@@ -37,6 +37,19 @@ public sealed class IncomingMailMapperTests
     }
 
     [Fact]
+    public void Map_HtmlOnly_FillsBodyTextFromHtml()
+    {
+        var message = Build(m => m.Body = new TextPart("html") { Text = "<html><head><style>p{}</style></head><body><p>Merhaba</p><script>x()</script><p>dünya</p></body></html>" });
+
+        var incoming = IncomingMailMapper.Map(message, 1, 7, AccountId, FolderId, Unseen);
+
+        Assert.Contains("Merhaba", incoming.BodyText);
+        Assert.Contains("dünya", incoming.BodyText);
+        Assert.DoesNotContain("x()", incoming.BodyText);
+        Assert.DoesNotContain("p{}", incoming.BodyText);
+    }
+
+    [Fact]
     public void Map_MultipleFrom_FirstBecomesLegacyColumn_AllPreservedAsParticipants()
     {
         var message = new MimeMessage();

@@ -80,7 +80,8 @@ public sealed class MailSearchService(AppDbContext db, RuntimeOperationSettings 
                 .ThenByDescending(mail => mail.ReceivedAt).ThenByDescending(mail => mail.Uid).ThenByDescending(mail => mail.Id)
             : query.OrderByDescending(mail => mail.ReceivedAt).ThenByDescending(mail => mail.Uid).ThenByDescending(mail => mail.Id);
         var items = await ordered.Skip((page - 1) * pageSize).Take(pageSize)
-            .Select(mail => new MailListItemResponse(mail.Id, mail.MailFolderId, mail.Subject, mail.FromAddress, mail.FromDisplayName, mail.ToAddress, mail.IsRead, mail.HasAttachments, mail.ReceivedAt, mail.ConversationId))
+            .Select(mail => new MailListItemResponse(mail.Id, mail.MailFolderId, mail.Subject, mail.FromAddress, mail.FromDisplayName, mail.ToAddress, mail.IsRead, mail.HasAttachments, mail.ReceivedAt, mail.ConversationId,
+                mail.BodyText.Substring(0, Math.Min(mail.BodyText.Length, 120)), mail.Flagged, mail.Answered, mail.Attachments.Count))
             .ToListAsync(cancellationToken);
         return new(items, page, pageSize, total);
     }

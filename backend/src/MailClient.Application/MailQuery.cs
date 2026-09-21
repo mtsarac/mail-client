@@ -42,7 +42,11 @@ public sealed record MailListItemResponse(
     bool IsRead,
     bool HasAttachments,
     DateTime ReceivedAt,
-    Guid? ConversationId = null);
+    Guid? ConversationId = null,
+    string Snippet = "",
+    bool Flagged = false,
+    bool Answered = false,
+    int AttachmentCount = 0);
 
 public sealed record MailListResponse(
     IReadOnlyList<MailListItemResponse> Items,

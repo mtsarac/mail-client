@@ -22,7 +22,9 @@ public sealed record ConversationMessageResponse(
     DateTime ReceivedAt,
     bool IsRead,
     bool HasAttachments,
-    bool IsFromMe = false);
+    bool IsFromMe = false,
+    string? BodyText = null,
+    MailClient.Application.Mail.MailBodyResponse? Body = null);
 
 public sealed record ConversationDetailResponse(
     Guid Id,
