@@ -17,7 +17,7 @@ docker compose up --build   # Postgres + GreenMail + migration + API (:8080)
 Development ortamında Swagger arayüzü `/swagger` adresindedir.
 Sağlık uçları: `/health/live`, `/health/ready`.
 
-Docker olmadan çalıştırma için: [Geliştirme](docs/tr/development.md).
+Docker olmadan çalıştırma için: [Geliştirme](backend/docs/tr/development.md).
 
 ## Repo yapısı
 
@@ -28,20 +28,20 @@ Docker olmadan çalıştırma için: [Geliştirme](docs/tr/development.md).
 | `backend/src/MailClient.Domain` | Entity ve enum'lar |
 | `backend/src/MailClient.Infrastructure` | EF Core, MailKit, OAuth, push, depolama, sync |
 | `backend/tests/MailClient.Tests` | Birim ve entegrasyon testleri |
-| `docs/` | Dokümantasyon |
+| `backend/docs/` | Dokümantasyon |
 
 ## Dokümantasyon
 
 | Konu | English | Türkçe |
 |------|---------|--------|
-| Mimari | [architecture](docs/en/architecture.md) | [architecture](docs/tr/architecture.md) |
-| API referansı | [api-reference](docs/en/api-reference.md) | [api-reference](docs/tr/api-reference.md) |
-| Kimlik doğrulama | [authentication](docs/en/authentication.md) | [authentication](docs/tr/authentication.md) |
-| Yapılandırma | [configuration](docs/en/configuration.md) | [configuration](docs/tr/configuration.md) |
-| Geliştirme | [development](docs/en/development.md) | [development](docs/tr/development.md) |
+| Mimari | [architecture](backend/docs/en/architecture.md) | [architecture](backend/docs/tr/architecture.md) |
+| API referansı | [api-reference](backend/docs/en/api-reference.md) | [api-reference](backend/docs/tr/api-reference.md) |
+| Kimlik doğrulama | [authentication](backend/docs/en/authentication.md) | [authentication](backend/docs/tr/authentication.md) |
+| Yapılandırma | [configuration](backend/docs/en/configuration.md) | [configuration](backend/docs/tr/configuration.md) |
+| Geliştirme | [development](backend/docs/en/development.md) | [development](backend/docs/tr/development.md) |
 
-Ayrıca: [Docker](docs/DOCKER.md) · [Observability](backend/OBSERVABILITY.md) ·
-[Flutter entegrasyon rehberi](docs/flutter-api-integration.md)
+Ayrıca: [Docker](backend/docs/DOCKER.md) · [Observability](backend/OBSERVABILITY.md) ·
+[Flutter entegrasyon rehberi](backend/docs/flutter-api-integration.md)
 
 ## Lisans
 

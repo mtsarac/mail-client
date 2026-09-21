@@ -66,4 +66,4 @@ CodeQL and dependency review run separately.
 - Preserve API contracts and stable error codes unless the change is the point.
 - Never commit `.env`, credentials, certificates, key rings or `data/`.
 - Conventional commits (`feat:`, `fix:`, `docs:`, `chore:`), author is the
-  repository owner only. Full rules: [AGENTS.md](../../AGENTS.md).
+  repository owner only. Full rules: [AGENTS.md](../../../AGENTS.md).

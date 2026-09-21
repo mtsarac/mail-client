@@ -67,4 +67,4 @@ CodeQL ve dependency review ayrı çalışır.
 - Değişikliğin amacı bu değilse API sözleşmelerini ve sabit hata kodlarını koruyun.
 - `.env`, kimlik bilgisi, sertifika, anahtar halkası veya `data/` commit etmeyin.
 - Conventional commit (`feat:`, `fix:`, `docs:`, `chore:`); yazar yalnızca repo
-  sahibidir. Tüm kurallar: [AGENTS.md](../../AGENTS.md).
+  sahibidir. Tüm kurallar: [AGENTS.md](../../../AGENTS.md).

@@ -73,4 +73,4 @@ içinde kalır. Bkz. [Yapılandırma](configuration.md).
 
 Serilog JSON logları (`logs/app-*.json`, `logs/http-*.json`), OpenTelemetry
 trace/metrik, isteğe bağlı Prometheus `/metrics`. Ayrıntı:
-[OBSERVABILITY.md](../../backend/OBSERVABILITY.md).
+[OBSERVABILITY.md](../../OBSERVABILITY.md).

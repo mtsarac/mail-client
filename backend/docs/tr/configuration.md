@@ -34,7 +34,7 @@ ASP.NET Core kuralı geçerlidir: JSON'daki `Section:Key`, ortam değişkeni ola
 | `OAuth__StateLifetimeMinutes` | OAuth `state` geçerlilik süresi | 10 |
 | `Management__Enabled`, `Management__ApiKey` | Management API (production'da anahtar şart) | kapalı |
 | `HttpLogging__*` | Gövde loglama (`Enabled`, `Max*BodyBytes`, `ExcludedPaths`) | açık, 64 KiB |
-| `Observability__*`, `OTEL_*` | Trace, metrik, OTLP, Prometheus, log saklama — bkz. [OBSERVABILITY.md](../../backend/OBSERVABILITY.md) | — |
+| `Observability__*`, `OTEL_*` | Trace, metrik, OTLP, Prometheus, log saklama — bkz. [OBSERVABILITY.md](../../OBSERVABILITY.md) | — |
 | `MailDiscovery__*` | Posta sunucusu keşif seçenekleri | — |
 
 Yalnızca Docker'a ait değişkenler (`POSTGRES_USER/PASSWORD/DB`,

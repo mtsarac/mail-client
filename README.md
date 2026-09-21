@@ -17,7 +17,7 @@ docker compose up --build   # Postgres + GreenMail + migrations + API on :8080
 Swagger UI is available at `/swagger` in the Development environment.
 Health probes: `/health/live`, `/health/ready`.
 
-Without Docker: see [Development](docs/en/development.md).
+Without Docker: see [Development](backend/docs/en/development.md).
 
 ## Repository layout
 
@@ -28,20 +28,20 @@ Without Docker: see [Development](docs/en/development.md).
 | `backend/src/MailClient.Domain` | Entities and enums |
 | `backend/src/MailClient.Infrastructure` | EF Core, MailKit, OAuth, push, storage, sync |
 | `backend/tests/MailClient.Tests` | Unit and integration tests |
-| `docs/` | Documentation |
+| `backend/docs/` | Documentation |
 
 ## Documentation
 
 | Topic | English | Türkçe |
 |-------|---------|--------|
-| Architecture | [architecture](docs/en/architecture.md) | [architecture](docs/tr/architecture.md) |
-| API reference | [api-reference](docs/en/api-reference.md) | [api-reference](docs/tr/api-reference.md) |
-| Authentication | [authentication](docs/en/authentication.md) | [authentication](docs/tr/authentication.md) |
-| Configuration | [configuration](docs/en/configuration.md) | [configuration](docs/tr/configuration.md) |
-| Development | [development](docs/en/development.md) | [development](docs/tr/development.md) |
+| Architecture | [architecture](backend/docs/en/architecture.md) | [architecture](backend/docs/tr/architecture.md) |
+| API reference | [api-reference](backend/docs/en/api-reference.md) | [api-reference](backend/docs/tr/api-reference.md) |
+| Authentication | [authentication](backend/docs/en/authentication.md) | [authentication](backend/docs/tr/authentication.md) |
+| Configuration | [configuration](backend/docs/en/configuration.md) | [configuration](backend/docs/tr/configuration.md) |
+| Development | [development](backend/docs/en/development.md) | [development](backend/docs/tr/development.md) |
 
-Also: [Docker](docs/DOCKER.md) · [Observability](backend/OBSERVABILITY.md) ·
-[Flutter integration guide (TR)](docs/flutter-api-integration.md)
+Also: [Docker](backend/docs/DOCKER.md) · [Observability](backend/OBSERVABILITY.md) ·
+[Flutter integration guide (TR)](backend/docs/flutter-api-integration.md)
 
 ## License
 

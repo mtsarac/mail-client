@@ -33,7 +33,7 @@ environment variable. Copy `.env.example` to `.env` (never commit it).
 | `OAuth__StateLifetimeMinutes` | OAuth `state` validity | 10 |
 | `Management__Enabled`, `Management__ApiKey` | Management API (needs a key in production) | disabled |
 | `HttpLogging__*` | Body logging (`Enabled`, `Max*BodyBytes`, `ExcludedPaths`) | on, 64 KiB |
-| `Observability__*`, `OTEL_*` | Tracing, metrics, OTLP, Prometheus, log retention — see [OBSERVABILITY.md](../../backend/OBSERVABILITY.md) | — |
+| `Observability__*`, `OTEL_*` | Tracing, metrics, OTLP, Prometheus, log retention — see [OBSERVABILITY.md](../../OBSERVABILITY.md) | — |
 | `MailDiscovery__*` | Mail server discovery options | — |
 
 Docker-only variables (`POSTGRES_USER/PASSWORD/DB`, `DATAPROTECTION_CERT_HOST_PATH`,

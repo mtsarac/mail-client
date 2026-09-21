@@ -73,4 +73,4 @@ storage, observability) stays in environment/`appsettings`. See
 
 Serilog JSON logs (`logs/app-*.json`, `logs/http-*.json`), OpenTelemetry
 traces/metrics, optional Prometheus `/metrics`. Details:
-[OBSERVABILITY.md](../../backend/OBSERVABILITY.md).
+[OBSERVABILITY.md](../../OBSERVABILITY.md).
