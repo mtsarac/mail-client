@@ -46,6 +46,7 @@ using Serilog;
 using Serilog.Formatting.Json;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.WebHost.ConfigureKestrel(options => options.AddServerHeader = false);
 var observabilityOptions = builder.Configuration.GetSection("Observability").Get<ObservabilityOptions>() ?? new ObservabilityOptions();
 observabilityOptions.Validate();
 var logFiles = observabilityOptions.Logs;
@@ -311,7 +312,10 @@ app.UseExceptionHandler(error => error.Run(async context =>
 if (trustedProxy)
     app.UseForwardedHeaders();
 if (!app.Environment.IsDevelopment() && !app.Environment.IsEnvironment("Test"))
+{
+    app.UseHsts();
     app.UseHttpsRedirection();
+}
 if (app.Environment.IsDevelopment())
     app.UseCors("DevelopmentLan");
 app.UseAuthentication();

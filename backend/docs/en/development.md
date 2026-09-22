@@ -2,6 +2,8 @@
 
 🇹🇷 [Türkçe](../tr/development.md)
 
+For production deployment, see [Production](production.md).
+
 ## Requirements
 
 .NET 10 SDK, PostgreSQL, Docker (optional, for compose and GreenMail).
@@ -14,6 +16,11 @@ With Docker (Postgres + GreenMail + migrations + API on `:8080`):
 cp .env.example .env    # set Jwt__Key at minimum
 docker compose up --build
 ```
+
+Host ports default to `5432` (Postgres), `3143`/`3025` (GreenMail IMAP/SMTP),
+`8080` (API) — override via `POSTGRES_PORT` / `GREENMAIL_IMAP_PORT` /
+`GREENMAIL_SMTP_PORT` / `API_PORT` in `.env` if those collide with something
+already running on your machine.
 
 Without Docker: start PostgreSQL, set `ConnectionStrings__Default` in `.env`,
 apply migrations, then run the API:

@@ -19,62 +19,11 @@ self-contained EF Core **migration bundle**:
 
 ## Local development (`docker-compose.yml`)
 
-Postgres + GreenMail (fake IMAP/SMTP for integration tests) + `migrate` (one-shot)
-+ `api`.
-
-```bash
-cp .env.example .env   # fill in Jwt__Key at minimum
-docker compose up --build
-```
-
-Host ports default to `5432` (Postgres), `3143`/`3025` (GreenMail IMAP/SMTP),
-`8080` (API) — override via `POSTGRES_PORT` / `GREENMAIL_IMAP_PORT` /
-`GREENMAIL_SMTP_PORT` / `API_PORT` in `.env` if those collide with something
-already running on your machine.
+See [Development](en/development.md) / [Geliştirme](tr/development.md).
 
 ## Production (`docker-compose.prod.yml`)
 
-Postgres + `migrate` + `api`. No GreenMail. No TLS termination — put a reverse
-proxy (Caddy/nginx/Traefik) in front and point it at `api:8080`; set
-`Proxy__KnownProxies`/`Proxy__KnownNetworks` in `.env` so forwarded-header
-handling trusts it.
-
-```bash
-cp .env.example .env
-```
-
-Fill in `.env`:
-
-- `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` — used for both the
-  `postgres` container and the interpolated `ConnectionStrings__Default`.
-- `Jwt__Key` — 32+ random characters.
-- `DataProtection__CertificatePath` is fixed by compose to
-  `/run/secrets/dataprotection.pfx` inside the container; set
-  `DATAPROTECTION_CERT_HOST_PATH` to the `.pfx` file on the host. Generate one
-  with **no export password** (the app loads it via
-  `X509CertificateLoader.LoadCertificateFromFile(path)`, no password argument):
-  ```bash
-  openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 3650 -nodes -subj "/CN=mailclient-dataprotection"
-  openssl pkcs12 -export -out dataprotection.pfx -inkey key.pem -in cert.pem -passout pass:
-  ```
-  **Back this file up.** Losing it makes every stored mail credential
-  undecryptable — every account needs reauthentication. Same for the
-  `protection-keys` named volume.
-- Any OAuth/Storage/Observability/Management values you need — see the comments
-  in `.env.example`, they're written for exactly this deployment.
-
-```bash
-docker compose -f docker-compose.prod.yml up --build -d
-```
-
-`migrate` runs once, applies pending migrations, exits `0`; `api` only starts
-after that succeeds (`depends_on: condition: service_completed_successfully`).
-To re-run migrations after pulling a new image (e.g. after an update):
-
-```bash
-docker compose -f docker-compose.prod.yml up --build migrate
-docker compose -f docker-compose.prod.yml up --build -d api
-```
+See [Production](en/production.md) / [Production (TR)](tr/production.md).
 
 ## Volumes
 

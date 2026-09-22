@@ -52,6 +52,8 @@ ama anahtar yoksa.
 | CORS | her origin | yok |
 | Özel/LAN posta host'ları | serbest | engelli (SSRF) |
 | HTTPS yönlendirme | yok | var (TLS'i proxy'de sonlandırıp `Proxy__*` ayarlayın) |
+| HSTS | yok | var |
+| Kestrel `Server` başlığı | gönderilir | bastırılır |
 | Hata `detail` | exception metni | gizli |
 
 ## Runtime ayarları
