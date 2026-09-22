@@ -22,12 +22,12 @@ environment variable. Copy `.env.example` to `.env` (never commit it).
 | `Jwt__AccessTokenMinutes` | Access token lifetime | 15 |
 | `Session__RefreshTokenLifetimeDays`, `Session__SlidingExpiration` | Refresh session | 180, true |
 | `DataProtection__KeyPath` | Key ring directory | `data/protection-keys` |
-| `DataProtection__CertificatePath` | PFX (no export password) protecting the key ring; **required in production** | unset |
+| `DataProtection__CertificatePath` | PFX (empty export password) protecting the key ring; **required in production** | unset |
 | `Proxy__KnownProxies__N`, `Proxy__KnownNetworks__N` | Trusted reverse proxies (enables `X-Forwarded-*`) | none |
 | `Storage__Provider` | `Local` (`data/attachments`) or `S3` | `Local` |
 | `Storage__S3__Bucket/Region/ServiceUrl/Prefix/ForcePathStyle` | S3 target; empty key pair uses the ambient AWS credential chain | — |
 | `Storage__S3__AccessKeyId/SecretAccessKey` | Optional explicit S3 credentials | unset |
-| `Firebase__ProjectId`, `Firebase__CredentialsPath` | Push notifications; unset disables push | unset |
+| `Firebase__Enabled`, `Firebase__ProjectId`, `Firebase__CredentialsPath` | Push notifications (FCM); `Enabled=false`/unset uses a no-op sender. See [Production](production.md#5-firebase-cloud-messaging-optional) / [Development](development.md#firebase-cloud-messaging) for setup | disabled |
 | `OAuth__Google__ClientId/ClientSecret/RedirectUris__N` | Google OAuth; unset disables it | unset |
 | `OAuth__Microsoft__ClientId/ClientSecret/Tenant/RedirectUris__N` | Microsoft OAuth | tenant `organizations` |
 | `OAuth__StateLifetimeMinutes` | OAuth `state` validity | 10 |
