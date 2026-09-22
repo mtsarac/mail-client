@@ -32,6 +32,38 @@ dotnet run --project backend/src/MailClient.Api
 
 Runtime files: `data/` (attachments, data-protection keys) and `logs/` are git-ignored.
 
+### Rider `lan-http` launch profile
+
+`Properties/launchSettings.json` also has a `lan-http` profile (used by the
+Rider run configuration of the same name) that runs the API on `0.0.0.0:5071`
+with `ASPNETCORE_ENVIRONMENT=Production` — for testing from another device on
+the LAN (e.g. a Flutter app on a phone) against production-like behavior:
+HTTPS-redirect/HSTS logic active (harmless over plain LAN HTTP — Kestrel logs
+a warning and serves the request anyway since no HTTPS port is configured),
+Swagger and dev CORS disabled, FCM enabled. It needs two files this profile's
+`environmentVariables` expect and that are gitignored (`*.pfx`), so a fresh
+clone must generate/obtain them first:
+
+- `backend/src/MailClient.Api/data/lan-dataprotection.pfx` — a self-signed
+  Data Protection cert, empty export password:
+  `openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 3650 -nodes -subj "/CN=mailclient-lan-dataprotection"`
+  then `openssl pkcs12 -export -out backend/src/MailClient.Api/data/lan-dataprotection.pfx -inkey key.pem -in cert.pem -passout pass:`.
+- `secrets/mail-client-37a01-firebase-adminsdk-fbsvc-588f026e0e.json` — the
+  project's Firebase service-account key (ask whoever holds it); without it,
+  either obtain the real file or set `Firebase__Enabled=false` in the profile
+  to fall back to a no-op push sender.
+
+## Firebase Cloud Messaging
+
+Optional; push notifications no-op unless enabled. Set in `.env`:
+`Firebase__Enabled=true`, `Firebase__ProjectId=<id>`,
+`Firebase__CredentialsPath=<path to a service-account JSON>` (get one from
+Firebase Console → Project settings → Service accounts). Under Docker,
+set `FIREBASE_CREDENTIALS_HOST_PATH` instead — compose mounts it and fixes
+`Firebase__CredentialsPath` to the in-container path. Full setup:
+[Production → Firebase Cloud Messaging](production.md#5-firebase-cloud-messaging-optional)
+(same variables apply in Development).
+
 ## Build, test, format
 
 ```bash

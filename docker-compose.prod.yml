@@ -49,6 +49,7 @@ services:
       ConnectionStrings__Default: Host=postgres;Port=5432;Database=${POSTGRES_DB:-mailclient_v2};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
       DataProtection__KeyPath: /app/data/protection-keys
       DataProtection__CertificatePath: /run/secrets/dataprotection.pfx
+      Firebase__CredentialsPath: /run/secrets/firebase-service-account.json
     ports:
       - "8080:8080"
     volumes:
@@ -56,6 +57,7 @@ services:
       - protection-keys:/app/data/protection-keys
       - logs:/app/logs
       - ${DATAPROTECTION_CERT_HOST_PATH:?set DATAPROTECTION_CERT_HOST_PATH in .env}:/run/secrets/dataprotection.pfx:ro
+      - ${FIREBASE_CREDENTIALS_HOST_PATH:-/dev/null}:/run/secrets/firebase-service-account.json:ro
     depends_on:
       migrate:
         condition: service_completed_successfully

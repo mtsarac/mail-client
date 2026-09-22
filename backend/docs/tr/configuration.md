@@ -28,7 +28,7 @@ ASP.NET Core kuralı geçerlidir: JSON'daki `Section:Key`, ortam değişkeni ola
 | `Storage__Provider` | `Local` (`data/attachments`) veya `S3` | `Local` |
 | `Storage__S3__Bucket/Region/ServiceUrl/Prefix/ForcePathStyle` | S3 hedefi; anahtar çifti boşsa ortamdaki AWS kimlik zinciri kullanılır | — |
 | `Storage__S3__AccessKeyId/SecretAccessKey` | Opsiyonel açık S3 kimlik bilgisi | yok |
-| `Firebase__ProjectId`, `Firebase__CredentialsPath` | Push bildirimleri; tanımsızsa push kapalı | yok |
+| `Firebase__Enabled`, `Firebase__ProjectId`, `Firebase__CredentialsPath` | Push bildirimleri (FCM); `Enabled=false`/tanımsız no-op sender kullanır. Kurulum için bkz. [Production](production.md#5-firebase-cloud-messaging-opsiyonel) / [Geliştirme](development.md#firebase-cloud-messaging) | kapalı |
 | `OAuth__Google__ClientId/ClientSecret/RedirectUris__N` | Google OAuth; tanımsızsa kapalı | yok |
 | `OAuth__Microsoft__ClientId/ClientSecret/Tenant/RedirectUris__N` | Microsoft OAuth | tenant `organizations` |
 | `OAuth__StateLifetimeMinutes` | OAuth `state` geçerlilik süresi | 10 |

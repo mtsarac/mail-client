@@ -53,12 +53,14 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Development
       ConnectionStrings__Default: Host=postgres;Port=5432;Database=mailclient_v2;Username=postgres;Password=postgres
+      Firebase__CredentialsPath: /run/secrets/firebase-service-account.json
     ports:
       - "${API_PORT:-8080}:8080"
     volumes:
       - attachments:/app/data/attachments
       - protection-keys:/app/data/protection-keys
       - logs:/app/logs
+      - ${FIREBASE_CREDENTIALS_HOST_PATH:-/dev/null}:/run/secrets/firebase-service-account.json:ro
     depends_on:
       migrate:
         condition: service_completed_successfully
