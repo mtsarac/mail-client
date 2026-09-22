@@ -50,6 +50,8 @@ or development `Jwt__Key` in production, enabled Management API without key.
 | CORS | any origin | none |
 | Private/LAN mail hosts | allowed | blocked (SSRF) |
 | HTTPS redirection | no | yes (terminate TLS at a proxy and set `Proxy__*`) |
+| HSTS | no | yes |
+| Kestrel `Server` header | sent | suppressed |
 | Error `detail` | exception text | hidden |
 
 ## Runtime settings

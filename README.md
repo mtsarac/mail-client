@@ -39,6 +39,7 @@ Without Docker: see [Development](backend/docs/en/development.md).
 | Authentication | [authentication](backend/docs/en/authentication.md) | [authentication](backend/docs/tr/authentication.md) |
 | Configuration | [configuration](backend/docs/en/configuration.md) | [configuration](backend/docs/tr/configuration.md) |
 | Development | [development](backend/docs/en/development.md) | [development](backend/docs/tr/development.md) |
+| Production | [production](backend/docs/en/production.md) | [production](backend/docs/tr/production.md) |
 
 Also: [Docker](backend/docs/DOCKER.md) · [Observability](backend/OBSERVABILITY.md) ·
 [Flutter integration guide (TR)](backend/docs/flutter-api-integration.md)

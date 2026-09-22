@@ -2,6 +2,8 @@
 
 🇬🇧 [English](../en/development.md)
 
+Production dağıtımı için bkz. [Production](production.md).
+
 ## Gereksinimler
 
 .NET 10 SDK, PostgreSQL, Docker (opsiyonel; compose ve GreenMail için).
@@ -14,6 +16,11 @@ Docker ile (Postgres + GreenMail + migration + API, `:8080`):
 cp .env.example .env    # en az Jwt__Key ayarla
 docker compose up --build
 ```
+
+Host portları varsayılan olarak `5432` (Postgres), `3143`/`3025` (GreenMail
+IMAP/SMTP), `8080` (API) — bunlar makinenizde zaten çalışan bir şeyle
+çakışırsa `.env` içinde `POSTGRES_PORT` / `GREENMAIL_IMAP_PORT` /
+`GREENMAIL_SMTP_PORT` / `API_PORT` ile değiştirin.
 
 Docker olmadan: PostgreSQL'i başlatın, `.env` içinde `ConnectionStrings__Default`
 ayarlayın, migration'ları uygulayın, API'yi çalıştırın:

@@ -39,6 +39,7 @@ Docker olmadan çalıştırma için: [Geliştirme](backend/docs/tr/development.m
 | Kimlik doğrulama | [authentication](backend/docs/en/authentication.md) | [authentication](backend/docs/tr/authentication.md) |
 | Yapılandırma | [configuration](backend/docs/en/configuration.md) | [configuration](backend/docs/tr/configuration.md) |
 | Geliştirme | [development](backend/docs/en/development.md) | [development](backend/docs/tr/development.md) |
+| Production | [production](backend/docs/en/production.md) | [production](backend/docs/tr/production.md) |
 
 Ayrıca: [Docker](backend/docs/DOCKER.md) · [Observability](backend/OBSERVABILITY.md) ·
 [Flutter entegrasyon rehberi](backend/docs/flutter-api-integration.md)
