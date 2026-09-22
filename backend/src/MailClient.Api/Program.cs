@@ -94,7 +94,7 @@ var keyPath = builder.Configuration["DataProtection:KeyPath"] ?? Path.Combine(bu
 var dataProtection = builder.Services.AddDataProtection().PersistKeysToFileSystem(new DirectoryInfo(keyPath));
 var certificatePath = builder.Configuration["DataProtection:CertificatePath"];
 if (!string.IsNullOrWhiteSpace(certificatePath))
-    dataProtection.ProtectKeysWithCertificate(X509CertificateLoader.LoadCertificateFromFile(certificatePath));
+    dataProtection.ProtectKeysWithCertificate(X509CertificateLoader.LoadPkcs12FromFile(certificatePath, password: ""));
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<CorrelationContext>();
 builder.Services.AddSingleton<IDnsResolver, SystemDnsResolver>();
