@@ -37,7 +37,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile
       target: migrator
-    command: ["--connection", "Host=postgres;Port=5432;Database=mailclient_v2;Username=postgres;Password=postgres"]
+    command: ["--connection", "Host=postgres;Port=5432;Database=mailclient_v2;Username=postgres;Password=postgres;GSS Encryption Mode=Disable"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -52,7 +52,7 @@ services:
       - .env
     environment:
       ASPNETCORE_ENVIRONMENT: Development
-      ConnectionStrings__Default: Host=postgres;Port=5432;Database=mailclient_v2;Username=postgres;Password=postgres
+      ConnectionStrings__Default: Host=postgres;Port=5432;Database=mailclient_v2;Username=postgres;Password=postgres;GSS Encryption Mode=Disable
       Firebase__CredentialsPath: /run/secrets/firebase-service-account.json
     ports:
       - "${API_PORT:-8080}:8080"
