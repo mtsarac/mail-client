@@ -15,10 +15,14 @@
 #     are handled by the global Traefik config (public-secure@file); this
 #     stack only adds its own Host rule and a security-headers middleware.
 #
-# Usage:
+# Usage (manual):
 #   mkdir -p /srv/mail/secrets
 #   cp .env.example .env   # fill in real secrets + MAIL_DOMAIN
 #   docker compose -f docker-compose.traefik.yml up --build -d
+#
+# Usage (Dockhand git-sync): fill in the same variables through Dockhand's stack env
+# editor instead of .env — it writes them to the auto-generated .env.dockhand, which
+# this file's env_file list also picks up.
 
 name: mailclient
 
@@ -61,7 +65,14 @@ services:
       dockerfile: Dockerfile
       target: runtime
     env_file:
-      - .env
+      # Dockhand git-sync deployments generate .env.dockhand from the UI-managed variables
+      # and never create a plain .env; a manual `docker compose` deploy uses .env instead.
+      # Neither is required to exist on disk — missing values fail fast at API startup
+      # with a clear config error rather than a silent default.
+      - path: .env
+        required: false
+      - path: .env.dockhand
+        required: false
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       ConnectionStrings__Default: Host=postgres;Port=5432;Database=${POSTGRES_DB:-mailclient_v2};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
