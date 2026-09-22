@@ -19,7 +19,7 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d mailclient_v2"]
       interval: 5s
       timeout: 5s
       retries: 10
