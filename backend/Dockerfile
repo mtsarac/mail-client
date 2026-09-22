@@ -15,10 +15,6 @@ COPY src/MailClient.Api/MailClient.Api.csproj src/MailClient.Api/
 RUN dotnet restore src/MailClient.Api/MailClient.Api.csproj --runtime linux-x64
 
 COPY src/ src/
-RUN dotnet publish src/MailClient.Api/MailClient.Api.csproj \
-    --configuration Release \
-    --no-restore \
-    --output /app/publish
 
 RUN dotnet tool install --global dotnet-ef --version 10.0.* \
     && export PATH="$PATH:/root/.dotnet/tools" \
@@ -29,6 +25,11 @@ RUN dotnet tool install --global dotnet-ef --version 10.0.* \
        --self-contained \
        --runtime linux-x64 \
        --output /app/efbundle/efbundle
+
+RUN dotnet publish src/MailClient.Api/MailClient.Api.csproj \
+    --configuration Release \
+    --no-restore \
+    --output /app/publish
 
 # ---- migrator: applies pending EF Core migrations, then exits. No SDK, no ASP.NET. ----
 # Run with: docker run mailclient-migrator --connection "Host=...;Port=...;Database=...;Username=...;Password=..."
