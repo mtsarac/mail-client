@@ -56,7 +56,7 @@ CodeQL ve dependency review ayrı çalışır.
 - `dotnet ef migrations add <Ad>` ile oluşturun; `migrations remove` ile geri alın.
 - Migration dosyalarını elle yazmayın, `.Designer.cs` veya model snapshot'ını
   düzenlemeyin. Backfill/özel SQL için `Up()`/`Down()` içini düzenlemek serbesttir.
-- `master`'a girmiş migration'ı değiştirmeyin; yenisini ekleyin.
+- `main`'e girmiş migration'ı değiştirmeyin; yenisini ekleyin.
 - Docker'da migration'lar API açılışında değil, ayrı `migrate` adımıyla uygulanır.
 
 ## Kurallar

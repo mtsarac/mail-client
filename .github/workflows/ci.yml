@@ -2,7 +2,7 @@ name: ci
 
 on:
   push:
-    branches: [master]
+    branches: [main]
   pull_request:
 
 permissions:
@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Lightweight gate: master requires the build-test and format checks, so this
+  # Lightweight gate: main requires the build-test and format checks, so this
   # workflow must run on every push/PR. Expensive jobs below are skipped (which
   # counts as passing for required checks) when no backend-relevant file changed.
   changes:

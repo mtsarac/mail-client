@@ -38,7 +38,7 @@
 * Create and remove migrations using `dotnet ef migrations add/remove`.
 * Do not manually create migration files or edit generated migration `.Designer.cs` files or `AppDbContextModelSnapshot.cs`.
 * Manual edits inside generated `Up()` / `Down()` methods are acceptable when needed for backfills or SQL that EF cannot generate correctly.
-* Do not modify migrations already merged to `master`; create a new migration.
+* Do not modify migrations already merged to `main`; create a new migration.
 * For schema changes, verify migrations on a fresh PostgreSQL database when practical.
 
 ## Backend conventions
