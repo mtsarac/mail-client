@@ -8,6 +8,7 @@ obj/
 
 # Rider / JetBrains
 .idea/
+.run/
 *.sln.iml
 
 # Build results
