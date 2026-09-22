@@ -27,5 +27,5 @@ Provider, persistence, mail transport, security, storage, and external-service i
 
 ## ANTI-PATTERNS
 - Do not hand-create migration files or edit `*.Designer.cs` / `AppDbContextModelSnapshot.cs`.
-- Do not modify migrations already merged to `master`; add a new migration.
+- Do not modify migrations already merged to `main`; add a new migration.
 - Do not broaden warning suppressions. Generated EF suppressions and narrowly scoped Firebase compatibility suppression are intentional.

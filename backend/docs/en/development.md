@@ -55,7 +55,7 @@ CodeQL and dependency review run separately.
 - Create with `dotnet ef migrations add <Name>`; remove with `migrations remove`.
 - Never hand-write migration files or edit `.Designer.cs` / the model snapshot.
   Editing `Up()`/`Down()` for backfills or custom SQL is fine.
-- Never modify a migration already merged to `master`; add a new one.
+- Never modify a migration already merged to `main`; add a new one.
 - Docker applies migrations via a separate `migrate` step, not at API startup.
 
 ## Conventions
