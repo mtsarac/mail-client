@@ -5,6 +5,7 @@ ARG DOTNET_VERSION=10.0
 
 # ---- build: restore, publish the API, and produce a self-contained EF Core migration bundle ----
 FROM mcr.microsoft.com/dotnet/sdk:${DOTNET_VERSION} AS build
+ARG TARGETARCH
 WORKDIR /src
 
 COPY Directory.Build.props MailClient.slnx ./
@@ -12,7 +13,17 @@ COPY src/MailClient.Domain/MailClient.Domain.csproj src/MailClient.Domain/
 COPY src/MailClient.Application/MailClient.Application.csproj src/MailClient.Application/
 COPY src/MailClient.Infrastructure/MailClient.Infrastructure.csproj src/MailClient.Infrastructure/
 COPY src/MailClient.Api/MailClient.Api.csproj src/MailClient.Api/
-RUN dotnet restore src/MailClient.Api/MailClient.Api.csproj --runtime linux-x64
+
+# Self-contained EF bundle output must match the image's actual target architecture, not
+# the arch this Dockerfile happens to be authored/tested on: buildx sets TARGETARCH to the
+# platform being built (e.g. "arm64" on a Raspberry Pi host), and a linux-x64 self-contained
+# executable simply won't exec on an arm64 host (or vice versa).
+RUN case "$TARGETARCH" in \
+      amd64) echo linux-x64 ;; \
+      arm64) echo linux-arm64 ;; \
+      *) echo "unsupported TARGETARCH: $TARGETARCH" >&2; exit 1 ;; \
+    esac > /tmp/rid
+RUN dotnet restore src/MailClient.Api/MailClient.Api.csproj --runtime "$(cat /tmp/rid)"
 
 COPY src/ src/
 
@@ -23,7 +34,7 @@ RUN dotnet tool install --global dotnet-ef --version 10.0.* \
        --startup-project src/MailClient.Api/MailClient.Api.csproj \
        --configuration Release \
        --self-contained \
-       --runtime linux-x64 \
+       --runtime "$(cat /tmp/rid)" \
        --output /app/efbundle/efbundle
 
 RUN dotnet publish src/MailClient.Api/MailClient.Api.csproj \
