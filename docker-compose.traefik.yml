@@ -1,0 +1,110 @@
+# Production stack behind an existing Traefik + Cloudflare Tunnel setup.
+# Postgres + one-shot migrator + API. Single-host, single-instance, same
+# trade-offs as docker-compose.prod.yml, but wired for this host's infra:
+#
+#   - api joins the pre-existing external "traefik-net" network (already
+#     carrying Cloudflare Tunnel traffic to Traefik) and gets its ingress
+#     purely through Traefik docker-provider labels — no published ports.
+#   - postgres and migrate sit on a private "internal" network that is not
+#     attached to traefik-net and has no reverse-proxy exposure at all.
+#   - Certificates for Proxy__CertificatePath and the Firebase service
+#     account are bind-mounted from /srv/mail/secrets/ on the host (git-sync
+#     deployments never commit these). Everything else that needs to persist
+#     (pgdata, attachments, protection-keys, logs) uses named Docker volumes.
+#   - TLS termination, the default entrypoint, and the shared security chain
+#     are handled by the global Traefik config (public-secure@file); this
+#     stack only adds its own Host rule and a security-headers middleware.
+#
+# Usage:
+#   mkdir -p /srv/mail/secrets
+#   cp .env.example .env   # fill in real secrets + MAIL_DOMAIN
+#   docker compose -f docker-compose.traefik.yml up --build -d
+
+name: mailclient
+
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-mailclient_v2}
+    networks:
+      - internal
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  migrate:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: migrator
+    command:
+      - "--connection"
+      - "Host=postgres;Port=5432;Database=${POSTGRES_DB:-mailclient_v2};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}"
+    networks:
+      - internal
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: runtime
+    env_file:
+      - .env
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ConnectionStrings__Default: Host=postgres;Port=5432;Database=${POSTGRES_DB:-mailclient_v2};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      DataProtection__KeyPath: /app/data/protection-keys
+      DataProtection__CertificatePath: /run/secrets/dataprotection.pfx
+      Firebase__CredentialsPath: /run/secrets/firebase-service-account.json
+    networks:
+      - internal
+      - traefik-net
+    volumes:
+      - attachments:/app/data/attachments
+      - protection-keys:/app/data/protection-keys
+      - logs:/app/logs
+      - ${DATAPROTECTION_CERT_HOST_PATH:-/srv/mail/secrets/dataprotection.pfx}:/run/secrets/dataprotection.pfx:ro
+      - ${FIREBASE_CREDENTIALS_HOST_PATH:-/dev/null}:/run/secrets/firebase-service-account.json:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik-net"
+      - "traefik.http.routers.mail-api.rule=Host(`${MAIL_DOMAIN:-mail.msarac.me}`)"
+      - "traefik.http.services.mail-api.loadbalancer.server.port=8080"
+
+      - "traefik.http.routers.mail-api.middlewares=mail-api-security,public-secure@file"
+      - "traefik.http.middlewares.mail-api-security.headers.contentTypeNosniff=true"
+      - "traefik.http.middlewares.mail-api-security.headers.frameDeny=true"
+      - "traefik.http.middlewares.mail-api-security.headers.referrerPolicy=no-referrer"
+      - "traefik.http.middlewares.mail-api-security.headers.stsSeconds=31536000"
+      - "traefik.http.middlewares.mail-api-security.headers.stsIncludeSubdomains=true"
+      - "traefik.http.middlewares.mail-api-security.headers.stsPreload=true"
+
+networks:
+  internal:
+    internal: true
+  traefik-net:
+    external: true
+
+volumes:
+  pgdata:
+  attachments:
+  protection-keys:
+  logs:
