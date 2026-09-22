@@ -31,7 +31,7 @@ services:
       target: migrator
     command:
       - "--connection"
-      - "Host=postgres;Port=5432;Database=${POSTGRES_DB:-mailclient_v2};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}"
+      - "Host=postgres;Port=5432;Database=${POSTGRES_DB:-mailclient_v2};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD};GSS Encryption Mode=Disable"
     depends_on:
       postgres:
         condition: service_healthy
@@ -46,7 +46,7 @@ services:
       - .env
     environment:
       ASPNETCORE_ENVIRONMENT: Production
-      ConnectionStrings__Default: Host=postgres;Port=5432;Database=${POSTGRES_DB:-mailclient_v2};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      ConnectionStrings__Default: Host=postgres;Port=5432;Database=${POSTGRES_DB:-mailclient_v2};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD};GSS Encryption Mode=Disable
       DataProtection__KeyPath: /app/data/protection-keys
       DataProtection__CertificatePath: /run/secrets/dataprotection.pfx
       Firebase__CredentialsPath: /run/secrets/firebase-service-account.json
