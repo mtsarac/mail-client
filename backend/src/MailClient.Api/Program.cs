@@ -54,6 +54,7 @@ builder.Host.UseSerilog((context, services, configuration) => configuration
     .ReadFrom.Configuration(context.Configuration)
     .ReadFrom.Services(services)
     .Enrich.FromLogContext()
+    .WriteTo.Console()
     .WriteTo.Logger(appLog => appLog
         .Filter.ByExcluding(log => log.Properties.ContainsKey("RequestPath"))
         .WriteTo.File(new JsonFormatter(), "logs/app-.json", rollingInterval: RollingInterval.Day,
