@@ -153,6 +153,7 @@ builder.Services.AddScoped<MailSearchService>();
 
 builder.Services.AddScoped<SendOperationStore>();
 builder.Services.AddScoped<MailSendService>();
+builder.Services.AddScoped<ScheduledSendService>();
 builder.Services.AddScoped<DraftService>();
 builder.Services.AddScoped<ComposeContextService>();
 builder.Services.AddScoped<MailFolderAccessService>();
@@ -195,6 +196,7 @@ if (!builder.Environment.IsEnvironment("Test"))
 {
     builder.Services.AddHostedService<MailSyncService>();
     builder.Services.AddHostedService<AllowlistReconciliationService>();
+    builder.Services.AddHostedService<ScheduledSendDispatcher>();
 }
 var storageOptions = builder.Configuration.GetSection("Storage").Get<StorageOptions>() ?? new StorageOptions();
 storageOptions.Validate();
@@ -343,6 +345,7 @@ app.MapOAuthEndpoints();
 app.MapAuthEndpoints();
 app.MapFolderEndpoints();
 app.MapMailEndpoints();
+app.MapScheduledSendEndpoints();
 app.MapConversationEndpoints();
 app.MapDeviceEndpoints();
 app.MapManagementEndpoints();
