@@ -52,8 +52,18 @@ public sealed class HttpBodyLoggingTests : IDisposable
     private LogEvent SingleEvent()
     {
         var evt = Assert.Single(_events);
-        Assert.True(evt.Properties.ContainsKey("RequestPath"));
+        Assert.True(HttpBodyLoggingMiddleware.IsHttpBodyEvent(evt));
         return evt;
+    }
+
+    [Fact]
+    public void ApplicationEventInsideRequestScope_IsNotHttpBodyEvent()
+    {
+        var logger = new LoggerConfiguration().Enrich.FromLogContext().WriteTo.Sink(new CapturingSink(_events)).CreateLogger();
+        using (Serilog.Context.LogContext.PushProperty("RequestPath", "/api/mails"))
+            logger.Error("Mail operation failed.");
+
+        Assert.False(HttpBodyLoggingMiddleware.IsHttpBodyEvent(Assert.Single(_events)));
     }
 
     [Fact]

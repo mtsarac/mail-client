@@ -56,13 +56,13 @@ builder.Host.UseSerilog((context, services, configuration) => configuration
     .Enrich.FromLogContext()
     .WriteTo.Console()
     .WriteTo.Logger(appLog => appLog
-        .Filter.ByExcluding(log => log.Properties.ContainsKey("RequestPath"))
+        .Filter.ByExcluding(HttpBodyLoggingMiddleware.IsHttpBodyEvent)
         .WriteTo.File(new JsonFormatter(), "logs/app-.json", rollingInterval: RollingInterval.Day,
             retainedFileCountLimit: logFiles.App.RetainedFileCountLimit,
             fileSizeLimitBytes: logFiles.App.FileSizeLimitBytes,
             rollOnFileSizeLimit: true))
     .WriteTo.Logger(httpLog => httpLog
-        .Filter.ByIncludingOnly(log => log.Properties.ContainsKey("RequestPath"))
+        .Filter.ByIncludingOnly(HttpBodyLoggingMiddleware.IsHttpBodyEvent)
         .WriteTo.File(new JsonFormatter(), "logs/http-.json", rollingInterval: RollingInterval.Day,
             retainedFileCountLimit: logFiles.Http.RetainedFileCountLimit,
             fileSizeLimitBytes: logFiles.Http.FileSizeLimitBytes,

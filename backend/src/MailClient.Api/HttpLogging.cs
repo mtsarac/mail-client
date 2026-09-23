@@ -26,6 +26,13 @@ public sealed class HttpBodyLoggingMiddleware(
     IOptions<HttpLoggingOptions> options,
     Serilog.ILogger logger)
 {
+    // Every log event written inside a request carries ASP.NET's RequestPath scope property, so the app/http
+    // file split keys on this dedicated marker instead.
+    private const string HttpBodyEventProperty = "HttpBodyLog";
+
+    public static bool IsHttpBodyEvent(Serilog.Events.LogEvent logEvent) =>
+        logEvent.Properties.ContainsKey(HttpBodyEventProperty);
+
     public async Task InvokeAsync(HttpContext context)
     {
         var config = options.Value;
@@ -111,6 +118,7 @@ public sealed class HttpBodyLoggingMiddleware(
         var method = Sanitize(context.Request.Method);
         var query = context.Request.QueryString.Value;
         var log = logger
+            .ForContext(HttpBodyEventProperty, true)
             .ForContext("RequestPath", path)
             .ForContext("Path", path)
             .ForContext("Method", method)
