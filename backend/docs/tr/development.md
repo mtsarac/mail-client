@@ -49,12 +49,12 @@ davranışa karşı test için: HTTPS-redirect/HSTS mantığı aktif (düz LAN H
 üzerinde zararsız — HTTPS portu yapılandırılmadığı için Kestrel bir uyarı
 loglar ve isteği yine de sunar), Swagger ve dev CORS kapalı, FCM açık.
 Production modu yerleşik development JWT anahtarını reddeder ve profil bilerek
-bir anahtar commit'lemez: başlatmadan önce shell'de ya da Rider çalıştırma
-konfigürasyonunun ortam değişkenlerinde `Jwt__Key` (32+ rastgele karakter, ör.
-`export Jwt__Key=$(openssl rand -hex 32)`) tanımlayın. Ayrıca profilin
-`environmentVariables`'ının işaret ettiği gitignore'lu iki dosyaya ihtiyaç var;
-temiz bir clone önce bunları üretmeli/edinmeli:
+bir anahtar commit'lemez: `Jwt__KeyPath=./data/lan-jwt.key` ayarlar, anahtar bu
+dosyadan okunur. Profilin `environmentVariables`'ının işaret ettiği gitignore'lu
+üç dosyaya ihtiyaç var; temiz bir clone önce bunları üretmeli/edinmeli:
 
+- `backend/src/MailClient.Api/data/lan-jwt.key` — 32+ rastgele karakter:
+  `openssl rand -hex 32 > backend/src/MailClient.Api/data/lan-jwt.key`.
 - `backend/src/MailClient.Api/data/lan-dataprotection.pfx` — boş export
   şifreli self-signed bir Data Protection sertifikası:
   `openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 3650 -nodes -subj "/CN=mailclient-lan-dataprotection"`
