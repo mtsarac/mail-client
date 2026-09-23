@@ -69,6 +69,7 @@ public sealed class SyncServiceTests
         state.UidValidity = 6;
         state.LastUid = 500;
         state.NextUidScanStart = 999;
+        state.BackfillNextUid = 400;
         await db.SaveChangesAsync();
         db.ChangeTracker.Clear();
         var remote = new FakeRemoteMailFolder(7, new Dictionary<uint, Func<MimeKit.MimeMessage>>
@@ -83,6 +84,21 @@ public sealed class SyncServiceTests
         Assert.Equal(600u, updated.LastUid);
         Assert.Equal(601L, updated.NextUidScanStart);
         Assert.Single(await db.Mails.ToListAsync());
+        Assert.Equal(0, updated.BackfillNextUid);
+        Assert.Equal(0, remote.LastBackfillBelowUid);
+    }
+
+    [Fact]
+    public async Task ForwardSearch_WithoutServerUidNext_StillFindsNewMessages()
+    {
+        uint[] remoteUids = [5, 11, 12, 13];
+        var result = await Infrastructure.Email.MailKitRemoteMailFolder.SearchPagedAsync(10, 2, () => 0,
+            (low, high, _) => Task.FromResult<IList<MailKit.UniqueId>>(
+                [.. remoteUids.Where(uid => uid >= low && uid <= high).Select(uid => new MailKit.UniqueId(uid))]),
+            CancellationToken.None);
+
+        Assert.Equal([11u, 12u], result.Uids.Select(uid => uid.Id));
+        Assert.Equal(12u, result.ScannedUpTo);
     }
 
     [Fact]

@@ -247,6 +247,7 @@ public sealed class MailFolderSyncService(
             state.LastUid = 0;
             state.NextUidScanStart = 1;
             state.FlagScanCursorUid = 0;
+            state.BackfillNextUid = 0;
             StartNewestFirst(state, remote);
             await db.SaveChangesAsync(cancellationToken);
             foreach (var path in obsoletePaths)
