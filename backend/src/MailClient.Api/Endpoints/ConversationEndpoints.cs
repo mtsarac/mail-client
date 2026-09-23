@@ -24,7 +24,7 @@ public static class ConversationEndpoints
                 .OrderByDescending(conversation => conversation.LastMessageAt);
             var total = await query.CountAsync(ct);
             var items = await query
-                .Skip((number - 1) * size)
+                .Skip((int)Math.Min((long)(number - 1) * size, int.MaxValue))
                 .Take(size)
                 .Select(conversation => new ConversationSummaryResponse(
                     conversation.Id,

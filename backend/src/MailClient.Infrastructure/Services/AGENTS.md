@@ -10,7 +10,7 @@ Core mail behavior: synchronization, remote-first mutations, sending, reads, rec
 | Send flow | `MailSendService.cs`, `SendOperationStore.cs` | Remote send plus idempotency and attachment hashing. |
 | Mutations | `MailOperationService.cs` | Move, flag, delete; remote-first conflict behavior. |
 | Reconciliation | `MailReconciliationService.cs` | Align remote and local state. |
-| Reads | `MailReadService.cs`, `MailQueryService.cs` | Account-scoped projections and content handling. |
+| Reads | `MailReadService.cs`, `MailSearchService.cs` | Account-scoped projections, list/search and content handling. |
 | Threads | `ConversationService.cs` | Message-ID/reference graph with subject fallback. |
 
 ## CONVENTIONS

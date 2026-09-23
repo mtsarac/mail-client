@@ -32,14 +32,11 @@ public static class MailEndpoints
             var result = await search.SearchAsync(current.MailAccountId, new MailSearchRequest(q, folderId, conversationId, from, to, fromDate, toDate, isRead, flagged, hasAttachment, page ?? 1, pageSize ?? 0), ct);
             return Results.Ok(result);
         }).WithTags(SearchTag).WithName("SearchMails").WithSummary("Search account mailbox").WithDescription("Searches cached mail of the current mailbox. All filters are optional and combined with AND.").Produces<MailListResponse>();
-        api.MapGet("/mails", async (Guid? folderId, bool? isRead, bool? hasAttachments, string? search, int? page, int? pageSize, ICurrentMailAccount current, MailQueryService query, CancellationToken ct) =>
-        {
-            var result = await query.ListAsync(
+        api.MapGet("/mails", async (Guid? folderId, bool? isRead, bool? hasAttachments, string? search, int? page, int? pageSize, ICurrentMailAccount current, MailSearchService searcher, CancellationToken ct) =>
+            Results.Ok(await searcher.SearchAsync(
                 current.MailAccountId,
-                new MailListRequest(folderId, isRead, hasAttachments, search, page ?? 1, pageSize ?? 0),
-                ct);
-            return Results.Ok(result);
-        }).WithTags(MailTag).WithName("ListMails").WithSummary("List mailbox mail").WithDescription("Account-scoped list, newest first. Supports folderId, isRead, hasAttachments, search, page, pageSize (max 100).").Produces<MailListResponse>();
+                new MailSearchRequest(search, folderId, null, null, null, null, null, isRead, null, hasAttachments, page ?? 1, pageSize ?? 0),
+                ct))).WithTags(MailTag).WithName("ListMails").WithSummary("List mailbox mail").WithDescription("Account-scoped list, newest first. Supports folderId, isRead, hasAttachments, search, page, pageSize (max 100).").Produces<MailListResponse>();
         api.MapGet("/mails/{id:guid}", async (Guid id, ICurrentMailAccount current, MailReadService reader, CancellationToken ct) => await reader.GetAsync(current.MailAccountId, id, ct) is { } mail ? Results.Ok(mail) : Results.NotFound()).WithTags(MailTag).WithName("GetMail").WithSummary("Get mailbox mail").WithDescription("Full mail with sanitized body and attachment metadata. `id` comes from list/search results.").Produces<MailDetailResponse>().Produces(404);
         api.MapGet("/drafts/{id:guid}", async (Guid id, ICurrentMailAccount current, DraftService drafts, CancellationToken ct) => await drafts.GetAsync(current.MailAccountId, id, ct) switch
         {

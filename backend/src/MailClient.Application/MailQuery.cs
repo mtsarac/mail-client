@@ -1,13 +1,5 @@
 namespace MailClient.Application.Mail;
 
-public sealed record MailListRequest(
-    Guid? FolderId,
-    bool? IsRead,
-    bool? HasAttachments,
-    string? Search,
-    int Page,
-    int PageSize);
-
 public sealed record MailParticipantResponse(
     Guid Id,
     string Type,
