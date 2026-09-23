@@ -29,21 +29,28 @@ public static class ConversationEndpoints
                 .Select(conversation => new ConversationSummaryResponse(
                     conversation.Id,
                     conversation.NormalizedSubject,
-                    db.Mails
-                        .Where(mail => mail.ConversationId == conversation.Id)
-                        .SelectMany(mail => mail.Participants)
-                        .Where(participant => participant.Type == MailClient.Domain.Enums.ParticipantType.From)
-                        .Distinct()
-                        .OrderBy(participant => participant.SortOrder)
-                        .Select(participant => participant.DisplayName != "" ? participant.DisplayName : participant.Address)
-                        .Take(10)
-                        .ToList(),
+                    Array.Empty<string>(),
                     db.Mails.Count(mail => mail.ConversationId == conversation.Id),
                     db.Mails.Count(mail => mail.ConversationId == conversation.Id && !mail.IsRead),
                     db.Mails.Any(mail => mail.ConversationId == conversation.Id && mail.HasAttachments),
                     conversation.StartedAt,
                     conversation.LastMessageAt))
                 .ToListAsync(ct);
+
+            // Distinct sender names per conversation; a correlated DISTINCT subquery in the projection above cannot be
+            // translated by EF Core, so the page's senders are loaded in one extra query and grouped here.
+            var conversationIds = items.Select(item => (Guid?)item.Id).ToList();
+            var senders = (await db.Mails
+                    .Where(mail => mail.MailAccountId == accountId && conversationIds.Contains(mail.ConversationId))
+                    .SelectMany(mail => mail.Participants
+                        .Where(participant => participant.Type == MailClient.Domain.Enums.ParticipantType.From)
+                        .Select(participant => new { mail.ConversationId, Name = participant.DisplayName != "" ? participant.DisplayName : participant.Address }))
+                    .Distinct()
+                    .ToListAsync(ct))
+                .ToLookup(sender => sender.ConversationId, sender => sender.Name);
+            items = items
+                .Select(item => item with { Participants = senders[item.Id].Order(StringComparer.Ordinal).Take(10).ToList() })
+                .ToList();
             return Results.Ok(new ConversationListResponse(items, number, size, total));
         }).WithName("ListConversations").WithSummary("List account conversations").WithDescription("Newest first. pageSize is capped at 100.").Produces<ConversationListResponse>();
 

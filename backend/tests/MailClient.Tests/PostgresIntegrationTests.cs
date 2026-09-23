@@ -10,6 +10,8 @@ using MailClient.Infrastructure.Security;
 using MailClient.Infrastructure.Services;
 using MailClient.Infrastructure.Sync;
 using Microsoft.EntityFrameworkCore;
+using System.Net.Http.Json;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 
@@ -482,6 +484,40 @@ public sealed class PostgresIntegrationTests(PostgresFixture fixture)
             await allowRefresh.Task.WaitAsync(cancellationToken);
             return token;
         }
+    }
+
+    [Fact]
+    public async Task ConversationEndpoints_TranslateOnPostgres_WithDistinctSendersAndOwnMessages()
+    {
+        if (!IntegrationEnvironment.PostgresEnabled) return;
+        var accountId = await SeedAccountAsync();
+        var conversationId = Guid.NewGuid();
+        await using (var db = fixture.CreateDb())
+        {
+            var folderId = await SeedFolderAsync(db, accountId);
+            var ownAddress = await db.MailAccounts.Where(account => account.Id == accountId).Select(account => account.EmailAddress).SingleAsync();
+            db.Conversations.Add(new Conversation { Id = conversationId, MailAccountId = accountId, NormalizedSubject = "pg thread", StartedAt = DateTime.UtcNow, LastMessageAt = DateTime.UtcNow });
+            foreach (var (uid, from, name) in new[] { (401u, "alice@example.test", "Alice"), (402u, "alice@example.test", "Alice"), (403u, ownAddress.ToUpperInvariant(), "Me") })
+            {
+                var mail = Mail(accountId, folderId, uid);
+                mail.ConversationId = conversationId;
+                mail.FromAddress = from;
+                mail.Participants.Add(new MailParticipant { Id = Guid.NewGuid(), MailId = mail.Id, Type = ParticipantType.From, Address = from, NormalizedAddress = from.ToLowerInvariant(), DisplayName = name });
+                db.Mails.Add(mail);
+            }
+            await db.SaveChangesAsync();
+        }
+
+        using var factory = new NpgsqlApiFactory(fixture.ConnectionString);
+        var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer",
+            factory.Services.GetRequiredService<MailClient.Application.Accounts.IJwtTokenIssuer>().Issue(accountId).Token);
+
+        var list = await client.GetFromJsonAsync<System.Text.Json.JsonDocument>("/api/conversations");
+        var detail = await client.GetFromJsonAsync<System.Text.Json.JsonDocument>($"/api/conversations/{conversationId}");
+
+        Assert.Equal(["Alice", "Me"], list!.RootElement.GetProperty("items")[0].GetProperty("participants").EnumerateArray().Select(name => name.GetString()));
+        Assert.Equal([false, false, true], detail!.RootElement.GetProperty("messages").EnumerateArray().Select(message => message.GetProperty("isFromMe").GetBoolean()));
     }
 
     private static async Task<Guid> SeedFolderAsync(AppDbContext db, Guid accountId)

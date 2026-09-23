@@ -22,7 +22,8 @@ public sealed class ConversationApiTests(AcceptingApiFactory factory) : IClassFi
         await SeedConversationAsync(accountId, convId: Guid.NewGuid(), subject: "Quarterly Report", mails:
         [
             new SeedMail("sender@corp.example", "Alice", SentAt: DateTime.UtcNow.AddHours(-2), IsRead: true, HasAttachments: true),
-            new SeedMail("bob@corp.example", "Bob", SentAt: DateTime.UtcNow.AddHours(-1), IsRead: false, HasAttachments: false)
+            new SeedMail("bob@corp.example", "Bob", SentAt: DateTime.UtcNow.AddHours(-1), IsRead: false, HasAttachments: false),
+            new SeedMail("sender@corp.example", "Alice", SentAt: DateTime.UtcNow.AddMinutes(-30), IsRead: true, HasAttachments: false)
         ]);
         await SeedConversationAsync(accountId, convId: Guid.NewGuid(), subject: "Lunch Plans", mails:
         [
@@ -39,10 +40,10 @@ public sealed class ConversationApiTests(AcceptingApiFactory factory) : IClassFi
         var items = root.GetProperty("items");
         Assert.Equal(2, items.GetArrayLength());
         var quarterly = items.EnumerateArray().First(i => i.GetProperty("subject").GetString() == "Quarterly Report");
-        Assert.Equal(2, quarterly.GetProperty("messageCount").GetInt32());
+        Assert.Equal(3, quarterly.GetProperty("messageCount").GetInt32());
         Assert.Equal(1, quarterly.GetProperty("unreadCount").GetInt32());
         Assert.True(quarterly.GetProperty("hasAttachments").GetBoolean());
-        Assert.Contains("Alice", quarterly.GetProperty("participants").EnumerateArray().Select(p => p.GetString()));
+        Assert.Equal(["Alice", "Bob"], quarterly.GetProperty("participants").EnumerateArray().Select(p => p.GetString()));
     }
 
     [Fact]
