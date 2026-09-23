@@ -16,11 +16,11 @@ public sealed class MailClientOperationFilter : IOperationFilter
         ["folderId"] = "Folder id from GET /api/folders.",
         ["conversationId"] = "Conversation id from GET /api/conversations.",
         ["q"] = "Free-text query, e.g. 'invoice'.",
-        ["search"] = "Free-text filter on subject/sender.",
-        ["from"] = "Sender address or name contains this text.",
-        ["to"] = "Recipient address or name contains this text.",
-        ["fromDate"] = "Only mail sent on or after this UTC date-time.",
-        ["toDate"] = "Only mail sent on or before this UTC date-time.",
+        ["search"] = "Free-text search, same as `q` on GET /api/search (subject, body, participants, attachment names).",
+        ["from"] = "Sender address or name contains this text (case-insensitive).",
+        ["to"] = "A To/Cc/Bcc recipient address or name contains this text (case-insensitive).",
+        ["fromDate"] = "Only mail received at or after this date-time (UTC when no offset is given).",
+        ["toDate"] = "Only mail received before this date-time, exclusive (UTC when no offset is given).",
         ["isRead"] = "true = read only, false = unread only, omitted = both.",
         ["flagged"] = "true = starred only.",
         ["hasAttachment"] = "true = only mail with attachments.",
@@ -87,8 +87,8 @@ public sealed class MailClientOperationFilter : IOperationFilter
                 parameter.Description = path.Contains("/folders/") ? "Folder id." : path.Contains("/devices/") ? "Device id." : path.Contains("/conversations/") ? "Conversation id." : "Mail id.";
             if (parameter.Name == "action" && parameter.Schema is OpenApiSchema schema)
             {
-                parameter.Description = "Bulk operation: read, unread, archive, trash or move (move requires folderId in the body).";
-                schema.Enum = ["read", "unread", "archive", "trash", "move"];
+                parameter.Description = "Bulk operation (move requires folderId in the body).";
+                schema.Enum = ["read", "unread", "star", "unstar", "archive", "trash", "restore", "spam", "not-spam", "move"];
             }
             if (parameter.Name == "provider" && parameter.Schema is OpenApiSchema providerSchema)
                 providerSchema.Enum = ["google", "microsoft"];

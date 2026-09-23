@@ -22,10 +22,16 @@ Host ports default to `5432` (Postgres), `3143`/`3025` (GreenMail IMAP/SMTP),
 `GREENMAIL_SMTP_PORT` / `API_PORT` in `.env` if those collide with something
 already running on your machine.
 
-Without Docker: start PostgreSQL, set `ConnectionStrings__Default` in `.env`,
-apply migrations, then run the API:
+Without Docker: start PostgreSQL, apply migrations, then run the API.
+`dotnet run` does not read `.env` — set configuration as real environment
+variables (e.g. `export ConnectionStrings__Default=...`) or rely on the
+`appsettings.json` defaults (local `postgres`/`postgres`, database
+`mailclient_v2`). `dotnet ef` uses `DesignTimeDbContextFactory`, which reads
+`MAILCLIENT_V2_CONNECTION` instead (fallback: the same local database with
+`GSS Encryption Mode=Disable`):
 
 ```bash
+export MAILCLIENT_V2_CONNECTION="Host=localhost;Port=5432;Database=mailclient_v2;Username=postgres;Password=postgres"
 dotnet ef database update --project backend/src/MailClient.Infrastructure --startup-project backend/src/MailClient.Api
 dotnet run --project backend/src/MailClient.Api
 ```
@@ -58,7 +64,8 @@ at, so a fresh clone must generate/obtain them first:
 
 ## Firebase Cloud Messaging
 
-Optional; push notifications no-op unless enabled. Set in `.env`:
+Optional; push notifications no-op unless enabled. Set as environment
+variables (or in `.env` under Docker):
 `Firebase__Enabled=true`, `Firebase__ProjectId=<id>`,
 `Firebase__CredentialsPath=<path to a service-account JSON>` (get one from
 Firebase Console → Project settings → Service accounts). Under Docker,

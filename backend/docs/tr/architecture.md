@@ -16,8 +16,10 @@ Api ──► Infrastructure ──► Application ──► Domain
 | `MailClient.Infrastructure` | EF Core (`AppDbContext`, migration'lar), MailKit IMAP/SMTP, keşif, OAuth, push (Firebase), ek depolama (yerel/S3), sync coordinator, tüm servis implementasyonları. |
 | `MailClient.Api` | `Program.cs`, middleware, endpoint grupları (`Endpoints/`), JWT, telemetri, Swagger. |
 
-Kural: sağlayıcıya özgü MailKit/IMAP/SMTP kodu Infrastructure'da kalır; endpoint'ler
-ince tutulur ve servislere delege eder.
+Kural: sağlayıcıya özgü MailKit/IMAP/SMTP kodu Infrastructure'da kalır; posta,
+hesap, gönderim ve sync davranışı servislerdedir. Basit okuma projeksiyonları
+(hesap, klasörler, konuşmalar, ek indirme) ve düz CRUD (cihaz token'ları,
+allowlist kayıtları) `Endpoints/*.cs` içinde doğrudan `AppDbContext` sorgular.
 
 ## İstek hattı
 
@@ -42,23 +44,27 @@ ince tutulur ve servislere delege eder.
 
 - **Okuma:** arka plandaki `SyncCoordinator` her hesabın klasörlerini IMAP ile
   yoklar (aralık, eşzamanlılık ve retry limitleri runtime ayarlarından gelir);
-  posta, konuşma ve ekler PostgreSQL'e yazılır. Endpoint'ler yerel kopyayı okur.
-  `POST /api/folders/{id}/sync` anında sync kuyruğa alır (202).
+  posta, konuşma ve ekler PostgreSQL'e yazılır. Hesaplar `MaxConcurrentAccounts`
+  sınırına kadar eşzamanlı sync edilir; yavaş bir hesap diğerlerini bekletmez.
+  Endpoint'ler yerel kopyayı okur. `POST /api/folders/{id}/sync` anında sync
+  kuyruğa alır (202).
 - **Yazma:** değişiklikler (okundu, yıldız, taşı, çöpe…) *remote-first*'tür:
   IMAP sunucusunda UID/UIDVALIDITY ile uygulanır, sonra yerele yansıtılır.
   Reconciliation servisi sapmaları düzeltir.
 - **Gönderim:** taslak ve doğrudan gönderim SMTP'den geçer; `Idempotency-Key`
-  tekrar denemeleri güvenli yapar (`SendOperation`).
+  tekrar denemeleri güvenli yapar (`SendOperation`). Ardından Sent/Drafts
+  klasörü yalnızca hesabın sync kilidi boştaysa istek içinde sync edilir; değilse
+  kullanıcı öncelikli bir sync kuyruğa alınır (`InlineFolderSync`).
 - **Push:** yeni posta, durum değişikliği, yeniden kimlik doğrulama ve sync
   hatası için Firebase bildirimleri (her biri runtime ayarıyla açılıp kapanır).
 
 ## Güvenlik önlemleri
 
-- Posta kimlik bilgileri ASP.NET Data Protection ile şifrelenir (`CredentialProtector`).
+- Posta kimlik bilgileri ASP.NET Data Protection ile şifrelenir (`ICredentialProtector`).
 - Keşif ve dış bağlantılarda SSRF koruması (`OutboundHostValidator`,
   `SsrfSafeDiscoveryHttpHandler`); özel ağ adresleri yalnızca Development'ta serbest.
 - Log maskeleme (`LogRedactor`); metrik etiketlerinde adres veya posta ID'si yok.
-- HTML posta içeriği temizlenerek işlenir; ekler `IAttachmentStorage` ile saklanır.
+- HTML posta içeriği temizlenerek işlenir; ekler `IFileStorage` ile saklanır.
 - İsteğe bağlı e-posta allowlist'i ([Kimlik doğrulama](authentication.md)).
 
 ## Runtime ayarları

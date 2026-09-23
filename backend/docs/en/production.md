@@ -27,7 +27,7 @@ Fill in `.env`:
 | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | Used for the `postgres` container and interpolated into `ConnectionStrings__Default`. |
 | `Jwt__Key` | 32+ random characters. Startup rejects the built-in development key outside `Development`. |
 | `DATAPROTECTION_CERT_HOST_PATH` | Host path to a `.pfx` protecting the Data Protection key ring (compose maps it to `/run/secrets/dataprotection.pfx`, fixed by `DataProtection__CertificatePath` in the compose file). Generate one with an **empty export password** — the app loads it via `X509CertificateLoader.LoadPkcs12FromFile(path, password: "")`: `openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 3650 -nodes -subj "/CN=mailclient-dataprotection"` then `openssl pkcs12 -export -out dataprotection.pfx -inkey key.pem -in cert.pem -passout pass:`. **Back this file up** — losing it makes every stored mail credential undecryptable; every account needs reauthentication. Same for the `protection-keys` volume. |
-| `Proxy__KnownProxies__0` / `Proxy__KnownNetworks__0` | The reverse proxy's address(es), so `X-Forwarded-*` is trusted. **Required** if you're behind a reverse proxy: without it, `UseHttpsRedirection`/`UseHsts` see every request as plain HTTP (the proxy talks HTTP internally) and redirect it to HTTPS forever — an infinite redirect loop. |
+| `Proxy__KnownProxies__0` / `Proxy__KnownNetworks__0` | The reverse proxy's address(es), so `X-Forwarded-*` is trusted. **Required** if you're behind a reverse proxy: without it every request looks like plain HTTP coming from the proxy's IP. HTTPS redirection cannot determine an HTTPS port (logs "Failed to determine the https port for redirect" and does not redirect), HSTS headers are never sent, and all anonymous clients share one rate-limit partition (60 requests/min in total, including `/api/auth/refresh`, login and discover). |
 | Any OAuth / Storage / Observability / Management values you need | See the comments in `.env.example` — written for exactly this deployment. Full reference: [Configuration](configuration.md). |
 
 ## 3. Run
@@ -35,6 +35,14 @@ Fill in `.env`:
 ```bash
 docker compose -f docker-compose.prod.yml up --build -d
 ```
+
+Behind the existing Traefik + Cloudflare Tunnel setup, use
+`docker-compose.traefik.yml` instead (same commands with that `-f` file): the
+API joins the external `traefik-net` network with no published ports, the Host
+rule comes from `MAIL_DOMAIN`, and the Data Protection certificate / Firebase
+service account are bind-mounted from `/srv/mail/secrets/`. Set
+`Proxy__KnownNetworks__0` to the `traefik-net` subnet as described in
+`.env.example`.
 
 `migrate` runs once, applies pending EF Core migrations, exits `0`; `api` only
 starts after that succeeds (`depends_on: condition: service_completed_successfully`).
@@ -60,7 +68,8 @@ table):
 - `UseHttpsRedirection` and `UseHsts` are enabled — only correct once a
   reverse proxy is in front and `Proxy__KnownProxies`/`Proxy__KnownNetworks`
   are set (see the table above).
-- The Kestrel `Server` response header is suppressed.
+- The Kestrel `Server` response header is suppressed (in every environment,
+  not only Production).
 - Unhandled-exception responses omit exception details (only `code` and
   `correlationId`).
 

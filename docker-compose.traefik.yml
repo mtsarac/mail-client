@@ -7,7 +7,7 @@
 #     purely through Traefik docker-provider labels — no published ports.
 #   - postgres and migrate sit on a private "internal" network that is not
 #     attached to traefik-net and has no reverse-proxy exposure at all.
-#   - Certificates for Proxy__CertificatePath and the Firebase service
+#   - Certificates for DataProtection__CertificatePath and the Firebase service
 #     account are bind-mounted from /srv/mail/secrets/ on the host (git-sync
 #     deployments never commit these). Everything else that needs to persist
 #     (pgdata, attachments, protection-keys, logs) uses named Docker volumes.

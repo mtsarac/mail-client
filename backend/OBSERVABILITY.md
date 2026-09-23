@@ -143,6 +143,9 @@ Adding a new instrument or tag must go through `MailClientMetrics` / `MailClient
 ## Logs
 
 - `logs/app-*.json` (application) and `logs/http-*.json` (redacted HTTP bodies) roll daily and on size, keeping the configured number of files. No Elasticsearch or Loki dependency is needed.
+- `logs/http-*.json` holds only the HTTP body log events (marked with the `HttpBodyLog` property). Everything else, including application errors and warnings written while a request is running, goes to `logs/app-*.json`.
+- Logged bodies are redacted: secret keys (passwords, tokens, API keys, …) become `[REDACTED]`, as do `code`/`state` in an OAuth authorization response; mail content (`bodyHtml`, `bodyText`, `html`, `snippet`) is reduced to its length.
+- Expected API failures (stable 4xx codes) are not logged as errors. Server (5xx) failures are logged once by the exception handler (`Request failed with {Code} for {Method} {Path}.`).
 - Every event written inside an Activity includes `TraceId` and `SpanId`, so background sync logs correlate with traces. HTTP requests keep `CorrelationId` (the `X-Correlation-ID` header), and authenticated requests keep `MailAccountId`.
 - Scheduler logs describe failures by failure category, origin, folder type and attempt, without account or folder GUIDs.
 - Unreadable or invalid persisted runtime settings are logged as errors, increment `mailclient.runtime_settings.load_failures`, and fail the operation; they are never silently replaced with defaults.

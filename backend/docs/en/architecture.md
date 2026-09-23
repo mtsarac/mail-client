@@ -17,7 +17,9 @@ Api ──► Infrastructure ──► Application ──► Domain
 | `MailClient.Api` | `Program.cs` wiring, middleware, endpoint groups (`Endpoints/`), JWT, telemetry, Swagger. |
 
 Rule of thumb: provider-specific MailKit/IMAP/SMTP code stays in Infrastructure;
-endpoints stay thin and delegate to services.
+mail, account, send and sync behavior lives in services. Simple read projections
+(account, folders, conversations, attachment download) and plain CRUD (device
+tokens, allowlist entries) query `AppDbContext` directly in `Endpoints/*.cs`.
 
 ## Request pipeline
 
@@ -42,23 +44,27 @@ Middleware order in `Program.cs`:
 
 - **Read path:** a background `SyncCoordinator` polls each account's folders over
   IMAP (interval, concurrency and retry limits come from runtime settings) and
-  stores mail, conversations and attachments in PostgreSQL. Endpoints read the
-  local copy. `POST /api/folders/{id}/sync` queues an immediate sync (202).
+  stores mail, conversations and attachments in PostgreSQL. Accounts sync
+  concurrently up to `MaxConcurrentAccounts`; a slow account does not hold up the
+  others. Endpoints read the local copy. `POST /api/folders/{id}/sync` queues an
+  immediate sync (202).
 - **Write path:** mutations (read, star, move, trash…) are *remote-first*: applied
   on the IMAP server using UID/UIDVALIDITY, then mirrored locally. A
   reconciliation service repairs drift.
 - **Send:** drafts and direct sends go through SMTP; `Idempotency-Key` makes
-  retries safe (`SendOperation`).
+  retries safe (`SendOperation`). Afterwards the Sent/Drafts folder is synced
+  inline only if the account sync lock is free; otherwise a user-priority sync is
+  queued (`InlineFolderSync`).
 - **Push:** Firebase notifications for new mail, state changes, re-authentication
   and sync errors (each toggle is a runtime setting).
 
 ## Security safeguards
 
-- Mail credentials encrypted with ASP.NET Data Protection (`CredentialProtector`).
+- Mail credentials encrypted with ASP.NET Data Protection (`ICredentialProtector`).
 - SSRF protection for discovery and outbound hosts (`OutboundHostValidator`,
   `SsrfSafeDiscoveryHttpHandler`); private hosts only allowed in Development.
 - Log redaction (`LogRedactor`); no addresses or mail IDs in metric labels.
-- Sanitized HTML mail rendering; attachments stored via `IAttachmentStorage`.
+- Sanitized HTML mail rendering; attachments stored via `IFileStorage`.
 - Optional email allowlist (see [Authentication](authentication.md)).
 
 ## Runtime settings

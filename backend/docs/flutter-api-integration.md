@@ -45,7 +45,7 @@ Bir posta kutusunu bağlamaktan ilk mail listesini çekmeye kadar gerçek istek 
 
 **1. Hata gövdesi tek biçim.** Her hata RFC 9110 Problem Details formatında döner: `{ code, title, status, correlationId }`. İstemci tarafında switch/case'i her zaman `code` alanı üzerinden yaz; `title` insan-okur metindir, sabit kalacağı garanti değildir.
 
-**2. Idempotency-Key zorunlu.** Mail gönderen iki uç (`/mails/send`, `/drafts/{id}/send`) `Idempotency-Key` header'ı ister; yoksa `400 idempotency_key_required`. Uygulama içi bir UUID üret, aynı gönderim denemesinde aynı key'i tekrar kullan (retry'da çift mail gitmesin diye). Aynı key + aynı gövdeyle tekrar çağrı, gönderimi tekrarlamaz — kayıtlı sonuç aynen döner.
+**2. Idempotency-Key zorunlu.** Mail gönderen iki uç (`/mails/send`, `/drafts/{id}/send`) `Idempotency-Key` header'ı ister; yoksa `400 idempotency_key_required`, 200 karakterden uzunsa `400 idempotency_key_too_long`. Uygulama içi bir UUID üret, aynı gönderim denemesinde aynı key'i tekrar kullan (retry'da çift mail gitmesin diye). Aynı key + aynı gövdeyle tekrar çağrı, gönderimi tekrarlamaz — kayıtlı sonuç aynen döner.
 
 **3. Hız sınırı.** Hesap (girişliyse) ya da IP başına dakikada 60 istek (sabit pencere). Aşımda `429` döner, gövdesiz; `Retry-After` header'ı (saniye) beklenmesi gereken süreyi verir — backoff'u ona göre yap. `/health`, `/metrics` hariçtir.
 
@@ -368,6 +368,10 @@ Hesap kapsamında liste, en yeni önce (`receivedAt`). Query: `folderId`, `isRea
 
 Yalnızca sunucudaki önbellekli maillerde tam metin + filtreli arama; tüm filtreler opsiyonel ve AND'lenir. Query: `q`, `folderId`, `conversationId`, `from`, `to`, `fromDate`, `toDate` (ISO-8601), `isRead`, `flagged`, `hasAttachment` (dikkat: `/mails`'te `hasAttachments`), `page`, `pageSize`. Yanıt şekli `/mails` ile birebir aynı (`MailListResponse`).
 
+- `from`: gönderen adresi ya da görünen adında büyük/küçük harf duyarsız "içerir" araması.
+- `to`: herhangi bir To/Cc/Bcc alıcısının adresi ya da adında büyük/küçük harf duyarsız "içerir" araması.
+- `fromDate` / `toDate`: alınma zamanına (`receivedAt`) göre filtreler; `fromDate` dahil, `toDate` hariç. UTC ofseti olmayan değerler UTC kabul edilir.
+
 ### `GET /api/mails/{id}`
 **Auth:** Bearer
 
@@ -396,7 +400,7 @@ Tam mail içeriği: gövde, katılımcılar, header'lar, ekler.
 }
 ```
 
-`conversationId` her zaman dolu gelir (tek mailse kendi konuşması); `isFromMe` Gönderilmiş/Taslak klasöründeki mailler ya da gönderen hesabın kendi adresi ise `true`. HTML-only maillerde `bodyText` sunucuda HTML'den üretilir (yalnızca yeni senkronlanan mailler için). `body.html` sunucuda üretilen render edilebilir HTML'dir; yalnızca metin gerekirse `bodyText`. `isInline: true` ekler HTML içinde `cid:<contentId>` ile referanslanır — WebView'de bu URL'leri ek indirme ucuyla eşleştirmen gerekir. Bulunamazsa `404 mail_not_found`.
+`conversationId` her zaman dolu gelir (tek mailse kendi konuşması); `isFromMe` Gönderilmiş/Taslak klasöründeki mailler için ya da gönderen adresi hesabın adresiyle (büyük/küçük harf duyarsız) aynıysa hangi klasörde olursa olsun `true`. HTML-only maillerde `bodyText` sunucuda HTML'den üretilir (yalnızca yeni senkronlanan mailler için). `body.html` sunucuda üretilen render edilebilir HTML'dir; yalnızca metin gerekirse `bodyText`. `isInline: true` ekler HTML içinde `cid:<contentId>` ile referanslanır — WebView'de bu URL'leri ek indirme ucuyla eşleştirmen gerekir. Bulunamazsa `404 mail_not_found`.
 
 `body.hasRemoteContent` true ise HTML gövdede dış kaynaklı içerik (izleme pikseli olabilir) var — `WebView`'de uzak içerik yüklemeden önce kullanıcıya sor.
 
@@ -478,7 +482,7 @@ Aynı işlemi birden çok maile tek istekte uygular. `action`: `read`, `unread`,
 |---|---|---|
 | 200 | — | İstek kabul edildi, her item'ın kendi sonucu `results` içinde. |
 | 400 | — | `mailIds` boş, 100'den fazla eleman içeriyor, ya da `action: move` iken `folderId` eksik (ValidationProblem). |
-| 404 | — | `action` bilinmeyen bir değer (yukarıdaki 5 değerin dışında). |
+| 404 | — | `action` bilinmeyen bir değer (yukarıdaki 10 değerin dışında). |
 
 > `mailIds` başına en fazla **100** eleman kabul edilir. `Idempotency-Key` bu uçta **gerekli değildir** — sadece gönderim uçlarında zorunlu (bkz. [Hızlı başlangıç, kural 2](#bilmen-gereken-dört-kural)).
 
@@ -547,7 +551,7 @@ Taslağı siler, `204` döner. Hatalar: `404 draft_not_found`, `422 trash_folder
 ### `POST /api/drafts/{id}/send`
 **Auth:** Bearer
 
-Taslağı olduğu gibi gönderir, gövde yok. `Idempotency-Key` header'ı **zorunlu** (bkz. [Hızlı başlangıç, kural 2](#bilmen-gereken-dört-kural)). Hatalar `/mails/send` tablosuyla aynıdır (+ `404 draft_not_found`, `422 mail_not_draft`). `draftRemoved: false` ise mail gitmiştir ama taslak silinememiştir — kullanıcıya "gönderildi" göster, hata gösterme.
+Taslağı olduğu gibi gönderir, gövde yok. `Idempotency-Key` header'ı **zorunlu** (bkz. [Hızlı başlangıç, kural 2](#bilmen-gereken-dört-kural)). Hatalar `/mails/send` tablosuyla aynıdır (+ `404 draft_not_found`, `422 mail_not_draft`). `draftRemoved: false` ise mail gitmiştir ama taslak silinememiştir — kullanıcıya "gönderildi" göster, hata gösterme. Başarılı bir gönderimi aynı `Idempotency-Key` ile tekrar çağırırsan (ör. yanıt ağda kaybolduysa) `422 mail_not_draft` yerine kayıtlı sonuç tekrar döner (`sent: true`, `draftRemoved: true`; `mailId` / `conversationId` `null`).
 
 ```json
 // 200 OK
@@ -574,7 +578,8 @@ Kopya kaydedildiyse sunucu Gönderilmiş klasörünü hemen senkronlar; `mailId`
 
 | Durum | code | Anlamı |
 |---|---|---|
-| 400 | `idempotency_key_required` | Header eksik ya da >200 karakter. |
+| 400 | `idempotency_key_required` | Header eksik. |
+| 400 | `idempotency_key_too_long` | Header 200 karakterden uzun. |
 | 400 | `recipient_required` / `body_required` / `body_too_large` / `invalid_recipient` / `invalid_mail_header` / `message_not_constructible` | Form doğrulaması (alıcı yok, gövde boş/çok büyük, adres ya da konu başlık enjeksiyonu içeriyor…). |
 | 400 | `attachment_too_large` / `too_many_attachments` | Sunucu limitleri (varsayılan tekil ek 25 MB, mail toplamı 50 MB; en fazla 20 ek — sunucuda runtime'da değişebilir, istemcide sabit kodlama, ekleri seçerken önden 25 MB kontrolü yap). |
 | 409 | `idempotency_conflict` | Aynı key farklı bir gövdeyle tekrar gönderildi — aynı key'i yeni bir gönderimde kullanma. |
@@ -595,7 +600,7 @@ Mailleri `Message-ID` / `In-Reply-To` / `References` zincirine göre gruplar; zi
 ### `GET /api/conversations`
 **Auth:** Bearer
 
-Query: `page`, `pageSize` (üst sınır 100).
+Query: `page`, `pageSize` (üst sınır 100). `participants` konuşmadaki gönderenlerin tekilleştirilmiş adlarıdır (görünen ad, yoksa adres), alfabetik, en fazla 10.
 
 ```json
 // 200 OK
@@ -612,7 +617,7 @@ Query: `page`, `pageSize` (üst sınır 100).
 ### `GET /api/conversations/{id}`
 **Auth:** Bearer
 
-Query: `includeTrash=false` Çöp ve Spam klasörlerindeki mesajları dışarıda bırakır (varsayılan: tüm klasörler). `include=body` her mesaja `bodyText` ve `body` (`GET /api/mails/{id}` ile aynı şekil) ekler — thread'i N istek yerine tek istekte çekmek için.
+Query: `includeTrash=false` Çöp ve Spam klasörlerindeki mesajları dışarıda bırakır (varsayılan: tüm klasörler). `include=body` her mesaja `bodyText` ve `body` (`GET /api/mails/{id}` ile aynı şekil) ekler — thread'i N istek yerine tek istekte çekmek için. `isFromMe`, `GET /api/mails/{id}` ile aynı kuralla hesaplanır.
 
 ```json
 // 200 OK
@@ -693,6 +698,7 @@ Her hata gövdesi `{ code, title, status, correlationId }` — bazılarında ek 
 | 401 | `mail_smtp_authentication_failed` | SMTP şifre reddi (gönderim/connect-manual). |
 | 401 | `session_revoked` | Yalnızca `/auth/logout`: oturum zaten iptal — başarı say. |
 | 401 | `management_unauthorized` | Yalnızca yönetim uçları; istemci tarafını ilgilendirmez. |
+| 400 | `invalid_request` | İstek gövdesi okunamadı (ör. bozuk JSON). Yarıda kesilmiş multipart gövde ise gövdesiz `400` döner. |
 | 400 | `invalid_email` / `invalid_recipient` / `recipient_required` / `body_required` / `body_too_large` / `too_many_attachments` / `attachment_too_large` / `invalid_mail_header` / `message_not_constructible` / `manual_setup_invalid` | Form/gövde doğrulaması. |
 | 400 | `idempotency_key_required` / `idempotency_key_too_long` | Gönderim uçları. |
 | 403 | `email_not_allowlisted` | Prod erişim listesi açık, email listede değil — bkz. [altta](#10-prod-erişim-listesi-allowlist). |

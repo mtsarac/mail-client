@@ -11,7 +11,8 @@
 
 ASP.NET Core kuralı geçerlidir: JSON'daki `Section:Key`, ortam değişkeni olarak
 `Section__Key` yazılır. `.env.example` dosyasını `.env` olarak kopyalayın
-(commit etmeyin).
+(commit etmeyin); `.env`'i yalnızca Docker Compose okur — `dotnet run` onu
+yüklemez (bkz. [Geliştirme](development.md#yerelde-çalıştırma)).
 
 ## Statik ayarlar
 
@@ -24,8 +25,8 @@ ASP.NET Core kuralı geçerlidir: JSON'daki `Section:Key`, ortam değişkeni ola
 | `Session__RefreshTokenLifetimeDays`, `Session__SlidingExpiration` | Refresh oturumu | 180, true |
 | `DataProtection__KeyPath` | Anahtar halkası dizini | `data/protection-keys` |
 | `DataProtection__CertificatePath` | Anahtar halkasını koruyan PFX (export şifresiz); **production'da zorunlu** | yok |
-| `Proxy__KnownProxies__N`, `Proxy__KnownNetworks__N` | Güvenilen reverse proxy'ler (`X-Forwarded-*`'ı açar) | yok |
-| `Storage__Provider` | `Local` (`data/attachments`) veya `S3` | `Local` |
+| `Proxy__KnownProxies__N`, `Proxy__KnownNetworks__N` | Güvenilen reverse proxy'ler (`X-Forwarded-*`'ı açar); anonim rate limit için kullanılan istemci IP'sini de belirler | yok |
+| `Storage__Provider` | `Local` (`<content root>/data/attachments`, Docker'da `/app/data/attachments`) veya `S3` | `Local` |
 | `Storage__S3__Bucket/Region/ServiceUrl/Prefix/ForcePathStyle` | S3 hedefi; anahtar çifti boşsa ortamdaki AWS kimlik zinciri kullanılır | — |
 | `Storage__S3__AccessKeyId/SecretAccessKey` | Opsiyonel açık S3 kimlik bilgisi | yok |
 | `Firebase__Enabled`, `Firebase__ProjectId`, `Firebase__CredentialsPath` | Push bildirimleri (FCM); `Enabled=false`/tanımsız no-op sender kullanır. Kurulum için bkz. [Production](production.md#5-firebase-cloud-messaging-opsiyonel) / [Geliştirme](development.md#firebase-cloud-messaging) | kapalı |
@@ -53,8 +54,10 @@ ama anahtar yoksa.
 | Özel/LAN posta host'ları | serbest | engelli (SSRF) |
 | HTTPS yönlendirme | yok | var (TLS'i proxy'de sonlandırıp `Proxy__*` ayarlayın) |
 | HSTS | yok | var |
-| Kestrel `Server` başlığı | gönderilir | bastırılır |
+| Kestrel `Server` başlığı | bastırılır | bastırılır |
 | Hata `detail` | exception metni | gizli |
+
+Bozuk JSON istek gövdeleri her ortamda `400` ve `invalid_request` koduyla döner.
 
 ## Runtime ayarları
 
