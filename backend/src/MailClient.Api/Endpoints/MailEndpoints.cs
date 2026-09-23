@@ -9,6 +9,7 @@ using MailClient.Infrastructure.Mail;
 using MailClient.Infrastructure.Persistence;
 using MailClient.Infrastructure.Services;
 using MailClient.Infrastructure.Storage;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
 namespace MailClient.Api.Endpoints;
@@ -46,19 +47,17 @@ public static class MailEndpoints
             { Error: DraftLookupError.NotDraft } => Results.Problem(statusCode: 422, extensions: new Dictionary<string, object?> { ["code"] = "mail_not_draft" }),
             _ => Results.NotFound()
         }).WithTags(DraftsTag).WithName("GetDraft").WithSummary("Get draft").Produces<MailDetailResponse>().Produces(404).ProblemCodes(422, "mail_not_draft");
-        api.MapPost("/drafts", async (HttpRequest request, ICurrentMailAccount current, DraftService drafts, CorrelationContext correlation, CancellationToken ct) =>
+        api.MapPost("/drafts", async (IFormCollection form, ICurrentMailAccount current, DraftService drafts, CorrelationContext correlation, CancellationToken ct) =>
         {
-            var form = await request.ReadFormAsync(ct);
-            var command = DraftCommandFromForm(current.MailAccountId, form);
+            var command = ComposeForm.Read(form).ToDraft(current.MailAccountId);
             var result = await drafts.CreateAsync(current.MailAccountId, command, correlation.CorrelationId, ct);
             return Results.Ok(result);
         }).DisableAntiforgery().WithTags(DraftsTag).WithName("CreateDraft").WithSummary("Create draft")
             .WithDescription("multipart/form-data with the same fields as send (all optional). Saved to the mailbox Drafts folder.")
             .Accepts<IFormCollection>("multipart/form-data").Produces<DraftWriteResult>().ProblemCodes(404, "mail_account_not_found").ProblemCodes(422, "drafts_folder_unavailable");
-        api.MapPut("/drafts/{id:guid}", async (Guid id, HttpRequest request, ICurrentMailAccount current, DraftService drafts, CorrelationContext correlation, CancellationToken ct) =>
+        api.MapPut("/drafts/{id:guid}", async (Guid id, IFormCollection form, ICurrentMailAccount current, DraftService drafts, CorrelationContext correlation, CancellationToken ct) =>
         {
-            var form = await request.ReadFormAsync(ct);
-            var command = DraftCommandFromForm(current.MailAccountId, form);
+            var command = ComposeForm.Read(form).ToDraft(current.MailAccountId);
             return Results.Ok(await drafts.UpdateAsync(current.MailAccountId, id, command, correlation.CorrelationId, ct));
         }).DisableAntiforgery().WithTags(DraftsTag).WithName("UpdateDraft").WithSummary("Replace draft contents")
             .WithDescription("multipart/form-data, same fields as create. Replaces the draft (the returned mailId may differ from `id`).")
@@ -122,28 +121,10 @@ public static class MailEndpoints
         api.MapGet("/mails/{id:guid}/compose/reply", async (Guid id, ICurrentMailAccount current, ComposeContextService service, CancellationToken ct) => await ComposeResult(service.GetAsync(current.MailAccountId, id, ComposeMode.Reply, ct))).WithTags(ComposeTag).WithName("GetReplyContext").WithSummary("Reply compose context").WithDescription("Prefilled recipients, subject and quoted body. Send the result via POST /api/mails/send with replySourceMailId set to this mail id.").Produces<ComposeContextResponse>().Produces(404);
         api.MapGet("/mails/{id:guid}/compose/reply-all", async (Guid id, ICurrentMailAccount current, ComposeContextService service, CancellationToken ct) => await ComposeResult(service.GetAsync(current.MailAccountId, id, ComposeMode.ReplyAll, ct))).WithTags(ComposeTag).WithName("GetReplyAllContext").WithSummary("Reply-all compose context").WithDescription("Prefilled recipients, subject and quoted body. Send the result via POST /api/mails/send with replySourceMailId set to this mail id.").Produces<ComposeContextResponse>().Produces(404);
         api.MapGet("/mails/{id:guid}/compose/forward", async (Guid id, ICurrentMailAccount current, ComposeContextService service, CancellationToken ct) => await ComposeResult(service.GetAsync(current.MailAccountId, id, ComposeMode.Forward, ct))).WithTags(ComposeTag).WithName("GetForwardContext").WithSummary("Forward compose context").WithDescription("Prefilled recipients, subject and quoted body. Send the result via POST /api/mails/send with replySourceMailId set to this mail id.").Produces<ComposeContextResponse>().Produces(404);
-        api.MapPost("/mails/send", async (HttpRequest request, ICurrentMailAccount current, MailSendService sender, CancellationToken ct) =>
+        api.MapPost("/mails/send", async (IFormCollection form, [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey, ICurrentMailAccount current, MailSendService sender, CorrelationContext correlation, CancellationToken ct) =>
         {
-            var key = request.Headers["Idempotency-Key"].ToString();
-            var form = await request.ReadFormAsync(ct);
-            static string? Optional(IFormCollection f, string name)
-            {
-                var value = f[name].ToString();
-                return string.IsNullOrWhiteSpace(value) ? null : value;
-            }
-
-            var attachments = new List<SendMailAttachment>();
-            foreach (var file in form.Files)
-                attachments.Add(new SendMailAttachment(file.FileName, file.ContentType, file.OpenReadStream()));
-            var to = form["To"].Concat(form["to"]).Where(value => !string.IsNullOrWhiteSpace(value)).Select(value => value!).ToList();
-            var cc = form["Cc"].Where(value => !string.IsNullOrWhiteSpace(value)).Select(value => value!).ToList();
-            var bcc = form["Bcc"].Where(value => !string.IsNullOrWhiteSpace(value)).Select(value => value!).ToList();
-            Guid? replySourceMailId = Guid.TryParse(Optional(form, "replySourceMailId"), out var sourceMailId) ? sourceMailId : null;
-            var command = new SendMailCommand(current.MailAccountId, to, cc, bcc, form["subject"].ToString(), Optional(form, "bodyHtml"), Optional(form, "bodyText"), attachments, replySourceMailId)
-            {
-                IdempotencyKey = key
-            };
-            var result = await sender.SendAsync(current.MailAccountId, command, request.HttpContext.RequestServices.GetRequiredService<CorrelationContext>().CorrelationId, ct);
+            var command = ComposeForm.Read(form).ToSend(current.MailAccountId, idempotencyKey ?? "");
+            var result = await sender.SendAsync(current.MailAccountId, command, correlation.CorrelationId, ct);
             return Results.Ok(new SendMailResponse(result.Sent, result.SentCopySaved, result.Warning, result.MailId, result.ConversationId));
         }).WithTags(ComposeTag).WithName("SendMail").WithSummary("Send mail idempotently").WithDescription("multipart/form-data: to, subject, bodyHtml and/or bodyText, up to 20 attachments. Idempotency-Key header is required; retrying with the same key never sends twice.")
             .Accepts<IFormCollection>("multipart/form-data").Produces<SendMailResponse>()
@@ -152,22 +133,41 @@ public static class MailEndpoints
             .ProblemCodes(502, "mail_provider_unavailable", "mail_server_unreachable", "mail_tls_failed").DisableAntiforgery();
     }
 
-    private static DraftCommand DraftCommandFromForm(Guid accountId, IFormCollection form)
+    /// <summary>Shared multipart/form-data shape of send, create-draft and update-draft. Form keys are case-insensitive.</summary>
+    private sealed record ComposeForm(
+        IReadOnlyList<string> To,
+        IReadOnlyList<string> Cc,
+        IReadOnlyList<string> Bcc,
+        string Subject,
+        string? BodyHtml,
+        string? BodyText,
+        IReadOnlyList<SendMailAttachment> Attachments,
+        Guid? ReplySourceMailId)
     {
-        static string? Optional(IFormCollection values, string name)
+        public static ComposeForm Read(IFormCollection form) => new(
+            Values(form, "to"),
+            Values(form, "cc"),
+            Values(form, "bcc"),
+            form["subject"].ToString(),
+            Optional(form, "bodyHtml"),
+            Optional(form, "bodyText"),
+            form.Files.Select(file => new SendMailAttachment(file.FileName, file.ContentType, file.OpenReadStream())).ToList(),
+            Guid.TryParse(Optional(form, "replySourceMailId"), out var sourceMailId) ? sourceMailId : null);
+
+        public DraftCommand ToDraft(Guid accountId) =>
+            new(accountId, To, Cc, Bcc, Subject, BodyHtml, BodyText, Attachments, ReplySourceMailId);
+
+        public SendMailCommand ToSend(Guid accountId, string idempotencyKey) =>
+            new(accountId, To, Cc, Bcc, Subject, BodyHtml, BodyText, Attachments, ReplySourceMailId) { IdempotencyKey = idempotencyKey };
+
+        private static List<string> Values(IFormCollection form, string name) =>
+            form[name].Where(value => !string.IsNullOrWhiteSpace(value)).Select(value => value!).ToList();
+
+        private static string? Optional(IFormCollection form, string name)
         {
-            var value = values[name].ToString();
+            var value = form[name].ToString();
             return string.IsNullOrWhiteSpace(value) ? null : value;
         }
-
-        var attachments = form.Files
-            .Select(file => new SendMailAttachment(file.FileName, file.ContentType, file.OpenReadStream()))
-            .ToList();
-        var to = form["To"].Concat(form["to"]).Where(value => !string.IsNullOrWhiteSpace(value)).Select(value => value!).ToList();
-        var cc = form["Cc"].Where(value => !string.IsNullOrWhiteSpace(value)).Select(value => value!).ToList();
-        var bcc = form["Bcc"].Where(value => !string.IsNullOrWhiteSpace(value)).Select(value => value!).ToList();
-        Guid? replySourceMailId = Guid.TryParse(Optional(form, "replySourceMailId"), out var sourceMailId) ? sourceMailId : null;
-        return new(accountId, to, cc, bcc, form["subject"].ToString(), Optional(form, "bodyHtml"), Optional(form, "bodyText"), attachments, replySourceMailId);
     }
 
     private static async Task<IResult> ComposeResult(Task<ComposeContextResponse?> response) =>

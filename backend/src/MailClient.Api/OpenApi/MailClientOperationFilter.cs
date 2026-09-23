@@ -100,14 +100,17 @@ public sealed class MailClientOperationFilter : IOperationFilter
         if (endpointName is not ("SendMail" or "SendDraft"))
             return;
         operation.Parameters ??= [];
-        if (operation.Parameters.Any(parameter => string.Equals(parameter.Name, "Idempotency-Key", StringComparison.OrdinalIgnoreCase)))
-            return;
+        // SendMail binds the header itself (so it is already listed as optional); replace it with the documented,
+        // required form. The services reject a missing key with idempotency_key_required.
+        var existing = operation.Parameters.FirstOrDefault(parameter => string.Equals(parameter.Name, "Idempotency-Key", StringComparison.OrdinalIgnoreCase));
+        if (existing is not null)
+            operation.Parameters.Remove(existing);
         operation.Parameters.Add(new OpenApiParameter
         {
             Name = "Idempotency-Key",
             In = ParameterLocation.Header,
             Required = true,
-            Description = "Client-generated unique key (e.g. a GUID, max 128 chars). Retrying with the same key never sends twice.",
+            Description = "Client-generated unique key (e.g. a GUID, max 200 chars). Retrying with the same key never sends twice.",
             Schema = new OpenApiSchema { Type = JsonSchemaType.String },
             Example = JsonValue.Create("2f6c1d1e-0a4b-4c1e-9c55-6f0b3e2a7d10")
         });

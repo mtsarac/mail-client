@@ -12,6 +12,8 @@ internal static class ApiFailureMapper
         MailConnectionException { Failure: MailConnectionFailure.Tls } => ("mail_tls_failed", 502),
         MailConnectionException { Failure: MailConnectionFailure.Protocol } => ("mail_provider_unavailable", 502),
         MailConnectionException => ("mail_server_unreachable", 502),
+        // Malformed JSON/form bodies, oversized bodies and bad parameters: the request is at fault, not the server.
+        BadHttpRequestException badRequest => ("invalid_request", badRequest.StatusCode),
         InvalidOperationException known when StatusFor(known.Message) is { } status => (known.Message, status),
         _ => ("unexpected_error", 500)
     };

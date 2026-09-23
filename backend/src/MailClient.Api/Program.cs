@@ -72,6 +72,9 @@ builder.Services.AddMailClientHealthChecks();
 builder.Services.Configure<HttpLoggingOptions>(builder.Configuration.GetSection("HttpLogging"));
 builder.Services.AddSingleton<Serilog.ILogger>(_ => Serilog.Log.Logger);
 builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
+// Binding failures (malformed JSON or multipart bodies) go through the exception handler in every environment so
+// clients always receive the same problem+json contract with a stable `code` (invalid_request).
+builder.Services.Configure<RouteHandlerOptions>(options => options.ThrowOnBadRequest = true);
 builder.Services.AddProblemDetails(options => options.CustomizeProblemDetails = context =>
 {
     var correlation = context.HttpContext.RequestServices.GetService<CorrelationContext>();
