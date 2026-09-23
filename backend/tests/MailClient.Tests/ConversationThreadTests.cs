@@ -97,6 +97,34 @@ public sealed class ConversationThreadTests
     }
 
     [Fact]
+    public async Task SubjectFallback_IgnoresTheAccountOwnAddress()
+    {
+        await using var db = CreateDb();
+        var (accountId, service) = await SeedAsync(db);
+        var first = await AddMailAsync(db, accountId, "Invoice", "billing@vendor-a.test", to: "owner@client.test");
+        await service.AssignAsync(first.Id, CancellationToken.None);
+        var second = await AddMailAsync(db, accountId, "Invoice", "billing@vendor-b.test", to: "OWNER@client.test");
+        await service.AssignAsync(second.Id, CancellationToken.None);
+
+        var (firstAfter, secondAfter) = await LoadTwoAsync(db, first.Id, second.Id);
+        Assert.NotEqual(firstAfter.ConversationId, secondAfter.ConversationId);
+    }
+
+    [Fact]
+    public async Task SubjectFallback_SkipsEmptySubjects()
+    {
+        await using var db = CreateDb();
+        var (accountId, service) = await SeedAsync(db);
+        var first = await AddMailAsync(db, accountId, "", "shared@example.test");
+        await service.AssignAsync(first.Id, CancellationToken.None);
+        var second = await AddMailAsync(db, accountId, "Re:", "shared@example.test");
+        await service.AssignAsync(second.Id, CancellationToken.None);
+
+        var (firstAfter, secondAfter) = await LoadTwoAsync(db, first.Id, second.Id);
+        Assert.NotEqual(firstAfter.ConversationId, secondAfter.ConversationId);
+    }
+
+    [Fact]
     public async Task SubjectFallback_InsideWindow_UsesSameConversation()
     {
         await using var db = CreateDb();
