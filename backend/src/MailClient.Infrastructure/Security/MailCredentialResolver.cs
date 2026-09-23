@@ -67,7 +67,6 @@ public sealed class MailCredentialResolver(
         await refreshLock.WaitAsync(cancellationToken);
         try
         {
-            db.ChangeTracker.Clear();
             return await TryFreshTokenAsync(accountId, cancellationToken)
                 ?? await RefreshOAuthTokenAsync(accountId, cancellationToken);
         }
@@ -88,7 +87,6 @@ public sealed class MailCredentialResolver(
                 accountId,
                 SyncLockPurpose.OAuthRefresh,
                 cancellationToken);
-            db.ChangeTracker.Clear();
             if (await TryFreshTokenAsync(accountId, cancellationToken) is { } fresh)
                 return fresh;
             if (distributedLock.IsAcquired)
@@ -99,10 +97,13 @@ public sealed class MailCredentialResolver(
         }
     }
 
+    // Reads the credential untracked so a token refreshed by another request or instance is seen even when the
+    // caller's scoped DbContext already tracks this account. The caller's tracked entities are left untouched.
     private async Task<ResolvedCredential?> TryFreshTokenAsync(Guid accountId, CancellationToken cancellationToken)
     {
         var account = await LoadAccountAsync(accountId, cancellationToken);
-        var credential = account.Credentials.Single(x => x.AuthenticationMethod == AuthenticationMethod.OAuth2);
+        var credential = await db.MailCredentials.AsNoTracking()
+            .SingleAsync(x => x.MailAccountId == accountId && x.AuthenticationMethod == AuthenticationMethod.OAuth2, cancellationToken);
         var material = Deserialize(credential.EncryptedMaterial);
         if (credential.ExpiresAt is { } expiresAt && expiresAt > DateTime.UtcNow.Add(RefreshWindow))
             return new ResolvedCredential(account, account.Username, material.AccessToken, AuthenticationMethod.OAuth2);
@@ -113,6 +114,7 @@ public sealed class MailCredentialResolver(
     {
         var account = await LoadAccountAsync(accountId, cancellationToken);
         var credential = account.Credentials.Single(x => x.AuthenticationMethod == AuthenticationMethod.OAuth2);
+        await db.Entry(credential).ReloadAsync(cancellationToken);
         var material = Deserialize(credential.EncryptedMaterial);
         if (string.IsNullOrWhiteSpace(material.RefreshToken))
             return await RequireReauthenticationAsync(account, cancellationToken);

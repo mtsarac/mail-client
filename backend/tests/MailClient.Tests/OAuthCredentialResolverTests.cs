@@ -105,6 +105,24 @@ public sealed class OAuthCredentialResolverTests
     }
 
     [Fact]
+    public async Task ResolveAsync_Refresh_KeepsCallerTrackedChangesPersistable()
+    {
+        var db = Db();
+        var accountId = await SeedOAuthAsync(db, DateTime.UtcNow.AddMinutes(1), "old-access", "old-refresh");
+        var account = await db.MailAccounts.SingleAsync(x => x.Id == accountId);
+        var provider = new FakeOAuthProvider(new OAuthToken("new-access", "new-refresh", DateTime.UtcNow.AddHours(1), "scope"));
+        var resolver = new MailCredentialResolver(db, new PrefixProtector(), [provider], new DefaultRuntimePolicyProvider(), null, null,
+            new StubSyncLockProvider(SyncLockStatus.Acquired));
+
+        await resolver.ResolveAsync(accountId, CancellationToken.None);
+        account.DisplayName = "changed after refresh";
+        await db.SaveChangesAsync();
+
+        Assert.Equal("changed after refresh", (await db.MailAccounts.AsNoTracking().SingleAsync(x => x.Id == accountId)).DisplayName);
+        Assert.Equal(1, provider.RefreshCount);
+    }
+
+    [Fact]
     public async Task ResolveAsync_PasswordAccount_ReturnsPasswordWithoutOAuthRefresh()
     {
         var db = Db();
