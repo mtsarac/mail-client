@@ -6,6 +6,7 @@ using MailClient.Infrastructure.Mail;
 using MailClient.Infrastructure.Observability;
 using MailClient.Infrastructure.Persistence;
 using MailClient.Infrastructure.Services;
+using MailClient.Infrastructure.Sync;
 using MailClient.Application.Sync;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -163,7 +164,7 @@ public sealed class DraftServiceTests
         var operations = new MailOperationService(db, folders, reader, audit, new FakeSyncScheduler(), NullLogger<MailOperationService>.Instance, new FakePushNotificationService());
         var sendOperations = new SendOperationStore(db, NullLogger<SendOperationStore>.Instance);
         var sender = new MailSendService(db, transport ?? new FakeMailTransport(), sendOperations, new MailSyncOptions(), audit, NullLogger<MailSendService>.Instance);
-        return new(db, folders, sync, reader, operations, sender, sendOperations, new FakeFileStorage(), audit, NullLogger<DraftService>.Instance);
+        return new(db, folders, new InlineFolderSync(new InMemorySyncLockProvider(), sync, new FakeSyncScheduler()), reader, operations, sender, sendOperations, new FakeFileStorage(), audit, NullLogger<DraftService>.Instance);
     }
 
     private static AppDbContext CreateDb() => new(new DbContextOptionsBuilder<AppDbContext>().UseInMemoryDatabase(Guid.NewGuid().ToString("N")).Options);

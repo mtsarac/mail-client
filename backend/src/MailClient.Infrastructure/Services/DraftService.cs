@@ -1,5 +1,5 @@
 using MailClient.Application.Mail;
-using MailClient.Application.Sync;
+using MailClient.Infrastructure.Sync;
 using MailClient.Domain.Entities;
 using MailClient.Domain.Enums;
 using MailClient.Infrastructure.Email;
@@ -18,7 +18,7 @@ namespace MailClient.Infrastructure.Services;
 public sealed class DraftService(
     AppDbContext db,
     IMailFolderClient folders,
-    ISyncExecutor sync,
+    InlineFolderSync inlineSync,
     MailReadService reader,
     IMailOperationService operations,
     MailSendService sender,
@@ -188,7 +188,9 @@ public sealed class DraftService(
 
     private async Task<Guid?> ReconcileAndFindAsync(Guid accountId, MailFolderEntity folder, string messageId, RemoteAppendResult append, Guid? sourceDraftId, CancellationToken cancellationToken)
     {
-        await sync.SyncFolderAsync(accountId, folder.Id, cancellationToken);
+        // When another sync owns the account the append is imported by the queued sync; the id is then unknown yet.
+        if (!await inlineSync.TrySyncNowAsync(accountId, folder.Id, cancellationToken))
+            return null;
         var query = db.Mails.AsNoTracking()
             .Where(mail => mail.MailAccountId == accountId && mail.MailFolderId == folder.Id && mail.MessageId == messageId);
         if (sourceDraftId is not null)

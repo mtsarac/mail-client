@@ -28,7 +28,7 @@ public sealed class MailSendService(
     AuditLogger audit,
     ILogger<MailSendService> logger,
     MailClientMetrics? metrics = null,
-    ISyncExecutor? sync = null)
+    Sync.InlineFolderSync? inlineSync = null)
 {
     public MailSendService(
         AppDbContext db,
@@ -253,7 +253,7 @@ public sealed class MailSendService(
     /// <summary>Best effort: pulls the Sent folder so the reply is queryable at once. Null ids just mean sync will catch up.</summary>
     private async Task<(Guid? MailId, Guid? ConversationId)> FindSentCopyAsync(Guid accountId, string sentFullName, string? messageId, CancellationToken cancellationToken)
     {
-        if (sync is null || messageId is null)
+        if (inlineSync is null || messageId is null)
             return (null, null);
         try
         {
@@ -261,7 +261,8 @@ public sealed class MailSendService(
                 .Where(folder => folder.MailAccountId == accountId && folder.FullName == sentFullName)
                 .Select(folder => folder.Id)
                 .SingleAsync(cancellationToken);
-            await sync.SyncFolderAsync(accountId, folderId, cancellationToken);
+            if (!await inlineSync.TrySyncNowAsync(accountId, folderId, cancellationToken))
+                return (null, null);
             var found = await db.Mails.AsNoTracking()
                 .Where(mail => mail.MailAccountId == accountId && mail.MailFolderId == folderId && mail.MessageId == messageId)
                 .Select(mail => new { mail.Id, mail.ConversationId })

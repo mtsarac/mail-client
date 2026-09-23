@@ -1,3 +1,4 @@
+using MailClient.Infrastructure.Sync;
 using MailClient.Application.Sync;
 using MailClient.Domain.Enums;
 using MailClient.Infrastructure.Mail;
@@ -110,6 +111,32 @@ public sealed class SyncTargetingTests
 
         Assert.True(queue.Contains(inbox.Request));
         Assert.False(queue.Contains(other.Request));
+    }
+
+    [Fact]
+    public async Task InlineFolderSync_WhenAccountSyncIsRunning_QueuesInsteadOfSyncingConcurrently()
+    {
+        var executor = new CountingExecutor();
+        var scheduler = new FakeSyncScheduler();
+        var inline = new InlineFolderSync(new StubSyncLockProvider(SyncLockStatus.Contended), executor, scheduler);
+        var accountId = Guid.NewGuid();
+        var folderId = Guid.NewGuid();
+
+        Assert.False(await inline.TrySyncNowAsync(accountId, folderId, CancellationToken.None));
+
+        Assert.Equal(0, executor.Calls);
+        Assert.Equal((accountId, (Guid?)folderId, SyncOrigin.UserRequested), Assert.Single(scheduler.Scheduled));
+    }
+
+    private sealed class CountingExecutor : ISyncExecutor
+    {
+        public int Calls { get; private set; }
+        public Task SyncAccountAsync(Guid accountId, CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task SyncFolderAsync(Guid accountId, Guid folderId, CancellationToken cancellationToken)
+        {
+            Calls++;
+            return Task.CompletedTask;
+        }
     }
 
     [Fact]

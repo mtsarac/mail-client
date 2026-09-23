@@ -147,6 +147,7 @@ builder.Services.AddScoped<IMailTransport, MailKitMailTransport>();
 builder.Services.AddScoped<IMailFolderClient, MailFolderClient>();
 builder.Services.AddScoped<MailFolderSyncService>();
 builder.Services.AddScoped<ISyncExecutor>(sp => sp.GetRequiredService<MailFolderSyncService>());
+builder.Services.AddScoped<InlineFolderSync>();
 builder.Services.AddScoped<MailReadService>();
 builder.Services.AddScoped<MailSearchService>();
 builder.Services.AddScoped<MailQueryService>();
