@@ -9,7 +9,8 @@ namespace MailClient.Infrastructure.Sync;
 public enum SyncLockPurpose
 {
     AccountSync,
-    OAuthRefresh
+    OAuthRefresh,
+    ScheduledSend
 }
 
 public enum SyncLockStatus

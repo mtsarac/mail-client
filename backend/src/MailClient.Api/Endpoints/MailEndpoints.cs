@@ -130,7 +130,7 @@ public static class MailEndpoints
     }
 
     /// <summary>Shared multipart/form-data shape of send, create-draft and update-draft. Form keys are case-insensitive.</summary>
-    private sealed record ComposeForm(
+    internal sealed record ComposeForm(
         IReadOnlyList<string> To,
         IReadOnlyList<string> Cc,
         IReadOnlyList<string> Bcc,

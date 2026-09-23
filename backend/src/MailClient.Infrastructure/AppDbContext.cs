@@ -23,6 +23,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<RuntimeConfiguration> RuntimeConfigurations => Set<RuntimeConfiguration>();
     public DbSet<OAuthStateNonce> OAuthStateNonces => Set<OAuthStateNonce>();
     public DbSet<AllowlistedEmail> AllowlistedEmails => Set<AllowlistedEmail>();
+    public DbSet<ScheduledSend> ScheduledSends => Set<ScheduledSend>();
+    public DbSet<ScheduledSendAttachment> ScheduledSendAttachments => Set<ScheduledSendAttachment>();
 
     protected override void OnModelCreating(ModelBuilder model)
     {
@@ -99,5 +101,13 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         model.Entity<AllowlistedEmail>().HasIndex(x => x.NormalizedEmail).IsUnique();
         model.Entity<AllowlistedEmail>().Property(x => x.Email).HasMaxLength(320);
         model.Entity<AllowlistedEmail>().Property(x => x.NormalizedEmail).HasMaxLength(320);
+        model.Entity<ScheduledSend>().HasIndex(x => new { x.MailAccountId, x.IdempotencyKey }).IsUnique();
+        model.Entity<ScheduledSend>().HasIndex(x => new { x.Status, x.SendAtUtc });
+        model.Entity<ScheduledSend>().Property(x => x.Subject).HasMaxLength(500);
+        model.Entity<ScheduledSend>().Property(x => x.IdempotencyKey).HasMaxLength(200);
+        model.Entity<ScheduledSend>().HasOne(x => x.MailAccount).WithMany().HasForeignKey(x => x.MailAccountId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<ScheduledSendAttachment>().Property(x => x.FileName).HasMaxLength(255);
+        model.Entity<ScheduledSendAttachment>().Property(x => x.ContentType).HasMaxLength(150);
+        model.Entity<ScheduledSendAttachment>().HasOne(x => x.ScheduledSend).WithMany(x => x.Attachments).HasForeignKey(x => x.ScheduledSendId).OnDelete(DeleteBehavior.Cascade);
     }
 }

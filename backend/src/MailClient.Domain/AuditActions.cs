@@ -27,6 +27,8 @@ public static class AuditActions
     public const string MailAccountAccessRevoked = "mail-account.access-revoked";
     public const string MailAccountAccessRestored = "mail-account.access-restored";
     public const string MailAccountDeletedGracePeriodExpired = "mail-account.deleted-grace-period-expired";
+    public const string ScheduledSendCreated = "scheduled-send.created";
+    public const string ScheduledSendCancelled = "scheduled-send.cancelled";
     // Stored values predate the dotted naming and are kept so existing audit rows stay comparable.
     public const string RuntimeSettingsUpdated = "runtime_settings_updated";
 }

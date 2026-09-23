@@ -197,5 +197,36 @@ public sealed class SendOperation
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 }
+public sealed class ScheduledSend
+{
+    public Guid Id { get; set; }
+    public Guid MailAccountId { get; set; }
+    public string ToAddressesJson { get; set; } = "[]";
+    public string CcAddressesJson { get; set; } = "[]";
+    public string BccAddressesJson { get; set; } = "[]";
+    public string Subject { get; set; } = "";
+    public string? BodyHtml { get; set; }
+    public string? BodyText { get; set; }
+    public DateTime SendAtUtc { get; set; }
+    public ScheduledSendStatus Status { get; set; } = ScheduledSendStatus.Pending;
+    public DateTime CreatedAtUtc { get; set; }
+    public Guid? SentMailId { get; set; }
+    public string? FailureReason { get; set; }
+    public string IdempotencyKey { get; set; } = "";
+    public string Fingerprint { get; set; } = "";
+    public Guid? ReplySourceMailId { get; set; }
+    public MailAccount? MailAccount { get; set; }
+    public ICollection<ScheduledSendAttachment> Attachments { get; set; } = [];
+}
+public sealed class ScheduledSendAttachment
+{
+    public Guid Id { get; set; }
+    public Guid ScheduledSendId { get; set; }
+    public string FileName { get; set; } = "";
+    public string ContentType { get; set; } = "";
+    public string StoragePath { get; set; } = "";
+    public long SizeBytes { get; set; }
+    public ScheduledSend? ScheduledSend { get; set; }
+}
 public sealed class DeviceToken { public Guid Id { get; set; } public Guid MailAccountId { get; set; } public Guid? MailSessionId { get; set; } public string Token { get; set; } = ""; public string Platform { get; set; } = ""; public string? AppVersion { get; set; } public string? Locale { get; set; } public DateTime RegisteredAt { get; set; } public DateTime? LastSeenAt { get; set; } }
 public sealed class AuditLog { public Guid Id { get; set; } public Guid? MailAccountId { get; set; } public string Action { get; set; } = ""; public string EntityType { get; set; } = ""; public string? EntityId { get; set; } public DateTime TimestampUtc { get; set; } public string? CorrelationId { get; set; } public string? Metadata { get; set; } }
