@@ -20,22 +20,8 @@ public sealed class RuntimeSettingsStore(
         var row = await db.Set<RuntimeConfiguration>().SingleOrDefaultAsync(item => item.Id == 1, cancellationToken);
         if (row is null)
         {
-            row = new RuntimeConfiguration
-            {
-                Id = 1,
-                SettingsJson = JsonSerializer.Serialize(new RuntimeSettings(), SerializerOptions),
-                UpdatedAt = DateTime.UtcNow
-            };
-            db.Add(row);
-            try
-            {
-                await db.SaveChangesAsync(cancellationToken);
-            }
-            catch (DbUpdateException)
-            {
-                db.Entry(row).State = EntityState.Detached;
-                row = await db.Set<RuntimeConfiguration>().SingleAsync(item => item.Id == 1, cancellationToken);
-            }
+            await SeedDefaultsAsync(cancellationToken);
+            row = await db.Set<RuntimeConfiguration>().SingleAsync(item => item.Id == 1, cancellationToken);
         }
 
         return ToSnapshot(row);
@@ -70,6 +56,30 @@ public sealed class RuntimeSettingsStore(
         }
 
         return new RuntimeSettingsSnapshot(settings, row.Version, now);
+    }
+
+    private async Task SeedDefaultsAsync(CancellationToken cancellationToken)
+    {
+        var seed = new RuntimeConfiguration
+        {
+            Id = 1,
+            SettingsJson = JsonSerializer.Serialize(new RuntimeSettings(), SerializerOptions),
+            UpdatedAt = DateTime.UtcNow
+        };
+        if (!db.Database.IsNpgsql())
+        {
+            db.Add(seed);
+            await db.SaveChangesAsync(cancellationToken);
+            return;
+        }
+
+        // Concurrent first readers (e.g. background services at startup) race to seed the singleton row;
+        // ON CONFLICT lets the losers skip instead of failing with a logged unique-key violation.
+        await db.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO "RuntimeConfigurations" ("Id", "SchemaVersion", "SettingsJson", "UpdatedAt", "Version")
+            VALUES ({seed.Id}, {seed.SchemaVersion}, CAST({seed.SettingsJson} AS jsonb), {seed.UpdatedAt}, {seed.Version})
+            ON CONFLICT ("Id") DO NOTHING
+            """, cancellationToken);
     }
 
     private RuntimeSettingsSnapshot ToSnapshot(RuntimeConfiguration row)
