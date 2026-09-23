@@ -197,18 +197,20 @@ public sealed class FakeFileStorage : IFileStorage
     public Task<bool> IsAvailableAsync(CancellationToken cancellationToken) => Task.FromResult(Available);
 }
 
-internal sealed class FakeSyncScheduler : ISyncScheduler
+internal sealed class FakeSyncScheduler(Action? onSchedule = null) : ISyncScheduler
 {
     public List<(Guid AccountId, Guid? FolderId, SyncOrigin Origin)> Scheduled { get; } = [];
     public ValueTask ScheduleAccountAsync(Guid accountId, SyncOrigin origin, CancellationToken cancellationToken)
     {
         Scheduled.Add((accountId, null, origin));
+        onSchedule?.Invoke();
         return ValueTask.CompletedTask;
     }
 
     public ValueTask ScheduleFolderAsync(Guid accountId, Guid folderId, SyncOrigin origin, CancellationToken cancellationToken)
     {
         Scheduled.Add((accountId, folderId, origin));
+        onSchedule?.Invoke();
         return ValueTask.CompletedTask;
     }
 }

@@ -94,8 +94,9 @@ public sealed class MailOperationService(
                     mail.ExpectedMailFolderId = target!.Id;
                     mail.ReconciliationState = MailReconciliationState.Pending;
                     mail.IsRestoreReconciliation = auditKind == MailOperationKind.Restore;
-                    await scheduler.ScheduleFolderAsync(accountId, target.Id, SyncOrigin.Reconciliation, cancellationToken);
+                    // Commit the pending marker first: the coordinator may run the reconciliation sync immediately.
                     await db.SaveChangesAsync(cancellationToken);
+                    await scheduler.ScheduleFolderAsync(accountId, target.Id, SyncOrigin.Reconciliation, cancellationToken);
                     await NotifyStateChangedAsync(accountId, mail, target.Id, OperationName(auditKind), cancellationToken);
                     return await AuditSuccess(accountId, auditKind, mail.Id, correlationId, cancellationToken, new(true, MailOperationError.None, true));
                 }
