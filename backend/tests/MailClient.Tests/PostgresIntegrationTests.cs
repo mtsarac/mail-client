@@ -204,6 +204,31 @@ public sealed class PostgresIntegrationTests(PostgresFixture fixture)
     }
 
     [Fact]
+    public async Task Search_FromAndToFilters_MatchPartialAddressOrName_CaseInsensitive()
+    {
+        if (!IntegrationEnvironment.PostgresEnabled) return;
+        var accountId = await SeedAccountAsync();
+        await using var db = fixture.CreateDb();
+        var folderId = await SeedFolderAsync(db, accountId);
+        var match = Guid.NewGuid();
+        var other = Guid.NewGuid();
+        db.Mails.Add(new Domain.Entities.Mail { Id = match, MailAccountId = accountId, MailFolderId = folderId, Uid = 111, Subject = "match", FromAddress = "alice@corp.test", FromDisplayName = "Alice Smith", ReceivedAt = DateTime.UtcNow });
+        db.Mails.Add(new Domain.Entities.Mail { Id = other, MailAccountId = accountId, MailFolderId = folderId, Uid = 112, Subject = "other", FromAddress = "bob@elsewhere.test", FromDisplayName = "Bob", ReceivedAt = DateTime.UtcNow });
+        db.Participants.Add(new MailParticipant { Id = Guid.NewGuid(), MailId = match, Type = ParticipantType.Cc, Address = "carol@partner.test", NormalizedAddress = "carol@partner.test", DisplayName = "Carol" });
+        db.Participants.Add(new MailParticipant { Id = Guid.NewGuid(), MailId = other, Type = ParticipantType.ReplyTo, Address = "carol@partner.test", NormalizedAddress = "carol@partner.test", DisplayName = "Carol" });
+        await db.SaveChangesAsync();
+        var service = new MailSearchService(db, FixedRuntimeSettingsStore.Operation());
+
+        async Task<string> OnlySubject(string? from, string? to) => Assert.Single((await service.SearchAsync(accountId,
+            new MailSearchRequest(null, folderId, null, from, to, null, null, null, null, null, 1, 20), CancellationToken.None)).Items).Subject;
+
+        Assert.Equal("match", await OnlySubject("SMITH", null));
+        Assert.Equal("match", await OnlySubject("corp.test", null));
+        Assert.Equal("match", await OnlySubject(null, "PARTNER"));
+        Assert.Empty((await service.SearchAsync(accountId, new MailSearchRequest("%", folderId, null, null, null, null, null, null, null, null, 1, 20), CancellationToken.None)).Items);
+    }
+
+    [Fact]
     public async Task Search_IsAccountScoped_AppliesFilters_Paginates_AndHandlesSpecialCharacters()
     {
         if (!IntegrationEnvironment.PostgresEnabled) return;

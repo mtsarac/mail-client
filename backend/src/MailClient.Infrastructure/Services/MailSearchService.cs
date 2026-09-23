@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using MailClient.Application.Mail;
 using MailClient.Application.Observability;
+using MailClient.Domain.Enums;
 using MailClient.Infrastructure.Persistence;
 using MailClient.Infrastructure.Runtime;
 using Microsoft.EntityFrameworkCore;
@@ -60,15 +61,28 @@ public sealed class MailSearchService(AppDbContext db, RuntimeOperationSettings 
             var to = AsUtc(toDate);
             query = query.Where(mail => mail.ReceivedAt < to);
         }
-        if (!string.IsNullOrWhiteSpace(request.From)) query = query.Where(mail => mail.FromAddress == request.From);
-        if (!string.IsNullOrWhiteSpace(request.To)) query = query.Where(mail => mail.ToAddress == request.To);
+        if (!string.IsNullOrWhiteSpace(request.From))
+        {
+            var from = request.From.Trim().ToLowerInvariant();
+            query = query.Where(mail => mail.FromAddress.ToLower().Contains(from) || mail.FromDisplayName.ToLower().Contains(from));
+        }
+        if (!string.IsNullOrWhiteSpace(request.To))
+        {
+            var to = request.To.Trim().ToLowerInvariant();
+            query = query.Where(mail => mail.ToAddress.ToLower().Contains(to)
+                || db.Participants.Any(participant => participant.MailId == mail.Id
+                    && (participant.Type == ParticipantType.To || participant.Type == ParticipantType.Cc || participant.Type == ParticipantType.Bcc)
+                    && (participant.Address.ToLower().Contains(to) || participant.DisplayName.ToLower().Contains(to))));
+        }
         var useTs = !string.IsNullOrWhiteSpace(queryText) && db.Database.ProviderName == "Npgsql.EntityFrameworkCore.PostgreSQL";
         if (useTs)
         {
             var plain = queryText!;
+            // Contains (not LIKE with the raw text) so '%' and '_' in the query are matched literally.
+            var lower = plain.ToLowerInvariant();
             query = query.Where(mail => EF.Property<NpgsqlTsVector>(mail, "SearchVector").Matches(EF.Functions.WebSearchToTsQuery("simple", plain))
-                || db.Participants.Any(participant => participant.MailId == mail.Id && (EF.Functions.ILike(participant.Address, $"%{plain}%") || EF.Functions.ILike(participant.DisplayName, $"%{plain}%")))
-                || db.Attachments.Any(attachment => attachment.MailId == mail.Id && EF.Functions.ILike(attachment.FileName, $"%{plain}%")));
+                || db.Participants.Any(participant => participant.MailId == mail.Id && (participant.Address.ToLower().Contains(lower) || participant.DisplayName.ToLower().Contains(lower)))
+                || db.Attachments.Any(attachment => attachment.MailId == mail.Id && attachment.FileName.ToLower().Contains(lower)));
         }
         else if (!string.IsNullOrWhiteSpace(queryText))
         {
@@ -82,7 +96,8 @@ public sealed class MailSearchService(AppDbContext db, RuntimeOperationSettings 
             ? query.OrderByDescending(mail => EF.Property<NpgsqlTsVector>(mail, "SearchVector").Rank(EF.Functions.WebSearchToTsQuery("simple", queryText!)))
                 .ThenByDescending(mail => mail.ReceivedAt).ThenByDescending(mail => mail.Uid).ThenByDescending(mail => mail.Id)
             : query.OrderByDescending(mail => mail.ReceivedAt).ThenByDescending(mail => mail.Uid).ThenByDescending(mail => mail.Id);
-        var items = await ordered.Skip((page - 1) * pageSize).Take(pageSize)
+        var skip = (int)Math.Min((long)(page - 1) * pageSize, int.MaxValue);
+        var items = await ordered.Skip(skip).Take(pageSize)
             .Select(mail => new MailListItemResponse(mail.Id, mail.MailFolderId, mail.Subject, mail.FromAddress, mail.FromDisplayName, mail.ToAddress, mail.IsRead, mail.HasAttachments, mail.ReceivedAt, mail.ConversationId,
                 mail.BodyText.Substring(0, Math.Min(mail.BodyText.Length, 120)), mail.Flagged, mail.Answered, mail.Attachments.Count))
             .ToListAsync(cancellationToken);
