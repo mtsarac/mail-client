@@ -96,7 +96,7 @@ public sealed class MailSendService(
         return claim switch
         {
             SendOperationStore.Replay replay => new SendMailResult(true, replay.Operation.SentCopySaved, replay.Operation.Warning),
-            SendOperationStore.Denied denied => throw new InvalidOperationException(denied.Reason.Contains("different request") ? "idempotency_conflict" : "send_in_progress"),
+            SendOperationStore.Denied denied => throw new InvalidOperationException(denied.Code),
             SendOperationStore.Proceed proceed => await SendAndAuditAsync(account, to, cc, bcc, subject, command, threading, proceed.Operation, correlationId, cancellationToken),
             _ => throw new InvalidOperationException("idempotency_key_required")
         };

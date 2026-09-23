@@ -88,6 +88,22 @@ public sealed class SendServiceTests
     }
 
     [Fact]
+    public async Task SendAsync_RetryAfterUncertainDelivery_ReportsDeliveryUnknown()
+    {
+        await using var db = CreateDb();
+        var accountId = await SeedAccountAsync(db, saveSentCopy: false);
+        var transport = new FakeMailTransport { SendFailure = new TimeoutException("no reply after DATA") };
+        var service = CreateService(db, transport);
+        var command = new SendMailCommand(accountId, "friend@example.test", "Hello", null, "body", []) { IdempotencyKey = "send-uncertain" };
+
+        var first = await Assert.ThrowsAsync<InvalidOperationException>(() => service.SendAsync(accountId, command, null, CancellationToken.None));
+        var retry = await Assert.ThrowsAsync<InvalidOperationException>(() => service.SendAsync(accountId, command with { }, null, CancellationToken.None));
+
+        Assert.Equal("delivery_unknown", first.Message);
+        Assert.Equal("delivery_unknown", retry.Message);
+    }
+
+    [Fact]
     public async Task SendAsync_RecordsSuccessAndFailureMetricsWithoutMessageContent()
     {
         using var capture = new MetricsCapture();
