@@ -41,9 +41,13 @@ konfigürasyonunun kullandığı) bir `lan-http` profili var; API'yi
 LAN'daki başka bir cihazdan (ör. telefonda Flutter uygulaması) prod-benzeri
 davranışa karşı test için: HTTPS-redirect/HSTS mantığı aktif (düz LAN HTTP
 üzerinde zararsız — HTTPS portu yapılandırılmadığı için Kestrel bir uyarı
-loglar ve isteği yine de sunar), Swagger ve dev CORS kapalı, FCM açık. Bu
-profilin `environmentVariables`'ının beklediği ve gitignore'lu (`*.pfx`) iki
-dosyaya ihtiyaç var; temiz bir clone önce bunları üretmeli/edinmeli:
+loglar ve isteği yine de sunar), Swagger ve dev CORS kapalı, FCM açık.
+Production modu yerleşik development JWT anahtarını reddeder ve profil bilerek
+bir anahtar commit'lemez: başlatmadan önce shell'de ya da Rider çalıştırma
+konfigürasyonunun ortam değişkenlerinde `Jwt__Key` (32+ rastgele karakter, ör.
+`export Jwt__Key=$(openssl rand -hex 32)`) tanımlayın. Ayrıca profilin
+`environmentVariables`'ının işaret ettiği gitignore'lu iki dosyaya ihtiyaç var;
+temiz bir clone önce bunları üretmeli/edinmeli:
 
 - `backend/src/MailClient.Api/data/lan-dataprotection.pfx` — boş export
   şifreli self-signed bir Data Protection sertifikası:

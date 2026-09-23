@@ -40,9 +40,12 @@ with `ASPNETCORE_ENVIRONMENT=Production` — for testing from another device on
 the LAN (e.g. a Flutter app on a phone) against production-like behavior:
 HTTPS-redirect/HSTS logic active (harmless over plain LAN HTTP — Kestrel logs
 a warning and serves the request anyway since no HTTPS port is configured),
-Swagger and dev CORS disabled, FCM enabled. It needs two files this profile's
-`environmentVariables` expect and that are gitignored (`*.pfx`), so a fresh
-clone must generate/obtain them first:
+Swagger and dev CORS disabled, FCM enabled. Production mode rejects the
+built-in development JWT key, and the profile deliberately does not commit one:
+export `Jwt__Key` (32+ random characters, e.g. `export Jwt__Key=$(openssl rand -hex 32)`)
+in the shell or in the Rider run configuration's environment before starting it.
+It also needs two gitignored files the profile's `environmentVariables` point
+at, so a fresh clone must generate/obtain them first:
 
 - `backend/src/MailClient.Api/data/lan-dataprotection.pfx` — a self-signed
   Data Protection cert, empty export password:
