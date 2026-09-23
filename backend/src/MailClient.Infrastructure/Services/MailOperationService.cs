@@ -89,14 +89,20 @@ public sealed class MailOperationService(
                     return new(false, MailOperationError.MoveFailed, true);
                 if (moveResult.DestinationUid is not { } destinationUid)
                 {
-                    if (auditKind is MailOperationKind.Trash or MailOperationKind.Spam)
-                        mail.PreviousMailFolderId = mail.MailFolderId;
-                    mail.ExpectedMailFolderId = target!.Id;
-                    mail.ReconciliationState = MailReconciliationState.Pending;
-                    mail.IsRestoreReconciliation = auditKind == MailOperationKind.Restore;
-                    // Commit the pending marker first: the coordinator may run the reconciliation sync immediately.
-                    await db.SaveChangesAsync(cancellationToken);
-                    await scheduler.ScheduleFolderAsync(accountId, target.Id, SyncOrigin.Reconciliation, cancellationToken);
+                    // Without the destination UID the local row can only be matched to its moved copy by Message-ID.
+                    // A message without one would stay pending forever (pending rows are never treated as vanished),
+                    // so leave it unmarked: the source flag pass removes it and the destination sync imports the copy.
+                    if (!string.IsNullOrWhiteSpace(mail.MessageId))
+                    {
+                        if (auditKind is MailOperationKind.Trash or MailOperationKind.Spam)
+                            mail.PreviousMailFolderId = mail.MailFolderId;
+                        mail.ExpectedMailFolderId = target!.Id;
+                        mail.ReconciliationState = MailReconciliationState.Pending;
+                        mail.IsRestoreReconciliation = auditKind == MailOperationKind.Restore;
+                        // Commit the pending marker first: the coordinator may run the reconciliation sync immediately.
+                        await db.SaveChangesAsync(cancellationToken);
+                    }
+                    await scheduler.ScheduleFolderAsync(accountId, target!.Id, SyncOrigin.Reconciliation, cancellationToken);
                     await NotifyStateChangedAsync(accountId, mail, target.Id, OperationName(auditKind), cancellationToken);
                     return await AuditSuccess(accountId, auditKind, mail.Id, correlationId, cancellationToken, new(true, MailOperationError.None, true));
                 }
