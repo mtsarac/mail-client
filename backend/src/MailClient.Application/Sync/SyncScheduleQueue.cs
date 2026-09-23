@@ -152,26 +152,20 @@ public sealed class SyncScheduleQueue
             _pending.Enqueue(item.Request, item.Priority);
     }
 
+    /// <summary>Drops the periodic item that would run last (lowest priority, newest), so user work fits.</summary>
     private bool TryShedLowestBackgroundWork()
     {
-        var retained = new List<(ScheduledSyncRequest Request, SyncQueuePriority Priority)>();
-        var shed = false;
-        while (_pending.TryDequeue(out var next, out var priority))
-        {
-            if (!shed && next.Priority is SyncPriority.PeriodicInbox or SyncPriority.PeriodicOtherFolder)
-            {
-                shed = true;
-                _queued.Remove(next.Request);
-                _byRequest.Remove(next.Request);
-                continue;
-            }
+        var victim = _pending.UnorderedItems
+            .Where(item => item.Element.Priority is SyncPriority.PeriodicInbox or SyncPriority.PeriodicOtherFolder)
+            .Select(item => item.Element)
+            .MaxBy(QueuePriority);
+        if (victim is null)
+            return false;
 
-            retained.Add((next, priority));
-        }
-
-        foreach (var item in retained)
-            _pending.Enqueue(item.Request, item.Priority);
-        return shed;
+        _pending.Remove(victim, out _, out _);
+        _queued.Remove(victim.Request);
+        _byRequest.Remove(victim.Request);
+        return true;
     }
 
     private static SyncQueuePriority QueuePriority(ScheduledSyncRequest request) =>

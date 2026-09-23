@@ -97,6 +97,22 @@ public sealed class SyncTargetingTests
     }
 
     [Fact]
+    public void Queue_WhenFull_ShedsLeastImportantBackgroundWorkFirst()
+    {
+        var queue = new SyncScheduleQueue(2);
+        var accountId = Guid.NewGuid();
+        var inbox = SyncScheduling.ForPeriodicFolder(accountId, Guid.NewGuid(), MailFolderType.Inbox, queue.NextSequence());
+        var other = SyncScheduling.ForPeriodicFolder(accountId, Guid.NewGuid(), MailFolderType.Custom, queue.NextSequence());
+        queue.Enqueue(inbox);
+        queue.Enqueue(other);
+
+        Assert.Equal(SyncEnqueueResult.EnqueuedAfterShedding, queue.Enqueue(SyncScheduling.ForUserFolder(accountId, Guid.NewGuid(), queue.NextSequence())));
+
+        Assert.True(queue.Contains(inbox.Request));
+        Assert.False(queue.Contains(other.Request));
+    }
+
+    [Fact]
     public async Task OwnsFolderAsync_RejectsFolderFromAnotherAccount()
     {
         await using var db = CreateDb();
