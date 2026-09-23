@@ -46,7 +46,7 @@ public sealed class RuntimeSettingsTests
     [Fact]
     public void ProviderPolicy_CannotEnableUnsupportedOAuth()
     {
-        var policy = RuntimeProviderPolicy.Create(
+        var policy = new RuntimeProviderPolicy(
             new RuntimeSettings(),
             new ProviderCapabilities(GoogleOAuth2: true, MicrosoftOAuth2: true));
 

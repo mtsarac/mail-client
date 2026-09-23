@@ -1,3 +1,4 @@
+using MailClient.Domain;
 using System.Security.Cryptography;
 using MailClient.Application.Mail;
 using MailClient.Domain.Entities;
@@ -138,7 +139,7 @@ public sealed class MailReadService(
 
         mail.IsRead = isRead;
         await db.SaveChangesAsync(cancellationToken);
-        await audit.WriteAsync(accountId, "mail.read-state-changed", "Mail", mail.Id.ToString(),
+        await audit.WriteAsync(accountId, AuditActions.MailReadStateChanged, "Mail", mail.Id.ToString(),
             new Dictionary<string, string?> { ["isRead"] = isRead.ToString() }, correlationId, cancellationToken);
         return new MailReadOutcome(true, true, false, false);
     }

@@ -1,3 +1,4 @@
+using MailClient.Domain;
 using MailClient.Application.Mail;
 using MailClient.Infrastructure.Sync;
 using MailClient.Domain.Entities;
@@ -34,7 +35,7 @@ public sealed class DraftService(
         var append = await AppendAsync(account, folder, message, cancellationToken);
         var messageId = message.MessageId ?? throw new InvalidOperationException("message_not_constructible");
         var mailId = await ReconcileAndFindAsync(accountId, folder, messageId, append, null, cancellationToken);
-        await audit.WriteAsync(accountId, "draft.created", "Mail", mailId?.ToString(), null, correlationId, cancellationToken);
+        await audit.WriteAsync(accountId, AuditActions.DraftCreated, "Mail", mailId?.ToString(), null, correlationId, cancellationToken);
         return new(true, mailId, mailId is null, null);
     }
 
@@ -49,7 +50,7 @@ public sealed class DraftService(
         if (replacementId is null)
             return new(false, null, true, "Draft replacement stored; refresh Drafts before retrying cleanup.");
         await MoveToTrashAsync(accountId, draftId, correlationId, cancellationToken);
-        await audit.WriteAsync(accountId, "draft.updated", "Mail", replacementId.Value.ToString(), null, correlationId, cancellationToken);
+        await audit.WriteAsync(accountId, AuditActions.DraftUpdated, "Mail", replacementId.Value.ToString(), null, correlationId, cancellationToken);
         return new(false, replacementId, false, null);
     }
 
@@ -136,7 +137,7 @@ public sealed class DraftService(
     {
         await GetDraftEntityAsync(accountId, draftId, cancellationToken);
         await MoveToTrashAsync(accountId, draftId, correlationId, cancellationToken);
-        await audit.WriteAsync(accountId, "draft.deleted", "Mail", draftId.ToString(), null, correlationId, cancellationToken);
+        await audit.WriteAsync(accountId, AuditActions.DraftDeleted, "Mail", draftId.ToString(), null, correlationId, cancellationToken);
         return new(true, null);
     }
 

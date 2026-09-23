@@ -16,10 +16,8 @@ using Microsoft.Extensions.Logging;
 namespace MailClient.Infrastructure.Security;
 
 public sealed record OAuthCredentialMaterial(string AccessToken, string? RefreshToken);
-public sealed record ResolvedCredential(MailAccount Account, string Username, string Secret, AuthenticationMethod AuthenticationMethod)
-{
-    public string Password => Secret;
-}
+/// <param name="Secret">The password for password accounts, or the OAuth access token.</param>
+public sealed record ResolvedCredential(MailAccount Account, string Username, string Secret, AuthenticationMethod AuthenticationMethod);
 
 public sealed class MailCredentialResolver(
     AppDbContext db,

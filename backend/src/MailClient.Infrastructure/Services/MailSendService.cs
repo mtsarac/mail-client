@@ -1,3 +1,4 @@
+using MailClient.Domain;
 using System.Buffers;
 using System.Diagnostics;
 using System.Security.Cryptography;
@@ -116,7 +117,7 @@ public sealed class MailSendService(
         var result = await SendAndStoreAsync(account, to, cc, bcc, subject, command, threading, operation, cancellationToken);
         if (result.Sent)
         {
-            await audit.WriteAsync(account.Id, "mail.sent", "MailAccount", account.Id.ToString(),
+            await audit.WriteAsync(account.Id, AuditActions.MailSent, "MailAccount", account.Id.ToString(),
                 new Dictionary<string, string?> { ["toAddress"] = string.Join(',', to.Select(x => x.Address)), ["sentCopySaved"] = result.SentCopySaved.ToString() },
                 correlationId, cancellationToken);
         }

@@ -319,7 +319,7 @@ internal sealed class FakeMailTransport : MailClient.Infrastructure.Mail.IMailTr
 internal sealed class DefaultRuntimePolicyProvider : IRuntimePolicyProvider
 {
     public Task<RuntimeProviderPolicy> GetAsync(CancellationToken cancellationToken) =>
-        Task.FromResult(RuntimeProviderPolicy.Create(new RuntimeSettings(), new ProviderCapabilities(false, false)));
+        Task.FromResult(new RuntimeProviderPolicy(new RuntimeSettings(), new ProviderCapabilities(false, false)));
 }
 
 internal sealed class DefaultEmailAllowlistService : IEmailAllowlistService

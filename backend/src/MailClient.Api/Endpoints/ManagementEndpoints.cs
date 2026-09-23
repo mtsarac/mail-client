@@ -1,3 +1,4 @@
+using MailClient.Domain;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -27,7 +28,7 @@ public static class ManagementEndpoints
             var after = await store.ReplaceAsync(request.ExpectedVersion, request.Settings, cancellationToken);
             // The coordinator caches settings briefly; apply the new ones (sync switch, limits, queue capacity) now.
             coordinator.NotifySettingsChanged();
-            await audit.WriteAsync(null, "runtime_settings_updated", "RuntimeConfiguration", "1", new
+            await audit.WriteAsync(null, AuditActions.RuntimeSettingsUpdated, "RuntimeConfiguration", "1", new
             {
                 oldVersion = before.Version,
                 newVersion = after.Version,
