@@ -595,6 +595,62 @@ Kopya kaydedildiyse sunucu Gönderilmiş klasörünü hemen senkronlar; `mailId`
 
 > Aynı `Idempotency-Key` ile tekrar çağrı, aynı gövdeyle yapılırsa gönderim tekrarlanmaz — kayıtlı sonuç aynen döner. Ağ zaman aşımı sonrası güvenle retry atabilirsin.
 
+### Zamanlanmış gönderim
+
+Bir maili şimdi değil, belirli bir zamanda göndermek için. Sunucu arka planda periyodik olarak zamanı gelenleri tarar ve gönderir — istemcinin ayrıca bir işlem yapmasına gerek yoktur.
+
+### `POST /api/scheduled-sends`
+**Auth:** Bearer · **Gövde:** `multipart/form-data`
+
+`POST /api/mails/send` ile aynı alanlar (`To`, `Cc`, `Bcc`, `subject`, `bodyHtml`/`bodyText`, en fazla 20 dosya eki, `replySourceMailId`) artı **`sendAtUtc`** (ISO-8601, zorunlu, gelecekte bir zaman olmalı). `Idempotency-Key` header'ı zorunlu.
+
+```json
+// 201 Created
+{ "id": "b6e2f1a4-…", "sendAtUtc": "2026-09-24T09:00:00Z", "status": "Pending" }
+```
+
+| Durum | code | Anlamı |
+|---|---|---|
+| 400 | `scheduled_send_in_past` | `sendAtUtc` şu andan ileride değil. |
+| 400 | `recipient_required` / `invalid_recipient` / `body_required` / `body_too_large` / `too_many_attachments` / `attachment_too_large` / `invalid_mail_header` / `message_not_constructible` / `idempotency_key_required` / `idempotency_key_too_long` | Form doğrulaması — `/mails/send` ile aynı kurallar. |
+| 404 | `mail_account_not_found` | Hesap yok/aktif değil. |
+| 409 | `idempotency_conflict` | Aynı key farklı bir gövdeyle tekrar gönderildi. |
+
+> Aynı `Idempotency-Key` ile tekrar çağrı, aynı gövdeyle yapılırsa yeni bir kayıt oluşturmaz — mevcut kayıt aynen döner.
+
+### `GET /api/scheduled-sends`
+**Auth:** Bearer
+
+Hesabın tüm zamanlanmış gönderimlerini döner (dizi, sayfalama yok), `sendAtUtc`'ye göre artan sırada.
+
+```json
+// 200 OK
+{
+  "items": [{
+    "id": "b6e2f1a4-…",
+    "to": ["friend@example.com"], "cc": [], "bcc": [],
+    "subject": "Toplantı notları",
+    "sendAtUtc": "2026-09-24T09:00:00Z",
+    "status": "Pending",
+    "createdAtUtc": "2026-09-23T18:12:00Z",
+    "sentMailId": null,
+    "failureReason": null
+  }]
+}
+```
+
+`status`: `Pending · Sent · Cancelled · Failed`. `sentMailId` yalnızca `Sent` durumunda ve Gönderilmiş kopyası kaydedildiyse dolar; `failureReason` yalnızca `Failed` durumunda dolar.
+
+### `DELETE /api/scheduled-sends/{id}`
+**Auth:** Bearer
+
+Henüz gönderilmemiş bir zamanlanmış gönderimi iptal eder, `204` döner.
+
+| Durum | code | Anlamı |
+|---|---|---|
+| 404 | `scheduled_send_not_found` | Kayıt yok ya da başka hesaba ait. |
+| 409 | `scheduled_send_already_sent` | Kayıt artık `Pending` değil (gönderildi/iptal edildi/başarısız oldu). |
+
 ---
 
 ## 6. Konuşmalar
@@ -705,10 +761,11 @@ Her hata gövdesi `{ code, title, status, correlationId }` — bazılarında ek 
 | 400 | `invalid_request` | İstek gövdesi okunamadı (ör. bozuk JSON). Yarıda kesilmiş multipart gövde ise gövdesiz `400` döner. |
 | 400 | `invalid_email` / `invalid_recipient` / `recipient_required` / `body_required` / `body_too_large` / `too_many_attachments` / `attachment_too_large` / `invalid_mail_header` / `message_not_constructible` / `manual_setup_invalid` | Form/gövde doğrulaması. |
 | 400 | `idempotency_key_required` / `idempotency_key_too_long` | Gönderim uçları. |
+| 400 | `scheduled_send_in_past` | Zamanlanmış gönderimde `sendAtUtc` şu andan ileride değil. |
 | 403 | `email_not_allowlisted` | Prod erişim listesi açık, email listede değil — bkz. [altta](#10-prod-erişim-listesi-allowlist). |
 | 403 | `mail_account_disabled` | Hesap devre dışı bırakıldı. |
 | 403 | `provider_disabled` / `provider_new_accounts_disabled` / `provider_existing_accounts_disabled` / `authentication_method_disabled` | Sunucu tarafı politika: sağlayıcı/yöntem kapalı ("şu an desteklenmiyor"). |
-| 404 | `mail_account_not_found` / `mail_not_found` / `draft_not_found` | Kaynak yok ya da başka hesaba ait. Kodsuz `404`: oturum/klasör/ek/konuşma/cihaz/bilinmeyen bulk eylemi. |
+| 404 | `mail_account_not_found` / `mail_not_found` / `draft_not_found` / `scheduled_send_not_found` | Kaynak yok ya da başka hesaba ait. Kodsuz `404`: oturum/klasör/ek/konuşma/cihaz/bilinmeyen bulk eylemi. |
 | 404 | `mail_folder_not_found` | Mail durum/taşıma uçlarında hedef klasör hesapta yok. |
 | 422 | `mail_discovery_failed` | Otomatik keşif başarısız → manuel bağlantıya geç. |
 | 422 | `mail_server_unsafe` / `unsupported_authentication_method` / `discovery_invalid` / `discovery_expired` | Sunucu/keşif/yöntem reddi. |
@@ -723,6 +780,7 @@ Her hata gövdesi `{ code, title, status, correlationId }` — bazılarında ek 
 | 409 | `delivery_unknown` | Gönderim sonucu belirsiz — otomatik retry yapma. |
 | 409 | `mail_account_needs_reauthentication` / `credential_missing` | Saklı kimlik bilgisi geçersiz/yok → `reconnect` (OAuth ise OAuth'u yeniden çalıştır). |
 | 409 | `mail_folder_unavailable` | Klasör sunucudan silinmiş. |
+| 409 | `scheduled_send_already_sent` | Zamanlanmış gönderim artık `Pending` değil. |
 | 429 | — | Hız sınırı aşıldı (dk. başına 60 istek); gövde yok. |
 | 502 | `mail_move_failed` | Klasör değiştiren mail işlemi (trash/restore/archive/spam/not-spam/move) sunucu tarafında başarısız. |
 | 502 | `mail_delete_failed` | Kalıcı silme (`delete`) sunucu tarafında başarısız; yerel kayıt korunur, tekrar dene. |
@@ -745,6 +803,7 @@ Tüm enum değerleri JSON'da **string** olarak serileşir (sayısal değil).
 | `AuthenticationMethod` | `Password · AppSpecificPassword · OAuth2` |
 | `MailFolderType` | `Inbox · Sent · Drafts · Trash · Junk · Archive · Custom · Unknown` |
 | `MailAccountStatus` | `Active · NeedsReauthentication · ConnectionError · Disabled` |
+| `ScheduledSendStatus` | `Pending · Sent · Cancelled · Failed` |
 
 > `MailAccountStatus.NeedsReauthentication` gördüğünde kullanıcıyı `/api/account/reconnect` ekranına yönlendir; `Disabled` gördüğünde tüm istekler `401`/`403` döner, uygulama çıkışı yaptır.
 
