@@ -1,7 +1,5 @@
 using MailClient.Domain;
-using System.Buffers;
 using System.Diagnostics;
-using System.Security.Cryptography;
 using MailClient.Application.Conversations;
 using MailClient.Application.Mail;
 using MailClient.Application.Observability;
@@ -31,8 +29,6 @@ public sealed class MailSendService(
     ILogger<MailSendService> logger,
     MailClientMetrics? metrics = null)
 {
-    private const int MaxAttachmentCount = 20;
-
     public async Task<SendMailResult> SendAsync(
         Guid accountId,
         SendMailCommand command,
@@ -61,34 +57,20 @@ public sealed class MailSendService(
         var to = recipients.To.Select(recipient => new MailboxAddress(recipient.DisplayName, recipient.Address)).ToList();
         var cc = recipients.Cc.Select(recipient => new MailboxAddress(recipient.DisplayName, recipient.Address)).ToList();
         var bcc = recipients.Bcc.Select(recipient => new MailboxAddress(recipient.DisplayName, recipient.Address)).ToList();
-        if (string.IsNullOrWhiteSpace(command.BodyHtml) && string.IsNullOrWhiteSpace(command.BodyText))
-            throw new InvalidOperationException("body_required");
-        if ((command.BodyHtml?.Length ?? 0) > limits.MaxSendBodyChars
-            || (command.BodyText?.Length ?? 0) > limits.MaxSendBodyChars)
-            throw new InvalidOperationException("body_too_large");
-        if (command.Attachments.Count > MaxAttachmentCount)
-            throw new InvalidOperationException("too_many_attachments");
-
-        if (!AttachmentsWithinLimits(command.Attachments, limits))
-            throw new InvalidOperationException("attachment_too_large");
-
-        var subject = command.Subject.Contains('\r') || command.Subject.Contains('\n')
-            ? throw new InvalidOperationException("invalid_mail_header")
-            : MailFieldNormalizer.Truncate(command.Subject.Trim(), MailFieldLimits.Subject);
+        ComposeMailValidator.ValidateBody(command.BodyHtml, command.BodyText, limits);
+        ComposeMailValidator.ValidateAttachments(command.Attachments, limits);
+        var subject = ComposeMailValidator.ValidateSubject(command.Subject);
         var account = await db.MailAccounts.SingleOrDefaultAsync(
             item => item.Id == command.AccountId && item.Id == accountId && item.Status == MailAccountStatus.Active,
             cancellationToken)
             ?? throw new InvalidOperationException("mail_account_not_found");
 
-        if (string.IsNullOrWhiteSpace(command.IdempotencyKey))
-            throw new InvalidOperationException("idempotency_key_required");
-        if (command.IdempotencyKey.Length > SendOperationStore.MaxKeyLength)
-            throw new InvalidOperationException("idempotency_key_too_long");
+        ComposeMailValidator.ValidateIdempotencyKey(command.IdempotencyKey);
 
         var threading = command.TrustedMessageId is not null
             ? new ReplyThreading(command.TrustedInReplyToMessageId, command.TrustedReferences)
             : await ResolveThreadingAsync(account.Id, command.ReplySourceMailId, cancellationToken);
-        var hashed = await HashAttachmentsAsync(command.Attachments, cancellationToken);
+        var hashed = await ComposeMailValidator.HashAttachmentsAsync(command.Attachments, cancellationToken);
         var fingerprintRecipients = string.Join(',', to.Select(x => x.Address).Concat(cc.Select(x => x.Address)).Concat(bcc.Select(x => x.Address)));
         var fingerprint = SendOperationStore.Fingerprint(account.Id, $"{fingerprintRecipients}|{command.ReplySourceMailId}|{command.TrustedMessageId}", subject, command.BodyHtml, command.BodyText, hashed);
         var claim = await operations.ClaimAsync(account.Id, command.IdempotencyKey, fingerprint, cancellationToken);
@@ -208,7 +190,7 @@ public sealed class MailSendService(
 
         try
         {
-            RewindAttachments(command.Attachments);
+            ComposeMailValidator.RewindAttachments(command.Attachments);
             await transport.AppendToSentAsync(account, sentFullName, message, cancellationToken);
             await operations.TryCompleteAsync(operation.Id, SendOperationStatus.SentWithCopy, true, null, CancellationToken.None);
             var (mailId, conversationId) = await FindSentCopyAsync(account.Id, sentFullName, message.MessageId, cancellationToken);
@@ -289,57 +271,5 @@ public sealed class MailSendService(
             ?? throw new InvalidOperationException("mail_not_found");
         var (inReplyTo, references) = ConversationEngine.ReplyHeaders(source.MessageId, source.References);
         return new(inReplyTo, references);
-    }
-
-    private static async Task<IReadOnlyList<(string FileName, string ContentType, long SizeBytes, string ContentHash)>> HashAttachmentsAsync(
-        IReadOnlyList<SendMailAttachment> attachments,
-        CancellationToken cancellationToken)
-    {
-        var hashed = new List<(string, string, long, string)>(attachments.Count);
-        foreach (var attachment in attachments)
-        {
-            using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-            var buffer = ArrayPool<byte>.Shared.Rent(81920);
-            try
-            {
-                int read;
-                while ((read = await attachment.Content.ReadAsync(buffer, cancellationToken)) > 0)
-                    hash.AppendData(buffer, 0, read);
-            }
-            finally
-            {
-                ArrayPool<byte>.Shared.Return(buffer);
-            }
-
-            hashed.Add((
-                MailFieldNormalizer.FileName(attachment.FileName),
-                MailFieldNormalizer.ContentType(attachment.ContentType),
-                attachment.Content.Length,
-                Convert.ToHexString(hash.GetHashAndReset())));
-            if (attachment.Content.CanSeek)
-                attachment.Content.Position = 0;
-        }
-
-        return hashed;
-    }
-
-    private static bool AttachmentsWithinLimits(IReadOnlyList<SendMailAttachment> attachments, RuntimeLimitSettings limits)
-    {
-        var total = 0L;
-        foreach (var attachment in attachments)
-        {
-            if (!attachment.Content.CanSeek || attachment.Content.Length > limits.MaxAttachmentBytes)
-                return false;
-            total += attachment.Content.Length;
-        }
-
-        return total <= limits.MaxMessageAttachmentBytes;
-    }
-
-    private static void RewindAttachments(IReadOnlyList<SendMailAttachment> attachments)
-    {
-        foreach (var attachment in attachments)
-            if (attachment.Content.CanSeek)
-                attachment.Content.Position = 0;
     }
 }
