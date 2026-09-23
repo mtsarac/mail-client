@@ -196,14 +196,20 @@ public sealed class HttpBodyLoggingMiddleware(
         return bytes.Length > maxBytes ? (bytes[..maxBytes], true) : (bytes, false);
     }
 
+    // Mail content is never logged; only its length is kept. Covers request fields (bodyHtml/bodyText) and
+    // response fields (MailDetailResponse.body.html, list item snippets).
+    private static readonly HashSet<string> MailContentKeys = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "bodyHtml", "bodyText", "html", "snippet"
+    };
+
     private static void MaskLongTextFields(JsonNode? node)
     {
         if (node is JsonObject obj)
         {
             foreach (var key in obj.Select(item => item.Key).ToArray())
             {
-                if ((key.Equals("bodyHtml", StringComparison.OrdinalIgnoreCase)
-                        || key.Equals("bodyText", StringComparison.OrdinalIgnoreCase))
+                if (MailContentKeys.Contains(key)
                     && obj[key] is JsonValue value
                     && value.TryGetValue<string>(out var text)
                     && text is not null)
