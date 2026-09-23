@@ -42,6 +42,9 @@ public interface IRemoteMailFolder
     Task SetFlaggedAsync(UniqueId uid, bool flagged, CancellationToken cancellationToken);
     Task<RemoteMoveResult> MoveAsync(UniqueId uid, string destinationFullName, CancellationToken cancellationToken);
     Task<RemoteMoveResult> CopyAsync(UniqueId uid, string destinationFullName, CancellationToken cancellationToken);
+
+    /// <summary>Marks the message <c>\Deleted</c> and expunges only that UID. Returns whether it is gone from the folder.</summary>
+    Task<bool> ExpungeAsync(UniqueId uid, CancellationToken cancellationToken);
     Task<RemoteAppendResult> AppendAsync(MimeMessage message, MessageFlags flags, CancellationToken cancellationToken);
 }
 
@@ -251,6 +254,15 @@ public sealed class MailKitRemoteMailFolder(IMailFolder folder, Func<string, Can
         var result = await folder.CopyToAsync(uid, destination, cancellationToken);
         var uidValidity = await ResolveUidValidityAsync(destination, cancellationToken);
         return new(result, uidValidity);
+    }
+
+    public async Task<bool> ExpungeAsync(UniqueId uid, CancellationToken cancellationToken)
+    {
+        await folder.AddFlagsAsync(uid, MessageFlags.Deleted, true, cancellationToken);
+        // UIDPLUS servers get UID EXPUNGE. Without it MailKit temporarily clears \Deleted from every other message
+        // before a plain EXPUNGE and restores it afterwards, so messages other clients marked \Deleted survive.
+        await folder.ExpungeAsync([uid], cancellationToken);
+        return (await folder.SearchAsync(SearchQuery.Uids([uid]), cancellationToken)).Count == 0;
     }
 
     private static async Task<uint> ResolveUidValidityAsync(IMailFolder destination, CancellationToken cancellationToken)

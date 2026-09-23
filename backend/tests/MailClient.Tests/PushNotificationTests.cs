@@ -348,7 +348,8 @@ public sealed class PushNotificationTests
             new AuditLogger(db),
             new FakeSyncScheduler(),
             NullLogger<MailOperationService>.Instance,
-            push);
+            push,
+            new FakeFileStorage());
 
     private static async Task<(Guid AccountId, Guid FolderId, Guid MailId)> SeedMailAsync(AppDbContext db)
     {

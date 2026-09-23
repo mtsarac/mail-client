@@ -161,7 +161,7 @@ public sealed class DraftServiceTests
         var folders = new RecordingMailFolderClient(remote);
         var audit = new AuditLogger(db);
         var reader = new MailReadService(db, folders, audit, NullLogger<MailReadService>.Instance);
-        var operations = new MailOperationService(db, folders, reader, audit, new FakeSyncScheduler(), NullLogger<MailOperationService>.Instance, new FakePushNotificationService());
+        var operations = new MailOperationService(db, folders, reader, audit, new FakeSyncScheduler(), NullLogger<MailOperationService>.Instance, new FakePushNotificationService(), new FakeFileStorage());
         var sendOperations = new SendOperationStore(db, NullLogger<SendOperationStore>.Instance);
         var inlineSync = TestServices.InlineSync(sync);
         var sender = new MailSendService(db, transport ?? new FakeMailTransport(), sendOperations, FixedRuntimeSettingsStore.Operation(), inlineSync, audit, NullLogger<MailSendService>.Instance);

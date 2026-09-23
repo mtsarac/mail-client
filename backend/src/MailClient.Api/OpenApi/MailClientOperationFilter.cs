@@ -88,7 +88,7 @@ public sealed class MailClientOperationFilter : IOperationFilter
             if (parameter.Name == "action" && parameter.Schema is OpenApiSchema schema)
             {
                 parameter.Description = "Bulk operation (move requires folderId in the body).";
-                schema.Enum = ["read", "unread", "star", "unstar", "archive", "trash", "restore", "spam", "not-spam", "move"];
+                schema.Enum = ["read", "unread", "star", "unstar", "archive", "trash", "restore", "spam", "not-spam", "delete", "move"];
             }
             if (parameter.Name == "provider" && parameter.Schema is OpenApiSchema providerSchema)
                 providerSchema.Enum = ["google", "microsoft"];
