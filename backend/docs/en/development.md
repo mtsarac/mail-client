@@ -48,11 +48,12 @@ HTTPS-redirect/HSTS logic active (harmless over plain LAN HTTP — Kestrel logs
 a warning and serves the request anyway since no HTTPS port is configured),
 Swagger and dev CORS disabled, FCM enabled. Production mode rejects the
 built-in development JWT key, and the profile deliberately does not commit one:
-export `Jwt__Key` (32+ random characters, e.g. `export Jwt__Key=$(openssl rand -hex 32)`)
-in the shell or in the Rider run configuration's environment before starting it.
-It also needs two gitignored files the profile's `environmentVariables` point
+it sets `Jwt__KeyPath=./data/lan-jwt.key`, so the key is read from that file.
+It needs three gitignored files the profile's `environmentVariables` point
 at, so a fresh clone must generate/obtain them first:
 
+- `backend/src/MailClient.Api/data/lan-jwt.key` — 32+ random characters:
+  `openssl rand -hex 32 > backend/src/MailClient.Api/data/lan-jwt.key`.
 - `backend/src/MailClient.Api/data/lan-dataprotection.pfx` — a self-signed
   Data Protection cert, empty export password:
   `openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 3650 -nodes -subj "/CN=mailclient-lan-dataprotection"`
