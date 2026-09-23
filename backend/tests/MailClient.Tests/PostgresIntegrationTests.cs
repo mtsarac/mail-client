@@ -167,6 +167,24 @@ public sealed class PostgresIntegrationTests(PostgresFixture fixture)
     }
 
     [Fact]
+    public async Task Search_DateFilterWithoutOffset_IsTreatedAsUtc()
+    {
+        if (!IntegrationEnvironment.PostgresEnabled) return;
+        var accountId = await SeedAccountAsync();
+        await using var db = fixture.CreateDb();
+        var folderId = await SeedFolderAsync(db, accountId);
+        db.Mails.Add(new Domain.Entities.Mail { Id = Guid.NewGuid(), MailAccountId = accountId, MailFolderId = folderId, Uid = 110, Subject = "dated", FromAddress = "sender@example.test", ReceivedAt = new DateTime(2026, 3, 10, 12, 0, 0, DateTimeKind.Utc) });
+        await db.SaveChangesAsync();
+        var service = new MailSearchService(db);
+
+        // Query-string binding yields DateTimeKind.Unspecified for "2026-03-10"; timestamptz rejects that kind as-is.
+        var result = await service.SearchAsync(accountId, new MailSearchRequest(null, null, null, null, null,
+            new DateTime(2026, 3, 10), new DateTime(2026, 3, 11), null, null, null, 1, 20), CancellationToken.None);
+
+        Assert.Equal("dated", Assert.Single(result.Items).Subject);
+    }
+
+    [Fact]
     public async Task Search_Query_MatchesParticipantsAndAttachmentFilename()
     {
         if (!IntegrationEnvironment.PostgresEnabled) return;

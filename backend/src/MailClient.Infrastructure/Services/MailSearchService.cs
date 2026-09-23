@@ -55,8 +55,16 @@ public sealed class MailSearchService(AppDbContext db, RuntimeOperationSettings 
         if (request.IsRead is { } isRead) query = query.Where(mail => mail.IsRead == isRead);
         if (request.Flagged is { } flagged) query = query.Where(mail => mail.Flagged == flagged);
         if (request.HasAttachment is { } hasAttachment) query = query.Where(mail => mail.HasAttachments == hasAttachment);
-        if (request.FromDate is { } fromDate) query = query.Where(mail => mail.ReceivedAt >= fromDate);
-        if (request.ToDate is { } toDate) query = query.Where(mail => mail.ReceivedAt < toDate);
+        if (request.FromDate is { } fromDate)
+        {
+            var from = AsUtc(fromDate);
+            query = query.Where(mail => mail.ReceivedAt >= from);
+        }
+        if (request.ToDate is { } toDate)
+        {
+            var to = AsUtc(toDate);
+            query = query.Where(mail => mail.ReceivedAt < to);
+        }
         if (!string.IsNullOrWhiteSpace(request.From)) query = query.Where(mail => mail.FromAddress == request.From);
         if (!string.IsNullOrWhiteSpace(request.To)) query = query.Where(mail => mail.ToAddress == request.To);
         var useTs = !string.IsNullOrWhiteSpace(queryText) && db.Database.ProviderName == "Npgsql.EntityFrameworkCore.PostgreSQL";
@@ -85,4 +93,12 @@ public sealed class MailSearchService(AppDbContext db, RuntimeOperationSettings 
             .ToListAsync(cancellationToken);
         return new(items, page, pageSize, total);
     }
+
+    // Dates without an offset are UTC by contract; offsets are converted. PostgreSQL timestamptz accepts UTC only.
+    private static DateTime AsUtc(DateTime value) => value.Kind switch
+    {
+        DateTimeKind.Utc => value,
+        DateTimeKind.Local => value.ToUniversalTime(),
+        _ => DateTime.SpecifyKind(value, DateTimeKind.Utc)
+    };
 }
