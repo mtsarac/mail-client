@@ -131,7 +131,6 @@ public sealed class SyncTargetingTests
     private sealed class CountingExecutor : ISyncExecutor
     {
         public int Calls { get; private set; }
-        public Task SyncAccountAsync(Guid accountId, CancellationToken cancellationToken) => Task.CompletedTask;
         public Task SyncFolderAsync(Guid accountId, Guid folderId, CancellationToken cancellationToken)
         {
             Calls++;

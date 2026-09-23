@@ -169,15 +169,15 @@ public sealed class PushNotificationTests
     }
 
     [Fact]
-    public async Task SyncAll_MissingCredential_EmitsSingleReauthenticationEvent()
+    public async Task SyncFolder_MissingCredential_EmitsSingleReauthenticationEvent()
     {
         await using var db = CreateDb(DbName());
-        var (accountId, _) = await SeedFolderAsync(db);
+        var (accountId, folderId) = await SeedFolderAsync(db);
         var push = new FakePushNotificationService();
         var service = CreateSyncService(db, push);
 
-        await service.SyncAllAsync(CancellationToken.None);
-        await service.SyncAllAsync(CancellationToken.None);
+        await service.SyncFolderAsync(accountId, folderId, CancellationToken.None);
+        await service.SyncFolderAsync(accountId, folderId, CancellationToken.None);
 
         var reauth = Assert.Single(push.Notifications);
         Assert.Equal(PushEventType.AccountReauthenticationRequired, reauth.Type);

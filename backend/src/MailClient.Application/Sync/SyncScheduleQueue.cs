@@ -24,7 +24,6 @@ public sealed class SyncScheduleQueue
 {
     private readonly object _gate = new();
     private readonly PriorityQueue<ScheduledSyncRequest, SyncQueuePriority> _pending = new();
-    private readonly HashSet<SyncRequest> _queued = [];
     private readonly Dictionary<SyncRequest, ScheduledSyncRequest> _byRequest = [];
     private long _sequence;
     private int _capacity;
@@ -72,8 +71,8 @@ public sealed class SyncScheduleQueue
             {
                 if (request.Priority < existing.Priority)
                 {
+                    _pending.Remove(existing, out _, out _);
                     _byRequest[request.Request] = request;
-                    RebuildWithout(request.Request);
                     _pending.Enqueue(request, QueuePriority(request));
                 }
 
@@ -91,7 +90,6 @@ public sealed class SyncScheduleQueue
                 result = SyncEnqueueResult.EnqueuedAfterShedding;
             }
 
-            _queued.Add(request.Request);
             _byRequest[request.Request] = request;
             _pending.Enqueue(request, QueuePriority(request));
             return result;
@@ -108,7 +106,6 @@ public sealed class SyncScheduleQueue
                 return false;
             }
 
-            _queued.Remove(next.Request);
             _byRequest.Remove(next.Request);
             request = next;
             return true;
@@ -119,7 +116,7 @@ public sealed class SyncScheduleQueue
     {
         lock (_gate)
         {
-            return _queued.Contains(request);
+            return _byRequest.ContainsKey(request);
         }
     }
 
@@ -130,26 +127,12 @@ public sealed class SyncScheduleQueue
             var drained = new List<ScheduledSyncRequest>();
             while (_pending.TryDequeue(out var next, out _))
             {
-                _queued.Remove(next.Request);
                 _byRequest.Remove(next.Request);
                 drained.Add(next);
             }
 
             return drained;
         }
-    }
-
-    private void RebuildWithout(SyncRequest upgraded)
-    {
-        var retained = new List<(ScheduledSyncRequest Request, SyncQueuePriority Priority)>();
-        while (_pending.TryDequeue(out var next, out var priority))
-        {
-            if (!next.Request.Equals(upgraded))
-                retained.Add((next, priority));
-        }
-
-        foreach (var item in retained)
-            _pending.Enqueue(item.Request, item.Priority);
     }
 
     /// <summary>Drops the periodic item that would run last (lowest priority, newest), so user work fits.</summary>
@@ -163,7 +146,6 @@ public sealed class SyncScheduleQueue
             return false;
 
         _pending.Remove(victim, out _, out _);
-        _queued.Remove(victim.Request);
         _byRequest.Remove(victim.Request);
         return true;
     }

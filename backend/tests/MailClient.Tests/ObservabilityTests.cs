@@ -333,7 +333,6 @@ public sealed class ObservabilityTests
 
     private sealed class ActivityObservingExecutor(ConcurrentQueue<Activity?> observed) : ISyncExecutor
     {
-        public Task SyncAccountAsync(Guid accountId, CancellationToken cancellationToken) => Task.CompletedTask;
 
         public Task SyncFolderAsync(Guid accountId, Guid folderId, CancellationToken cancellationToken)
         {

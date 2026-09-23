@@ -72,8 +72,6 @@ public sealed class MailOperationService(
                 var uid = new UniqueId(mail.Uid);
                 return request.Kind switch
                 {
-                    MailOperationKind.Read => await SetSeen(remote, uid, true, ct),
-                    MailOperationKind.Unread => await SetSeen(remote, uid, false, ct),
                     MailOperationKind.Star => await SetFlagged(remote, uid, true, ct),
                     MailOperationKind.Unstar => await SetFlagged(remote, uid, false, ct),
                     MailOperationKind.Move or MailOperationKind.Trash or MailOperationKind.Archive or MailOperationKind.Spam or MailOperationKind.NotSpam
@@ -116,8 +114,6 @@ public sealed class MailOperationService(
                 mail.ExpectedMailFolderId = null;
                 mail.IsRestoreReconciliation = false;
             }
-            else if (request.Kind is MailOperationKind.Read or MailOperationKind.Unread)
-                mail.IsRead = request.Kind == MailOperationKind.Read;
             else if (request.Kind is MailOperationKind.Star or MailOperationKind.Unstar)
                 mail.Flagged = request.Kind == MailOperationKind.Star;
             else if (request.Kind == MailOperationKind.Copy)
@@ -172,12 +168,6 @@ public sealed class MailOperationService(
             .Where(folder => folder.MailAccountId == accountId && folder.FolderType == type && folder.IsAvailable)
             .OrderBy(folder => folder.Id)
             .FirstOrDefaultAsync(cancellationToken);
-    }
-
-    private static async Task<RemoteMoveResult?> SetSeen(IRemoteMailFolder remote, UniqueId uid, bool value, CancellationToken cancellationToken)
-    {
-        await remote.SetSeenAsync(uid, value, cancellationToken);
-        return null;
     }
 
     private static async Task<RemoteMoveResult?> SetFlagged(IRemoteMailFolder remote, UniqueId uid, bool value, CancellationToken cancellationToken)

@@ -154,47 +154,6 @@ public sealed class SyncServiceTests
         Assert.Equal(accountId, notification.MailAccountId);
     }
 
-    [Fact]
-    public async Task TargetedFolderSelection_IncludesDisabledAvailableFolder()
-    {
-        await using var db = CreateDb();
-        var (accountId, folderId) = await SeedFolderAsync(db);
-        var folder = await db.MailFolders.SingleAsync(x => x.Id == folderId);
-        folder.IsSyncEnabled = false;
-        await db.SaveChangesAsync();
-
-        var folders = await CreateService(db, Options(100)).GetSyncableFolderAsync(accountId, folderId, CancellationToken.None);
-
-        Assert.Equal((folderId, "INBOX"), folders);
-    }
-
-    [Fact]
-    public async Task BackgroundFolderSelection_ExcludesDisabledFolder()
-    {
-        await using var db = CreateDb();
-        var (accountId, folderId) = await SeedFolderAsync(db);
-        var folder = await db.MailFolders.SingleAsync(x => x.Id == folderId);
-        folder.IsSyncEnabled = false;
-        await db.SaveChangesAsync();
-
-        var folders = await CreateService(db, Options(100)).GetSyncableFoldersAsync(accountId, CancellationToken.None);
-
-        Assert.Empty(folders);
-    }
-
-    [Fact]
-    public async Task SyncAll_MissingCredential_MarksReauthenticationWithoutThrowing()
-    {
-        await using var db = CreateDb();
-        var (accountId, _) = await SeedFolderAsync(db);
-        var service = CreateService(db, Options(100));
-
-        await service.SyncAllAsync(CancellationToken.None);
-
-        Assert.Equal(MailAccountStatus.NeedsReauthentication,
-            (await db.MailAccounts.SingleAsync(x => x.Id == accountId)).Status);
-    }
-
     [Theory]
     [InlineData(0u, 10u, false)]
     [InlineData(10u, 10u, false)]

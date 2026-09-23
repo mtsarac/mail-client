@@ -371,10 +371,4 @@ public sealed class MailSendService(
             if (attachment.Content.CanSeek)
                 attachment.Content.Position = 0;
     }
-
-    private static bool HasLocalAndDomain(string address)
-    {
-        var at = address.LastIndexOf('@');
-        return at > 0 && at < address.Length - 1;
-    }
 }

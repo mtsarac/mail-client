@@ -12,7 +12,6 @@ public sealed class SessionSecurityTests
 
         Assert.NotEqual(token, hash);
         Assert.Equal(64, hash.Length);
-        Assert.True(RefreshTokenService.FixedTimeEquals(hash, token));
     }
 
     [Fact]

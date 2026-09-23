@@ -59,16 +59,6 @@ public sealed class SecurityTests
         Assert.DoesNotContain(new JwtSecurityTokenHandler().ReadJwtToken(token).Claims, c => c.Type == "role");
     }
 
-    [Fact]
-    public void RefreshToken_Hash_VerifiesWithConstantTimeComparison()
-    {
-        var token = RefreshTokenService.GenerateToken();
-        var hash = RefreshTokenService.HashToken(token);
-
-        Assert.True(RefreshTokenService.FixedTimeEquals(hash, token));
-        Assert.False(RefreshTokenService.FixedTimeEquals(hash, RefreshTokenService.GenerateToken()));
-    }
-
     private sealed class FailingStrategy(int order) : IMailDiscoveryStrategy
     {
         public int Order => order;

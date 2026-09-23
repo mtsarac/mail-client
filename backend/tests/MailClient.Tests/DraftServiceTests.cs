@@ -198,7 +198,6 @@ public sealed class DraftServiceTests
     private sealed class RecordingSyncExecutor(Func<Task>? onSync = null) : ISyncExecutor
     {
         public Guid? FolderId { get; private set; }
-        public Task SyncAccountAsync(Guid accountId, CancellationToken cancellationToken) => Task.CompletedTask;
         public async Task SyncFolderAsync(Guid accountId, Guid folderId, CancellationToken cancellationToken)
         {
             FolderId = folderId;
