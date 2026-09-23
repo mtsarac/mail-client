@@ -585,7 +585,7 @@ Kopya kaydedildiyse sunucu Gönderilmiş klasörünü hemen senkronlar; `mailId`
 | 409 | `idempotency_conflict` | Aynı key farklı bir gövdeyle tekrar gönderildi — aynı key'i yeni bir gönderimde kullanma. |
 | 401 | `mail_smtp_authentication_failed` | SMTP şifreyi reddetti → reconnect. |
 | 409 | `send_in_progress` | Aynı key ile gönderim hâlâ sürüyor; kısa süre sonra tekrar dene ya da bekle. |
-| 409 | `delivery_unknown` | SMTP oturumu sonucu belirsiz kaldı — mail gitmiş olabilir. **Otomatik retry yapma**; kullanıcıya "Gönderilenler'i kontrol et" de, gerekirse yeni key ile elle tekrar göndermesine izin ver. |
+| 409 | `delivery_unknown` | SMTP oturumu sonucu belirsiz kaldı — mail gitmiş olabilir. **Otomatik retry yapma**; aynı key ile tekrar çağrı gönderimi tekrarlamaz ve yine `delivery_unknown` döner. Kullanıcıya "Gönderilenler'i kontrol et" de, gerekirse yeni key ile elle tekrar göndermesine izin ver. |
 | 409 | `mail_account_needs_reauthentication` | Kimlik bilgisi geçersiz → reconnect. |
 | 502 | `mail_server_unreachable` / `mail_tls_failed` | SMTP'ye ulaşılamadı; geçici hata olarak ele al. |
 
