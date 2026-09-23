@@ -47,11 +47,13 @@ public sealed class DraftService(
         var append = await AppendAsync(account, folder, message, cancellationToken);
         var messageId = message.MessageId ?? throw new InvalidOperationException("message_not_constructible");
         var replacementId = await ReconcileAndFindAsync(accountId, folder, messageId, append, draftId, cancellationToken);
-        if (replacementId is null)
-            return new(false, null, true, "Draft replacement stored; refresh Drafts before retrying cleanup.");
+        // The APPEND succeeded, so the new copy is safe on the server even when it is not imported yet.
+        // Retire the source either way; otherwise Drafts keeps both versions.
         await MoveToTrashAsync(accountId, draftId, correlationId, cancellationToken);
-        await audit.WriteAsync(accountId, AuditActions.DraftUpdated, "Mail", replacementId.Value.ToString(), null, correlationId, cancellationToken);
-        return new(false, replacementId, false, null);
+        await audit.WriteAsync(accountId, AuditActions.DraftUpdated, "Mail", replacementId?.ToString(), null, correlationId, cancellationToken);
+        return replacementId is null
+            ? new(false, null, true, "Draft replacement stored; it appears in Drafts after the next sync.")
+            : new(false, replacementId, false, null);
     }
 
     public async Task<DraftLookupResult> GetAsync(Guid accountId, Guid draftId, CancellationToken cancellationToken)

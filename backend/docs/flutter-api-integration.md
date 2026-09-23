@@ -541,7 +541,7 @@ Yanıt şekli `GET /api/mails/{id}` ile aynıdır (`MailDetailResponse`).
 ### `PUT /api/drafts/{id}`
 **Auth:** Bearer · **Gövde:** `multipart/form-data`
 
-IMAP taslaklar yerinde düzenlenemez: sunucu eski mesajı siler, yenisini `APPEND` eder. Yanıt `POST /drafts` ile aynı şekil (`{ created: false, mailId, … }`) ama **yeni** bir `mailId` döner.
+IMAP taslaklar yerinde düzenlenemez: sunucu eski mesajı siler, yenisini `APPEND` eder. Yanıt `POST /drafts` ile aynı şekil (`{ created: false, mailId, … }`) ama **yeni** bir `mailId` döner. `reconciliationPending: true` ise (örn. art arda iki `PUT`'ta ikinci istek senkronizasyon meşgulken gelirse) yeni kopya sunucuda kayıtlıdır ve eski taslak yine çöpe taşınmıştır, ama `mailId` `null`'dır — eski id'yi state'ten çıkar ve taslak listesini kısa süre sonra tazele.
 
 `PUT` hataları: `404 draft_not_found`, `422 mail_not_draft` / `drafts_folder_unavailable`.
 

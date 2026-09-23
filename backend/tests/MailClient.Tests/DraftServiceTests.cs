@@ -54,6 +54,7 @@ public sealed class DraftServiceTests
     {
         await using var db = CreateDb();
         var (accountId, draftsId) = await SeedAsync(db);
+        AddTrash(db, accountId);
         var draftId = await SeedDraftAsync(db, accountId, draftsId);
         var remote = new FakeRemoteMailFolder(31, new()) { AppendResult = new(null, 31) };
         var sync = new RecordingSyncExecutor(async () =>
@@ -90,7 +91,28 @@ public sealed class DraftServiceTests
 
         Assert.True(result.ReconciliationPending);
         Assert.Null(result.MailId);
-        Assert.Empty(remote.Moved);
+        // Only the source draft (UID 5) is retired; neither ambiguous copy is touched.
+        Assert.Equal([5u], remote.Moved);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_InlineSyncBusy_StillRetiresSourceDraft()
+    {
+        await using var db = CreateDb();
+        var (accountId, draftsId) = await SeedAsync(db);
+        AddTrash(db, accountId);
+        var draftId = await SeedDraftAsync(db, accountId, draftsId);
+        var remote = new FakeRemoteMailFolder(31, new()) { AppendResult = new(new UniqueId(6), 31) };
+        var sync = new RecordingSyncExecutor();
+        var service = CreateService(db, remote, sync);
+        // Another sync (e.g. the one queued by a previous PUT) owns the account, so the new copy cannot be imported inline.
+        await using var busy = await new InMemorySyncLockProvider().TryAcquireAsync(accountId, SyncLockPurpose.AccountSync, CancellationToken.None);
+
+        var result = await service.UpdateAsync(accountId, draftId, Command(accountId), null, CancellationToken.None);
+
+        Assert.True(result is { ReconciliationPending: true, MailId: null });
+        Assert.Null(sync.FolderId);
+        Assert.Equal([5u], remote.Moved);
     }
 
     [Fact]
@@ -169,6 +191,9 @@ public sealed class DraftServiceTests
     }
 
     private static AppDbContext CreateDb() => new(new DbContextOptionsBuilder<AppDbContext>().UseInMemoryDatabase(Guid.NewGuid().ToString("N")).Options);
+
+    private static void AddTrash(AppDbContext db, Guid accountId) =>
+        db.MailFolders.Add(new MailFolder { Id = Guid.NewGuid(), MailAccountId = accountId, Name = "Trash", FullName = "Trash", FolderType = MailFolderType.Trash, IsAvailable = true, UidValidity = 40 });
 
     private static async Task<(Guid AccountId, Guid DraftsId)> SeedAsync(AppDbContext db)
     {
