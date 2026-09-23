@@ -85,9 +85,9 @@ exclusive; values without a UTC offset are treated as UTC.
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | PATCH | `/api/mails/{id}/read` | bearer | Set read state (body) |
-| POST | `/api/mails/{id}/{op}` | bearer | `op`: read, unread, star, unstar, trash, restore, archive, spam, not-spam (204, no body) |
+| POST | `/api/mails/{id}/{op}` | bearer | `op`: read, unread, star, unstar, trash, restore, archive, spam, not-spam, delete (204, no body). `delete` permanently expunges the mail and is allowed only in Trash/Junk (otherwise 422 `mail_operation_not_supported`; server-side failure 502 `mail_delete_failed`) |
 | POST | `/api/mails/{id}/move · copy` | bearer | Move/copy to a folder (body) |
-| POST | `/api/mails/bulk/{action}` | bearer | Bulk op on up to 100 `mailIds`; `read`, `unread`, `star`, `unstar`, `archive`, `trash`, `restore`, `spam`, `not-spam`, `move` (`move` requires `folderId`) |
+| POST | `/api/mails/bulk/{action}` | bearer | Bulk op on up to 100 `mailIds`; `read`, `unread`, `star`, `unstar`, `archive`, `trash`, `restore`, `spam`, `not-spam`, `delete`, `move` (`move` requires `folderId`) |
 
 ### Conversations
 

@@ -64,6 +64,22 @@ public sealed class BulkMailOperationApiTests(AcceptingApiFactory factory) : ICl
         Assert.All(body.Results, item => Assert.Equal("mail_not_found", item.Code));
     }
 
+    [Fact]
+    public async Task Delete_UnknownMailIds_ReportMailNotFoundForSingleAndBulk()
+    {
+        var client = await ConnectAsync();
+
+        var single = await client.PostAsync($"/api/mails/{Guid.NewGuid()}/delete", null);
+        var bulk = await client.PostAsJsonAsync("/api/mails/bulk/delete", new BulkMailOperationRequest([Guid.NewGuid()]));
+
+        Assert.Equal(HttpStatusCode.NotFound, single.StatusCode);
+        var problem = await single.Content.ReadFromJsonAsync<JsonDocument>();
+        Assert.Equal("mail_not_found", problem!.RootElement.GetProperty("code").GetString());
+        Assert.Equal(HttpStatusCode.OK, bulk.StatusCode);
+        var body = await bulk.Content.ReadFromJsonAsync<BulkMailOperationResponse>();
+        Assert.Equal("mail_not_found", Assert.Single(body!.Results).Code);
+    }
+
     private async Task<HttpClient> ConnectAsync()
     {
         var client = factory.CreateClient();

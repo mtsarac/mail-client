@@ -85,9 +85,9 @@ harf duyarsız "içerir"; `fromDate`/`toDate` alınma zamanına göre filtreler,
 | Metot | Yol | Yetki | Açıklama |
 |---|---|---|---|
 | PATCH | `/api/mails/{id}/read` | bearer | Okundu durumunu ayarlar (body) |
-| POST | `/api/mails/{id}/{op}` | bearer | `op`: read, unread, star, unstar, trash, restore, archive, spam, not-spam (204, gövdesiz) |
+| POST | `/api/mails/{id}/{op}` | bearer | `op`: read, unread, star, unstar, trash, restore, archive, spam, not-spam, delete (204, gövdesiz). `delete` maili kalıcı olarak siler ve yalnızca Trash/Junk'ta izinlidir (aksi halde 422 `mail_operation_not_supported`; sunucu tarafı hata 502 `mail_delete_failed`) |
 | POST | `/api/mails/{id}/move · copy` | bearer | Klasöre taşır/kopyalar (body) |
-| POST | `/api/mails/bulk/{action}` | bearer | En fazla 100 `mailIds` üzerinde toplu işlem; `read`, `unread`, `star`, `unstar`, `archive`, `trash`, `restore`, `spam`, `not-spam`, `move` (`move` için `folderId` zorunlu) |
+| POST | `/api/mails/bulk/{action}` | bearer | En fazla 100 `mailIds` üzerinde toplu işlem; `read`, `unread`, `star`, `unstar`, `archive`, `trash`, `restore`, `spam`, `not-spam`, `delete`, `move` (`move` için `folderId` zorunlu) |
 
 ### Conversations
 

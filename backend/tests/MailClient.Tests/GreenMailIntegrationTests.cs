@@ -236,6 +236,37 @@ public sealed class GreenMailIntegrationTests(GreenMailFixture greenmail)
         await verifyImap.DisconnectAsync(true, CancellationToken.None);
     }
 
+    [Fact]
+    public async Task RealImap_Expunge_RemovesOnlyTheRequestedUid()
+    {
+        if (!IntegrationEnvironment.GreenMailEnabled) return;
+        var target = $"expunge-target-{Guid.NewGuid():N}";
+        var bystander = $"expunge-bystander-{Guid.NewGuid():N}";
+        var folderName = $"ExpungeTest{Guid.NewGuid():N}";
+        using var imap = await ConnectAsync();
+        var folder = await GetOrCreateFolderAsync(imap, folderName);
+        try
+        {
+            var remote = new MailKitRemoteMailFolder(folder);
+            await remote.OpenForUpdateAsync(CancellationToken.None);
+            await remote.AppendAsync(Message(target), MessageFlags.None, CancellationToken.None);
+            // Another client already marked this one \Deleted; it must survive our expunge.
+            await remote.AppendAsync(Message(bystander), MessageFlags.Deleted, CancellationToken.None);
+            var targetUid = Assert.Single(await folder.SearchAsync(SearchQuery.SubjectContains(target), CancellationToken.None));
+
+            Assert.True(await remote.ExpungeAsync(targetUid, CancellationToken.None));
+
+            Assert.Empty(await folder.SearchAsync(SearchQuery.SubjectContains(target), CancellationToken.None));
+            Assert.Single(await folder.SearchAsync(SearchQuery.SubjectContains(bystander).And(SearchQuery.Deleted), CancellationToken.None));
+        }
+        finally
+        {
+            await folder.CloseAsync(false, CancellationToken.None);
+            await folder.DeleteAsync(CancellationToken.None);
+            await imap.DisconnectAsync(true, CancellationToken.None);
+        }
+    }
+
     private async Task<ImapClient> ConnectAsync()
     {
         var imap = new ImapClient();

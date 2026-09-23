@@ -418,7 +418,7 @@ Tümü gövdesiz `POST`, başarıda `204` döner. Tüm mutasyonlar önce uzak IM
 ### `POST /api/mails/{id}/{action}`
 **Auth:** Bearer
 
-Dokuz sabit eylem adı, hepsi aynı imza: `POST /api/mails/{id}/<action>`, gövde yok.
+On sabit eylem adı, hepsi aynı imza: `POST /api/mails/{id}/<action>`, gövde yok.
 
 | action | Anlamı |
 |---|---|
@@ -431,16 +431,20 @@ Dokuz sabit eylem adı, hepsi aynı imza: `POST /api/mails/{id}/<action>`, gövd
 | `archive` | arşivle |
 | `spam` | spam işaretle |
 | `not-spam` | spam değil → Gelen kutusu |
+| `delete` | **kalıcı olarak sil** — yalnızca Çöp (Trash) veya Spam (Junk) klasöründeki maile; geri alınamaz |
 
 | Durum | code | Anlamı |
 |---|---|---|
-| 204 | — | Uygulandı. `restore` yalnızca daha önce `trash`/`spam` ile taşınmış maile çalışır. |
+| 204 | — | Uygulandı. `restore` yalnızca daha önce `trash`/`spam` ile taşınmış maile çalışır. `delete` sonrası mail artık yok: listeden kaldır, `GET /api/mails/{id}` bundan sonra `404` döner. |
 | 404 | `mail_not_found` | Mail hesaba ait değil ya da yok. |
-| 404 | `mail_folder_not_found` | Hedef klasör (örn. Trash/Archive/Junk) hesapta yok. |
+| 404 | `mail_folder_not_found` | Hedef klasör (örn. Trash/Archive/Junk) hesapta yok. `delete` bunu döndürmez. |
 | 409 | `mail_operation_conflict` | Yerelde tutulan klasör durumu sunucudakiyle uyuşmuyor (UIDVALIDITY çakışması) — o klasörü yeniden senkronize et, tekrar dene. |
-| 422 | `mail_operation_not_supported` | Örn. daha önce trash'lenmemiş maile `restore` çağrısı. |
+| 422 | `mail_operation_not_supported` | Örn. daha önce trash'lenmemiş maile `restore` çağrısı, ya da Trash/Junk dışındaki bir klasörde duran maile `delete`. |
 | 502 | `mail_move_failed` | Klasör değiştiren eylemler (`trash`/`restore`/`archive`/`spam`/`not-spam`) sunucu tarafında taşınamadı. |
+| 502 | `mail_delete_failed` | `delete`: mail sunucuda `\Deleted` işaretlendi ama silinmedi (expunge başarısız). Yerel kayıt korunur; tekrar dene. |
 | 502 | `mail_provider_unavailable` | IMAP sunucusuna ulaşılamadı — geçici, kullanıcıya "tekrar dene" göster. |
+
+> **`delete` nasıl çalışır:** önce sunucuda mail `\Deleted` işaretlenir ve yalnızca o UID silinir (sunucu UIDPLUS destekliyorsa `UID EXPUNGE`; desteklemiyorsa klasörde başka `\Deleted` işaretli mailler geçici olarak işaretsizleştirilip korunur — başka bir mail asla silinmez). Sunucu tarafı başarılıysa mail, katılımcıları, header'ları ve ekleri (depolanan dosyalarla birlikte) veritabanından kaldırılır. Diğer eylemler gibi `mail_state_changed` push'u (`operation: "delete"`) gönderilir. Aynı istek tekrarlanırsa ikincisi `404 mail_not_found` alır — istemci bunu "zaten silinmiş" olarak ele alabilir.
 
 > Eski `PATCH /api/mails/{id}/read` (gövde: `{ "isRead": true }`) hâlâ çalışır ama yeni entegrasyonlar `POST …/read` / `…/unread` kullanmalı. **Dikkat:** bu eski uç 409 çakışmasında farklı bir kod döner — `mailbox_changed` (yukarıdaki `mail_operation_conflict` değil). Yeni entegrasyonlar bu eski uca hiç dokunmayacaksa bu ayrımı görmez.
 
@@ -459,7 +463,7 @@ Aynı hata kodu seti yukarıdaki eylem tablosuyla birebir aynıdır (`mail_not_f
 ### `POST /api/mails/bulk/{action}`
 **Auth:** Bearer
 
-Aynı işlemi birden çok maile tek istekte uygular. `action`: `read`, `unread`, `star`, `unstar`, `archive`, `trash`, `restore`, `spam`, `not-spam`, `move` (`move` için gövdede `folderId` zorunlu). Her mail **birbirinden bağımsız** işlenir — biri hata verse (çakışma, bulunamama) bile diğerleri uygulanmaya devam eder; sonucu her zaman `200 OK` ile item bazında oku.
+Aynı işlemi birden çok maile tek istekte uygular. `action`: `read`, `unread`, `star`, `unstar`, `archive`, `trash`, `restore`, `spam`, `not-spam`, `delete`, `move` (`move` için gövdede `folderId` zorunlu; `delete` yalnızca Trash/Junk'taki mailleri kalıcı siler, diğerleri item bazında `mail_operation_not_supported` alır). Her mail **birbirinden bağımsız** işlenir — biri hata verse (çakışma, bulunamama) bile diğerleri uygulanmaya devam eder; sonucu her zaman `200 OK` ile item bazında oku.
 
 ```json
 // İstek
@@ -476,13 +480,13 @@ Aynı işlemi birden çok maile tek istekte uygular. `action`: `read`, `unread`,
 }
 ```
 
-`code` alanı başarısız item'larda yukarıdaki tekil eylem hata kodlarından biridir (`mail_not_found`, `mail_folder_not_found`, `mail_operation_conflict`, `mail_move_failed`, `mail_provider_unavailable`, `mail_account_needs_reauthentication`); başarılıysa `null`.
+`code` alanı başarısız item'larda yukarıdaki tekil eylem hata kodlarından biridir (`mail_not_found`, `mail_folder_not_found`, `mail_operation_conflict`, `mail_operation_not_supported`, `mail_move_failed`, `mail_delete_failed`, `mail_provider_unavailable`, `mail_account_needs_reauthentication`); başarılıysa `null`.
 
 | Durum | code | Anlamı |
 |---|---|---|
 | 200 | — | İstek kabul edildi, her item'ın kendi sonucu `results` içinde. |
 | 400 | — | `mailIds` boş, 100'den fazla eleman içeriyor, ya da `action: move` iken `folderId` eksik (ValidationProblem). |
-| 404 | — | `action` bilinmeyen bir değer (yukarıdaki 10 değerin dışında). |
+| 404 | — | `action` bilinmeyen bir değer (yukarıdaki 11 değerin dışında). |
 
 > `mailIds` başına en fazla **100** eleman kabul edilir. `Idempotency-Key` bu uçta **gerekli değildir** — sadece gönderim uçlarında zorunlu (bkz. [Hızlı başlangıç, kural 2](#bilmen-gereken-dört-kural)).
 
@@ -537,7 +541,7 @@ Yanıt şekli `GET /api/mails/{id}` ile aynıdır (`MailDetailResponse`).
 ### `PUT /api/drafts/{id}`
 **Auth:** Bearer · **Gövde:** `multipart/form-data`
 
-IMAP taslaklar yerinde düzenlenemez: sunucu eski mesajı siler, yenisini `APPEND` eder. Yanıt `POST /drafts` ile aynı şekil (`{ created: false, mailId, … }`) ama **yeni** bir `mailId` döner.
+IMAP taslaklar yerinde düzenlenemez: sunucu eski mesajı siler, yenisini `APPEND` eder. Yanıt `POST /drafts` ile aynı şekil (`{ created: false, mailId, … }`) ama **yeni** bir `mailId` döner. `reconciliationPending: true` ise (örn. art arda iki `PUT`'ta ikinci istek senkronizasyon meşgulken gelirse) yeni kopya sunucuda kayıtlıdır ve eski taslak yine çöpe taşınmıştır, ama `mailId` `null`'dır — eski id'yi state'ten çıkar ve taslak listesini kısa süre sonra tazele.
 
 `PUT` hataları: `404 draft_not_found`, `422 mail_not_draft` / `drafts_folder_unavailable`.
 
@@ -711,7 +715,7 @@ Her hata gövdesi `{ code, title, status, correlationId }` — bazılarında ek 
 | 422 | `oauth_provider_not_configured` / `oauth_redirect_uri_invalid` / `oauth_state_invalid` / `oauth_code_exchange_failed` | OAuth akışı hataları (bkz. OAuth bölümü). |
 | 422 | `drafts_folder_unavailable` / `trash_folder_unavailable` | Hesapta gerekli özel klasör yok. |
 | 422 | `mail_not_draft` | Taslak id'si artık geçerli değil (gönderildi/güncellendi/silindi). |
-| 422 | `mail_operation_not_supported` | Mail durum/taşıma uçlarında desteklenmeyen işlem (örn. trash'lenmemiş maile `restore`). |
+| 422 | `mail_operation_not_supported` | Mail durum/taşıma uçlarında desteklenmeyen işlem (örn. trash'lenmemiş maile `restore`, Trash/Junk dışındaki maile `delete`). |
 | 409 | `mail_account_already_exists` | Email zaten bağlı. |
 | 409 | `mail_operation_conflict` | Modern `POST /api/mails/{id}/{action}` (ve `/move`, `/copy`) uçlarında klasör durumu değişti, yeniden senkronize et. |
 | 409 | `mailbox_changed` | Yalnızca eski `PATCH /api/mails/{id}/read` uçlarına özgü — aynı anlam, farklı kod. |
@@ -721,6 +725,7 @@ Her hata gövdesi `{ code, title, status, correlationId }` — bazılarında ek 
 | 409 | `mail_folder_unavailable` | Klasör sunucudan silinmiş. |
 | 429 | — | Hız sınırı aşıldı (dk. başına 60 istek); gövde yok. |
 | 502 | `mail_move_failed` | Klasör değiştiren mail işlemi (trash/restore/archive/spam/not-spam/move) sunucu tarafında başarısız. |
+| 502 | `mail_delete_failed` | Kalıcı silme (`delete`) sunucu tarafında başarısız; yerel kayıt korunur, tekrar dene. |
 | 502 | `mail_provider_unavailable` / `mail_tls_failed` / `mail_server_unreachable` | IMAP/SMTP sunucusuna ulaşılamadı — geçici hata olarak ele al, tekrar dene. |
 | 502 | `draft_delete_failed` | Taslak sunucudan silinemedi; tekrar dene. |
 | 503 | `sync_queue_full` / `oauth_refresh_lock_unavailable` | Geçici yoğunluk; kısa backoff ile tekrar dene. |

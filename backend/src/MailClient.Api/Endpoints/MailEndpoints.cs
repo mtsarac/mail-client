@@ -87,6 +87,8 @@ public static class MailEndpoints
         MapOperation(api, "archive", MailOperationKind.Archive, "ArchiveMail", "Move to Archive");
         MapOperation(api, "spam", MailOperationKind.Spam, "MarkMailSpam", "Move to Junk/Spam");
         MapOperation(api, "not-spam", MailOperationKind.NotSpam, "MarkMailNotSpam", "Move out of Junk/Spam");
+        MapOperation(api, "delete", MailOperationKind.Delete, "DeleteMailPermanently", "Permanently delete from Trash/Junk",
+            "Remote-first: expunges only this message on the mail server, then removes it and its attachments locally. Allowed only for mail in the Trash or Junk folder (otherwise 422 mail_operation_not_supported). Cannot be undone. No request body.");
         api.MapPost("/mails/{id:guid}/move", async (Guid id, FolderOperationRequest request, ICurrentMailAccount current, CorrelationContext correlation, IMailOperationService operations, CancellationToken ct) => OperationResult(await operations.ExecuteAsync(current.MailAccountId, new MailOperationRequest(id, MailOperationKind.Move, request.FolderId), correlation.CorrelationId, ct), correlation.CorrelationId)).WithTags(OperationsTag).WithName("MoveMail").WithSummary("Move mail to a folder").WithDescription("Moves the mail to the folder in `folderId` (remote-first).").WithOperationProblems();
         api.MapPost("/mails/{id:guid}/copy", async (Guid id, FolderOperationRequest request, ICurrentMailAccount current, CorrelationContext correlation, IMailOperationService operations, CancellationToken ct) => OperationResult(await operations.ExecuteAsync(current.MailAccountId, new MailOperationRequest(id, MailOperationKind.Copy, request.FolderId), correlation.CorrelationId, ct), correlation.CorrelationId)).WithTags(OperationsTag).WithName("CopyMail").WithSummary("Copy mail to a folder").WithDescription("Copies the mail into the folder in `folderId`.").WithOperationProblems();
         api.MapPost("/mails/bulk/{action}", async (string action, BulkMailOperationRequest request, ICurrentMailAccount current, CorrelationContext correlation, IMailOperationService operations, CancellationToken ct) =>
@@ -105,7 +107,7 @@ public static class MailEndpoints
                 .Select(item => new BulkMailOperationItemResponse(item.MailId, item.Success, item.Success ? null : MapOperationError(item.Error).Code))
                 .ToList()));
         }).WithTags(OperationsTag).WithName("BulkMailOperation").WithSummary("Apply a mail operation to multiple mails")
-            .WithDescription("action: read, unread, star, unstar, archive, trash, restore, spam, not-spam, or move (move requires folderId). 1-100 ids. Each mail is applied independently, so one failure does not block the rest of the batch — always 200 for a valid request; check per-item `success`/`code`.")
+            .WithDescription("action: read, unread, star, unstar, archive, trash, restore, spam, not-spam, delete (Trash/Junk only, permanent), or move (move requires folderId). 1-100 ids. Each mail is applied independently, so one failure does not block the rest of the batch — always 200 for a valid request; check per-item `success`/`code`.")
             .Produces<BulkMailOperationResponse>().ProducesValidationProblem().Produces(404);
         api.MapGet("/mails/{mailId:guid}/attachments/{attachmentId:guid}", async (Guid mailId, Guid attachmentId, ICurrentMailAccount current, AppDbContext db, IFileStorage storage, CancellationToken ct) =>
         {
@@ -181,20 +183,27 @@ public static class MailEndpoints
         "spam" => MailOperationKind.Spam,
         "not-spam" => MailOperationKind.NotSpam,
         "restore" => MailOperationKind.Restore,
+        "delete" => MailOperationKind.Delete,
         _ => null
     };
 
-    private static void MapOperation(RouteGroupBuilder api, string route, MailOperationKind kind, string name, string summary) =>
+    private static void MapOperation(RouteGroupBuilder api, string route, MailOperationKind kind, string name, string summary,
+        string description = "Remote-first: applied on the mail server, then mirrored locally. No request body.") =>
         api.MapPost($"/mails/{{id:guid}}/{route}", async (Guid id, ICurrentMailAccount current, CorrelationContext correlation, IMailOperationService operations, CancellationToken ct) =>
             OperationResult(await operations.ExecuteAsync(current.MailAccountId, new MailOperationRequest(id, kind), correlation.CorrelationId, ct), correlation.CorrelationId))
-            .WithTags("Mail Operations").WithName(name).WithSummary(summary).WithDescription("Remote-first: applied on the mail server, then mirrored locally. No request body.").WithOperationProblems();
+            .WithTags("Mail Operations").WithName(name).WithSummary(summary).WithDescription(description).WithOperationProblems(kind);
 
-    private static RouteHandlerBuilder WithOperationProblems(this RouteHandlerBuilder builder) => builder
-        .Produces(204)
-        .ProblemCodes(404, "mail_not_found", "mail_folder_not_found")
-        .ProblemCodes(409, "mail_account_needs_reauthentication", "mail_operation_conflict")
-        .ProblemCodes(422, "mail_operation_not_supported")
-        .ProblemCodes(502, "mail_provider_unavailable", "mail_move_failed");
+    private static RouteHandlerBuilder WithOperationProblems(this RouteHandlerBuilder builder, MailOperationKind? kind = null)
+    {
+        // Delete never resolves a destination folder and reports its own server-side failure code.
+        var delete = kind == MailOperationKind.Delete;
+        return builder
+            .Produces(204)
+            .ProblemCodes(404, delete ? ["mail_not_found"] : ["mail_not_found", "mail_folder_not_found"])
+            .ProblemCodes(409, "mail_account_needs_reauthentication", "mail_operation_conflict")
+            .ProblemCodes(422, "mail_operation_not_supported")
+            .ProblemCodes(502, "mail_provider_unavailable", delete ? "mail_delete_failed" : "mail_move_failed");
+    }
 
     private static IResult OperationResult(MailOperationResult result, string correlationId, bool legacyRead = false)
     {
@@ -213,6 +222,7 @@ public static class MailEndpoints
         MailOperationError.Conflict when legacyRead => (409, "Mailbox folder changed.", "mailbox_changed"),
         MailOperationError.Conflict => (409, "Mailbox state changed.", "mail_operation_conflict"),
         MailOperationError.MoveFailed => (502, "Mail move failed.", "mail_move_failed"),
+        MailOperationError.DeleteFailed => (502, "Mail delete failed.", "mail_delete_failed"),
         MailOperationError.NotSupported => (422, "Mail operation is not supported.", "mail_operation_not_supported"),
         _ => (500, "Mail operation failed.", "mail_operation_failed")
     };

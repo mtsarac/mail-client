@@ -22,7 +22,8 @@ public sealed class MailOperationService(
     AuditLogger audit,
     ISyncScheduler scheduler,
     ILogger<MailOperationService> logger,
-    IPushNotificationService push) : IMailOperationService
+    IPushNotificationService push,
+    IFileStorage storage) : IMailOperationService
 {
     public async Task<MailOperationResult> ExecuteAsync(Guid accountId, MailOperationRequest request, string? correlationId, CancellationToken cancellationToken)
     {
@@ -65,6 +66,8 @@ public sealed class MailOperationService(
 
         try
         {
+            if (request.Kind == MailOperationKind.Delete)
+                return await DeletePermanentlyAsync(accountId, mail, correlationId, cancellationToken);
             var remoteResult = await folders.UseFolderAsync(mail.MailAccount, mail.MailFolder.FullName, true, async (remote, ct) =>
             {
                 if (remote.UidValidity != mail.UidValidity)
@@ -170,6 +173,44 @@ public sealed class MailOperationService(
             .FirstOrDefaultAsync(cancellationToken);
     }
 
+    /// <summary>Expunges only this UID on the server, then drops the cached row (participants, headers and
+    /// attachment rows cascade) and its stored attachment files.</summary>
+    private async Task<MailOperationResult> DeletePermanentlyAsync(Guid accountId, MailEntity mail, string? correlationId, CancellationToken cancellationToken)
+    {
+        if (mail.MailFolder!.FolderType is not (MailFolderType.Trash or MailFolderType.Junk))
+            return new(false, MailOperationError.NotSupported);
+        var expunged = await folders.UseFolderAsync(mail.MailAccount!, mail.MailFolder.FullName, true, async (remote, ct) =>
+        {
+            if (remote.UidValidity != mail.UidValidity)
+                throw new MailOperationConflictException();
+            return await remote.ExpungeAsync(new UniqueId(mail.Uid), ct);
+        }, cancellationToken);
+        if (!expunged)
+            return new(false, MailOperationError.DeleteFailed);
+
+        var storagePaths = await db.Attachments
+            .Where(attachment => attachment.MailId == mail.Id)
+            .Select(attachment => attachment.StoragePath)
+            .ToListAsync(cancellationToken);
+        db.Mails.Remove(mail);
+        await db.SaveChangesAsync(cancellationToken);
+        // The server copy is already gone, so file cleanup must not be cut short by the request being cancelled.
+        foreach (var path in storagePaths)
+        {
+            try
+            {
+                await storage.DeleteAsync(path, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Failed to remove an attachment file of a permanently deleted mail.");
+            }
+        }
+
+        await NotifyStateChangedAsync(accountId, mail, mail.MailFolderId, OperationName(MailOperationKind.Delete), cancellationToken);
+        return await AuditSuccess(accountId, MailOperationKind.Delete, mail.Id, correlationId, cancellationToken, new(true));
+    }
+
     private static async Task<RemoteMoveResult?> SetFlagged(IRemoteMailFolder remote, UniqueId uid, bool value, CancellationToken cancellationToken)
     {
         await remote.SetFlaggedAsync(uid, value, cancellationToken);
@@ -207,6 +248,7 @@ public sealed class MailOperationService(
         MailOperationKind.Archive => "archive",
         MailOperationKind.Spam => "spam",
         MailOperationKind.NotSpam => "not_spam",
+        MailOperationKind.Delete => "delete",
         _ => kind.ToString().ToLowerInvariant()
     };
 

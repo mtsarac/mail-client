@@ -163,8 +163,97 @@ public sealed class MailOperationServiceTests
         Assert.True((await db.Mails.SingleAsync(x => x.Id == secondMailId)).Flagged);
     }
 
-    private static MailOperationService CreateService(AppDbContext db, IMailFolderClient folders, FakeSyncScheduler? scheduler = null) =>
-        new(db, folders, new MailReadService(db, folders, new AuditLogger(db), NullLogger<MailReadService>.Instance), new AuditLogger(db), scheduler ?? new FakeSyncScheduler(), NullLogger<MailOperationService>.Instance, new FakePushNotificationService());
+    [Fact]
+    public async Task ExecuteAsync_DeleteFromTrash_ExpungesRemoteThenRemovesRowAndFiles()
+    {
+        await using var db = CreateDb();
+        var (accountId, _, mailId) = await SeedAsync(db);
+        await MoveToFolderAsync(db, mailId, MailFolderType.Trash);
+        db.Attachments.Add(new Attachment { Id = Guid.NewGuid(), MailAccountId = accountId, MailId = mailId, FileName = "a.txt", StoragePath = "stored/a.txt" });
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+        var remote = new FakeRemoteMailFolder(8, new());
+        var storage = new FakeFileStorage();
+        var push = new FakePushNotificationService();
+        var service = CreateService(db, new FakeMailFolderClient(remote), storage: storage, push: push);
+
+        var result = await service.ExecuteAsync(accountId, new(mailId, MailOperationKind.Delete), "corr", CancellationToken.None);
+
+        Assert.True(result.Success);
+        Assert.Equal([5u], remote.Expunged);
+        Assert.False(await db.Mails.AnyAsync(x => x.Id == mailId));
+        Assert.Equal(["stored/a.txt"], storage.Deleted);
+        Assert.NotNull(await db.AuditLogs.SingleOrDefaultAsync(x => x.Action == "mail.delete"));
+        Assert.Equal("delete", Assert.Single(push.Notifications).Operation);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_DeleteOutsideTrashOrJunk_IsNotSupportedAndLeavesServerUntouched()
+    {
+        await using var db = CreateDb();
+        var (accountId, _, mailId) = await SeedAsync(db);
+        var remote = new FakeRemoteMailFolder(7, new());
+        var service = CreateService(db, new FakeMailFolderClient(remote));
+
+        var result = await service.ExecuteAsync(accountId, new(mailId, MailOperationKind.Delete), null, CancellationToken.None);
+
+        Assert.Equal(MailOperationError.NotSupported, result.Error);
+        Assert.Empty(remote.Expunged);
+        Assert.True(await db.Mails.AnyAsync(x => x.Id == mailId));
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_DeleteNotExpungedByServer_KeepsLocalRow()
+    {
+        await using var db = CreateDb();
+        var (accountId, _, mailId) = await SeedAsync(db);
+        await MoveToFolderAsync(db, mailId, MailFolderType.Junk);
+        var service = CreateService(db, new FakeMailFolderClient(new NotExpungingRemote(8)));
+
+        var result = await service.ExecuteAsync(accountId, new(mailId, MailOperationKind.Delete), null, CancellationToken.None);
+
+        Assert.Equal(MailOperationError.DeleteFailed, result.Error);
+        Assert.True(await db.Mails.AnyAsync(x => x.Id == mailId));
+    }
+
+    [Fact]
+    public async Task ExecuteBulkAsync_Delete_ReportsPerItemResults()
+    {
+        await using var db = CreateDb();
+        var (accountId, folderId, trashedMailId) = await SeedAsync(db);
+        await MoveToFolderAsync(db, trashedMailId, MailFolderType.Trash);
+        var inboxMailId = Guid.NewGuid();
+        db.Mails.Add(new Mail { Id = inboxMailId, MailAccountId = accountId, MailFolderId = folderId, Uid = 6, UidValidity = 7, Subject = "inbox" });
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+        var missingMailId = Guid.NewGuid();
+        var remote = new FakeRemoteMailFolder(8, new());
+        var service = CreateService(db, new FakeMailFolderClient(remote));
+
+        var result = await service.ExecuteBulkAsync(accountId, [trashedMailId, inboxMailId, missingMailId], MailOperationKind.Delete, null, null, CancellationToken.None);
+
+        Assert.Equal(
+            [new(trashedMailId, true), new(inboxMailId, false, MailOperationError.NotSupported), new(missingMailId, false, MailOperationError.NotFound)],
+            result.Results);
+        Assert.Equal([5u], remote.Expunged);
+        Assert.False(await db.Mails.AnyAsync(x => x.Id == trashedMailId));
+        Assert.True(await db.Mails.AnyAsync(x => x.Id == inboxMailId));
+    }
+
+    private static MailOperationService CreateService(AppDbContext db, IMailFolderClient folders, FakeSyncScheduler? scheduler = null, FakeFileStorage? storage = null, FakePushNotificationService? push = null) =>
+        new(db, folders, new MailReadService(db, folders, new AuditLogger(db), NullLogger<MailReadService>.Instance), new AuditLogger(db), scheduler ?? new FakeSyncScheduler(), NullLogger<MailOperationService>.Instance, push ?? new FakePushNotificationService(), storage ?? new FakeFileStorage());
+
+    /// <summary>Puts the seeded mail into a new folder of <paramref name="type"/> with UIDVALIDITY 8.</summary>
+    private static async Task MoveToFolderAsync(AppDbContext db, Guid mailId, MailFolderType type)
+    {
+        var mail = await db.Mails.SingleAsync(x => x.Id == mailId);
+        var folder = new MailFolder { Id = Guid.NewGuid(), MailAccountId = mail.MailAccountId, Name = type.ToString(), FullName = type.ToString(), FolderType = type, UidValidity = 8 };
+        db.MailFolders.Add(folder);
+        mail.MailFolderId = folder.Id;
+        mail.UidValidity = 8;
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+    }
 
     private static async Task<(Guid AccountId, Guid FolderId, Guid MailId)> SeedAsync(AppDbContext db)
     {
@@ -194,4 +283,9 @@ public sealed class MailOperationServiceTests
     }
 
     private sealed class NullDestinationRemote(uint validity) : FakeRemoteMailFolder(validity, new()) { }
+
+    private sealed class NotExpungingRemote(uint validity) : FakeRemoteMailFolder(validity, new())
+    {
+        public override Task<bool> ExpungeAsync(MailKit.UniqueId uid, CancellationToken cancellationToken) => Task.FromResult(false);
+    }
 }
