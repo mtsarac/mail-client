@@ -163,6 +163,7 @@ public sealed class SyncCoordinator : BackgroundService, ISyncScheduler
         await using var scope = _scopes.CreateAsyncScope();
         var operationSettings = scope.ServiceProvider.GetRequiredService<RuntimeOperationSettings>();
         var settings = (await operationSettings.GetAsync(cancellationToken)).Settings;
+        _queue.UpdateCapacity(settings.Sync.QueueCapacity);
         _settings = settings;
         Interlocked.Exchange(ref _settingsExpiresAt, Environment.TickCount64 + (long)SettingsCacheTtl.TotalMilliseconds);
         return settings;

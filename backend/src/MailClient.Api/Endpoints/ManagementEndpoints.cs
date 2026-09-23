@@ -5,6 +5,7 @@ using MailClient.Api.OpenApi;
 using MailClient.Application;
 using MailClient.Application.Runtime;
 using MailClient.Infrastructure.Observability;
+using MailClient.Infrastructure.Sync;
 
 namespace MailClient.Api.Endpoints;
 
@@ -20,10 +21,12 @@ public static class ManagementEndpoints
         }).WithName("GetRuntimeSettings").WithSummary("Get runtime settings")
             .WithDescription("Requires the X-Management-Key header. Returns the current settings and their `version`.")
             .Produces<RuntimeSettingsResponse>().ProblemCodes(401, "management_unauthorized");
-        management.MapPut("/", async (RuntimeSettingsUpdateRequest request, IRuntimeSettingsStore store, AuditLogger audit, CorrelationContext correlation, CancellationToken cancellationToken) =>
+        management.MapPut("/", async (RuntimeSettingsUpdateRequest request, IRuntimeSettingsStore store, SyncCoordinator coordinator, AuditLogger audit, CorrelationContext correlation, CancellationToken cancellationToken) =>
         {
             var before = await store.GetAsync(cancellationToken);
             var after = await store.ReplaceAsync(request.ExpectedVersion, request.Settings, cancellationToken);
+            // The coordinator caches settings briefly; apply the new ones (sync switch, limits, queue capacity) now.
+            coordinator.NotifySettingsChanged();
             await audit.WriteAsync(null, "runtime_settings_updated", "RuntimeConfiguration", "1", new
             {
                 oldVersion = before.Version,
