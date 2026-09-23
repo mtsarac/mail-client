@@ -10,23 +10,56 @@ public sealed record ValidatedHost(string Host, IPAddress Address);
 
 public class OutboundHostValidator(IDnsResolver dns, bool allowPrivateHosts = false)
 {
+    // Non-globally-reachable ranges from the IANA IPv4/IPv6 special-purpose registries, plus multicast and
+    // IPv6 transition prefixes (NAT64, 6to4, Teredo, IPv4-compatible) that can embed a blocked IPv4 target.
+    private static readonly IPNetwork[] BlockedNetworks =
+    [
+        IPNetwork.Parse("0.0.0.0/8"),
+        IPNetwork.Parse("10.0.0.0/8"),
+        IPNetwork.Parse("100.64.0.0/10"),
+        IPNetwork.Parse("127.0.0.0/8"),
+        IPNetwork.Parse("169.254.0.0/16"),
+        IPNetwork.Parse("172.16.0.0/12"),
+        IPNetwork.Parse("192.0.0.0/24"),
+        IPNetwork.Parse("192.0.2.0/24"),
+        IPNetwork.Parse("192.88.99.0/24"),
+        IPNetwork.Parse("192.168.0.0/16"),
+        IPNetwork.Parse("198.18.0.0/15"),
+        IPNetwork.Parse("198.51.100.0/24"),
+        IPNetwork.Parse("203.0.113.0/24"),
+        IPNetwork.Parse("224.0.0.0/4"),
+        IPNetwork.Parse("240.0.0.0/4"),
+        IPNetwork.Parse("::/96"),
+        IPNetwork.Parse("::1/128"),
+        IPNetwork.Parse("64:ff9b::/96"),
+        IPNetwork.Parse("64:ff9b:1::/48"),
+        IPNetwork.Parse("100::/64"),
+        IPNetwork.Parse("2001::/23"),
+        IPNetwork.Parse("2001:db8::/32"),
+        IPNetwork.Parse("2002::/16"),
+        IPNetwork.Parse("fc00::/7"),
+        IPNetwork.Parse("fe80::/10"),
+        IPNetwork.Parse("fec0::/10"),
+        IPNetwork.Parse("ff00::/8")
+    ];
+
     public virtual async Task<HostValidationResult> ValidateAsync(string host, CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(host) || (!allowPrivateHosts && host.Equals("localhost", StringComparison.OrdinalIgnoreCase))) return new(false, "Invalid or local host.");
-        IPAddress[] addresses;
-        if (IPAddress.TryParse(host, out var literal)) addresses = [literal];
-        else
-        {
-            try { addresses = await dns.ResolveAsync(host, cancellationToken); }
-            catch (Exception exception) when (exception is not OperationCanceledException) { return new(false, "DNS resolution failed."); }
-        }
-        return addresses.Length > 0 && addresses.All(address => allowPrivateHosts || IsPublic(address)) ? new(true) : new(false, "Host resolves to blocked address.");
+        var (_, reason, _) = await ResolveCoreAsync(host, cancellationToken);
+        return new(reason is null, reason);
     }
 
     public virtual async Task<ValidatedHost> ResolveAllowedAsync(string host, CancellationToken cancellationToken)
     {
+        var (address, reason, cause) = await ResolveCoreAsync(host, cancellationToken);
+        return reason is null ? new ValidatedHost(host, address!) : throw new InvalidOperationException(reason, cause);
+    }
+
+    /// <summary>Resolves the host once and returns the address to connect to, or why the host is not allowed.</summary>
+    private async Task<(IPAddress? Address, string? Reason, Exception? Cause)> ResolveCoreAsync(string host, CancellationToken cancellationToken)
+    {
         if (string.IsNullOrWhiteSpace(host) || (!allowPrivateHosts && host.Equals("localhost", StringComparison.OrdinalIgnoreCase)))
-            throw new InvalidOperationException("Invalid or local host.");
+            return (null, "Invalid or local host.", null);
         IPAddress[] addresses;
         if (IPAddress.TryParse(host, out var literal))
             addresses = [literal];
@@ -38,26 +71,25 @@ public class OutboundHostValidator(IDnsResolver dns, bool allowPrivateHosts = fa
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
-                throw new InvalidOperationException("DNS resolution failed.", exception);
+                return (null, "DNS resolution failed.", exception);
             }
         }
 
         if (addresses.Length == 0)
-            throw new InvalidOperationException("Host resolved to no addresses.");
-        if (!allowPrivateHosts)
-            foreach (var address in addresses)
-                if (!IsPublic(address))
-                    throw new InvalidOperationException("Host resolves to blocked address.");
+            return (null, "Host resolved to no addresses.", null);
+        // Every resolved address must be public, not just the one we connect to, so DNS answers cannot mix in a
+        // private target.
+        if (!allowPrivateHosts && !addresses.All(IsPublic))
+            return (null, "Host resolves to blocked address.", null);
         var selected = addresses[0];
-        return new ValidatedHost(host, selected.IsIPv4MappedToIPv6 ? selected.MapToIPv4() : selected);
+        return (selected.IsIPv4MappedToIPv6 ? selected.MapToIPv4() : selected, null, null);
     }
 
     private static bool IsPublic(IPAddress address)
     {
-        if (address.IsIPv4MappedToIPv6) address = address.MapToIPv4();
-        if (IPAddress.IsLoopback(address)) return false;
-        var bytes = address.GetAddressBytes();
-        if (address.AddressFamily == AddressFamily.InterNetworkV6) return bytes[0] != 0xFF && (bytes[0] & 0xFE) != 0xFC && !(bytes[0] == 0xFE && (bytes[1] & 0xC0) == 0x80);
-        return bytes[0] != 0 && bytes[0] != 10 && bytes[0] != 127 && !(bytes[0] == 172 && bytes[1] is >= 16 and <= 31) && !(bytes[0] == 192 && bytes[1] == 168) && !(bytes[0] == 169 && bytes[1] == 254) && bytes[0] < 224;
+        if (address.IsIPv4MappedToIPv6)
+            address = address.MapToIPv4();
+        return address.AddressFamily is AddressFamily.InterNetwork or AddressFamily.InterNetworkV6
+            && !BlockedNetworks.Any(network => network.Contains(address));
     }
 }
