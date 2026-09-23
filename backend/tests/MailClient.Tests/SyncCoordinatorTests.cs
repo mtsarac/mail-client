@@ -99,6 +99,48 @@ public sealed class SyncCoordinatorTests
     }
 
     [Fact]
+    public async Task Coordinator_SlowAccount_DoesNotDelayOtherAccounts()
+    {
+        var slowGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var executor = new PerAccountGateExecutor(slowGate);
+        var harness = CreateHarness(executor, maxAccounts: 2, maxFolders: 1);
+        var slow = await harness.SeedAccountAsync(1);
+        var fast = await harness.SeedAccountAsync(1);
+        executor.SlowAccountId = slow;
+        await harness.Scheduler.StartAsync(CancellationToken.None);
+        try
+        {
+            await harness.Scheduler.ScheduleFolderAsync(slow, (await harness.FolderIdsAsync(slow))[0], SyncOrigin.UserRequested, CancellationToken.None);
+            await WaitUntilAsync(() => executor.Started.Contains(slow));
+
+            await harness.Scheduler.ScheduleFolderAsync(fast, (await harness.FolderIdsAsync(fast))[0], SyncOrigin.UserRequested, CancellationToken.None);
+
+            await WaitUntilAsync(() => executor.Completed.Contains(fast));
+            Assert.DoesNotContain(slow, executor.Completed);
+        }
+        finally
+        {
+            slowGate.TrySetResult();
+            await harness.Scheduler.StopAsync(CancellationToken.None);
+        }
+    }
+
+    private sealed class PerAccountGateExecutor(TaskCompletionSource slowGate) : ISyncExecutor
+    {
+        public Guid SlowAccountId { get; set; }
+        public ConcurrentBag<Guid> Started { get; } = [];
+        public ConcurrentBag<Guid> Completed { get; } = [];
+        public Task SyncAccountAsync(Guid accountId, CancellationToken cancellationToken) => Task.CompletedTask;
+        public async Task SyncFolderAsync(Guid accountId, Guid folderId, CancellationToken cancellationToken)
+        {
+            Started.Add(accountId);
+            if (accountId == SlowAccountId)
+                await slowGate.Task;
+            Completed.Add(accountId);
+        }
+    }
+
+    [Fact]
     public async Task Coordinator_InboxRunsBeforeOtherFolders_SuccessResetsFailureState()
     {
         var order = new ConcurrentQueue<Guid>();
