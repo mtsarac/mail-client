@@ -21,6 +21,9 @@ public sealed class DraftService(
     ISyncExecutor sync,
     MailReadService reader,
     IMailOperationService operations,
+    MailSendService sender,
+    SendOperationStore sendOperations,
+    IFileStorage storage,
     AuditLogger audit,
     ILogger<DraftService> logger)
 {
@@ -62,12 +65,17 @@ public sealed class DraftService(
         return new(await reader.GetAsync(accountId, draftId, cancellationToken), DraftLookupError.None);
     }
 
-    public async Task<DraftSendResult> SendAsync(Guid accountId, Guid draftId, string idempotencyKey, MailSendService sender, IFileStorage storage, string? correlationId, CancellationToken cancellationToken)
+    public async Task<DraftSendResult> SendAsync(Guid accountId, Guid draftId, string idempotencyKey, string? correlationId, CancellationToken cancellationToken)
     {
+        // A retry after a successful send must replay the outcome even though the draft has already moved to Trash.
+        if (await sendOperations.FindCompletedAsync(accountId, idempotencyKey, cancellationToken) is { } completed)
+            return await RemoveSentDraftAsync(accountId, draftId, correlationId, new SendMailResult(true, completed.SentCopySaved, completed.Warning));
+
         var draft = await GetDraftEntityAsync(accountId, draftId, cancellationToken);
         await db.Entry(draft).Collection(mail => mail.Participants).LoadAsync(cancellationToken);
         await db.Entry(draft).Collection(mail => mail.Attachments).LoadAsync(cancellationToken);
         var attachments = new List<SendMailAttachment>();
+        SendMailResult result;
         try
         {
             foreach (var attachment in draft.Attachments)
@@ -87,28 +95,40 @@ public sealed class DraftService(
                 TrustedInReplyToMessageId = draft.InReplyToMessageId,
                 TrustedReferences = draft.References
             };
-            var result = await sender.SendAsync(accountId, command, correlationId, cancellationToken);
-            if (!result.Sent)
-                return new(false, result.SentCopySaved, false, result.Warning);
-            try
-            {
-                await MoveToTrashAsync(accountId, draftId, correlationId, CancellationToken.None);
-                return new(true, result.SentCopySaved, true, result.Warning, result.MailId, result.ConversationId);
-            }
-            catch (Exception ex)
-            {
-                logger.LogWarning(ex, "Draft cleanup failed after successful delivery for draft {DraftId}.", draftId);
-                var warning = string.IsNullOrWhiteSpace(result.Warning)
-                    ? "Message was sent, but draft cleanup failed."
-                    : $"{result.Warning} Draft cleanup failed.";
-                return new(true, result.SentCopySaved, false, warning, result.MailId, result.ConversationId);
-            }
+            result = await sender.SendAsync(accountId, command, correlationId, cancellationToken);
         }
         catch
         {
             foreach (var attachment in attachments)
                 await attachment.Content.DisposeAsync();
             throw;
+        }
+
+        return result.Sent
+            ? await RemoveSentDraftAsync(accountId, draftId, correlationId, result)
+            : new(false, result.SentCopySaved, false, result.Warning);
+    }
+
+    private async Task<DraftSendResult> RemoveSentDraftAsync(Guid accountId, Guid draftId, string? correlationId, SendMailResult sent)
+    {
+        var stillInDrafts = await db.Mails.AnyAsync(mail => mail.Id == draftId
+            && mail.MailAccountId == accountId
+            && mail.ExpectedMailFolderId == null
+            && mail.MailFolder!.FolderType == MailFolderType.Drafts, CancellationToken.None);
+        if (!stillInDrafts)
+            return new(true, sent.SentCopySaved, true, sent.Warning, sent.MailId, sent.ConversationId);
+        try
+        {
+            await MoveToTrashAsync(accountId, draftId, correlationId, CancellationToken.None);
+            return new(true, sent.SentCopySaved, true, sent.Warning, sent.MailId, sent.ConversationId);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Draft cleanup failed after successful delivery for draft {DraftId}.", draftId);
+            var warning = string.IsNullOrWhiteSpace(sent.Warning)
+                ? "Message was sent, but draft cleanup failed."
+                : $"{sent.Warning} Draft cleanup failed.";
+            return new(true, sent.SentCopySaved, false, warning, sent.MailId, sent.ConversationId);
         }
     }
 

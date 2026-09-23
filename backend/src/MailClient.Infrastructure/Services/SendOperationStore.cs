@@ -40,6 +40,14 @@ public sealed class SendOperationStore(AppDbContext db, ILogger<SendOperationSto
         return new Denied("Send operation is already in progress.");
     }
 
+    /// <summary>The successfully delivered operation for this key, if any.</summary>
+    public Task<SendOperation?> FindCompletedAsync(Guid accountId, string key, CancellationToken cancellationToken) =>
+        db.SendOperations.AsNoTracking().SingleOrDefaultAsync(
+            operation => operation.MailAccountId == accountId
+                && operation.IdempotencyKey == key
+                && (operation.Status == SendOperationStatus.Sent || operation.Status == SendOperationStatus.SentWithCopy),
+            cancellationToken);
+
     public Task<bool> TryCompleteAsync(
         Guid operationId,
         SendOperationStatus status,

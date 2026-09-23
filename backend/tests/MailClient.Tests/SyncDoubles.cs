@@ -288,3 +288,25 @@ internal static class SyncTestSeed
         return message;
     }
 }
+
+internal sealed class FakeMailTransport : MailClient.Infrastructure.Mail.IMailTransport
+{
+    public int SentCount { get; private set; }
+    public int AppendCount { get; private set; }
+    public Exception? SendFailure { get; init; }
+    public MimeMessage? Message { get; private set; }
+
+    public Task SendAsync(MailAccount account, MimeMessage message, CancellationToken cancellationToken)
+    {
+        if (SendFailure is not null) throw SendFailure;
+        Message = message;
+        SentCount++;
+        return Task.CompletedTask;
+    }
+
+    public Task AppendToSentAsync(MailAccount account, string sentFullName, MimeMessage message, CancellationToken cancellationToken)
+    {
+        AppendCount++;
+        return Task.CompletedTask;
+    }
+}

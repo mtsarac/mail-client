@@ -67,13 +67,10 @@ public static class MailEndpoints
             await drafts.DeleteAsync(current.MailAccountId, id, correlation.CorrelationId, ct);
             return Results.NoContent();
         }).WithTags(DraftsTag).WithName("DeleteDraft").WithSummary("Delete draft").Produces(204).ProblemCodes(404, "draft_not_found").ProblemCodes(422, "trash_folder_unavailable", "mail_not_draft").ProblemCodes(502, "draft_delete_failed");
-        api.MapPost("/drafts/{id:guid}/send", async (Guid id, HttpRequest request, ICurrentMailAccount current, DraftService drafts, MailSendService sender, IFileStorage storage, CorrelationContext correlation, CancellationToken ct) =>
-        {
-            var key = request.Headers["Idempotency-Key"].ToString();
-            var result = await drafts.SendAsync(current.MailAccountId, id, key, sender, storage, correlation.CorrelationId, ct);
-            return Results.Ok(result);
-        }).DisableAntiforgery().WithTags(DraftsTag).WithName("SendDraft").WithSummary("Send an existing draft")
-            .WithDescription("Sends the draft and removes it. Requires the Idempotency-Key header.")
+        api.MapPost("/drafts/{id:guid}/send", async (Guid id, [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey, ICurrentMailAccount current, DraftService drafts, CorrelationContext correlation, CancellationToken ct) =>
+            Results.Ok(await drafts.SendAsync(current.MailAccountId, id, idempotencyKey ?? "", correlation.CorrelationId, ct)))
+            .DisableAntiforgery().WithTags(DraftsTag).WithName("SendDraft").WithSummary("Send an existing draft")
+            .WithDescription("Sends the draft and removes it. Requires the Idempotency-Key header; retrying a successful send with the same key replays the result.")
             .Produces<DraftSendResult>().ProblemCodes(400, "recipient_required", "body_required", "idempotency_key_required", "idempotency_key_too_long")
             .ProblemCodes(404, "draft_not_found").ProblemCodes(409, "idempotency_conflict", "send_in_progress", "delivery_unknown").ProblemCodes(422, "mail_not_draft");
 

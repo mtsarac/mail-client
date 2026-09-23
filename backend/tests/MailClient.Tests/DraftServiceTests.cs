@@ -9,6 +9,7 @@ using MailClient.Infrastructure.Services;
 using MailClient.Application.Sync;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
+using UniqueId = MailKit.UniqueId;
 using MimeKit;
 
 namespace MailClient.Tests;
@@ -121,6 +122,28 @@ public sealed class DraftServiceTests
         Assert.Equal(DraftLookupError.NotDraft, nonDraft.Error);
     }
 
+    [Fact]
+    public async Task SendAsync_RetryWithSameKeyAfterDraftMovedToTrash_ReplaysWithoutResending()
+    {
+        await using var db = CreateDb();
+        var (accountId, draftsId) = await SeedAsync(db);
+        db.MailFolders.Add(new MailFolder { Id = Guid.NewGuid(), MailAccountId = accountId, Name = "Trash", FullName = "Trash", FolderType = MailFolderType.Trash, IsAvailable = true, UidValidity = 40 });
+        var draftId = await SeedDraftAsync(db, accountId, draftsId);
+        db.Participants.Add(new MailParticipant { Id = Guid.NewGuid(), MailId = draftId, Type = ParticipantType.To, Address = "to@example.test", NormalizedAddress = "to@example.test" });
+        var draft = await db.Mails.SingleAsync(x => x.Id == draftId);
+        draft.BodyText = "body";
+        await db.SaveChangesAsync();
+        var transport = new FakeMailTransport();
+        var service = CreateService(db, new UidPlusRemoteMailFolder(), new RecordingSyncExecutor(), transport);
+
+        var first = await service.SendAsync(accountId, draftId, "draft-send-1", null, CancellationToken.None);
+        var retry = await service.SendAsync(accountId, draftId, "draft-send-1", null, CancellationToken.None);
+
+        Assert.True(first is { Sent: true, DraftRemoved: true });
+        Assert.True(retry is { Sent: true, DraftRemoved: true });
+        Assert.Equal(1, transport.SentCount);
+    }
+
     private static DraftCommand Command(Guid accountId) => new(
         accountId,
         ["to@example.test"],
@@ -132,13 +155,15 @@ public sealed class DraftServiceTests
         [],
         null);
 
-    private static DraftService CreateService(AppDbContext db, FakeRemoteMailFolder remote, RecordingSyncExecutor sync)
+    private static DraftService CreateService(AppDbContext db, FakeRemoteMailFolder remote, RecordingSyncExecutor sync, FakeMailTransport? transport = null)
     {
         var folders = new RecordingMailFolderClient(remote);
         var audit = new AuditLogger(db);
         var reader = new MailReadService(db, folders, audit, NullLogger<MailReadService>.Instance);
         var operations = new MailOperationService(db, folders, reader, audit, new FakeSyncScheduler(), NullLogger<MailOperationService>.Instance, new FakePushNotificationService());
-        return new(db, folders, sync, reader, operations, audit, NullLogger<DraftService>.Instance);
+        var sendOperations = new SendOperationStore(db, NullLogger<SendOperationStore>.Instance);
+        var sender = new MailSendService(db, transport ?? new FakeMailTransport(), sendOperations, new MailSyncOptions(), audit, NullLogger<MailSendService>.Instance);
+        return new(db, folders, sync, reader, operations, sender, sendOperations, new FakeFileStorage(), audit, NullLogger<DraftService>.Instance);
     }
 
     private static AppDbContext CreateDb() => new(new DbContextOptionsBuilder<AppDbContext>().UseInMemoryDatabase(Guid.NewGuid().ToString("N")).Options);
@@ -179,6 +204,13 @@ public sealed class DraftServiceTests
             if (onSync is not null)
                 await onSync();
         }
+    }
+
+    /// <summary>Server with UIDPLUS: MOVE reports the destination UID, so the draft leaves Drafts immediately.</summary>
+    private sealed class UidPlusRemoteMailFolder() : FakeRemoteMailFolder(31, new())
+    {
+        public override Task<RemoteMoveResult> MoveAsync(UniqueId uid, string destinationFullName, CancellationToken cancellationToken) =>
+            Task.FromResult(new RemoteMoveResult(new UniqueId(900), 40));
     }
 
     private sealed class RecordingMailFolderClient(FakeRemoteMailFolder remote) : IMailFolderClient
