@@ -26,6 +26,23 @@ public sealed class MailReadServiceTests
         Assert.NotNull(await service.GetAsync(mail.MailAccountId, mail.Id, CancellationToken.None));
     }
 
+    [Theory]
+    [InlineData("a@example.test", true)]
+    [InlineData("A@Example.Test", true)]
+    [InlineData("someone@example.test", false)]
+    public async Task GetAsync_IsFromMe_MatchesAccountAddressOutsideSentFolder(string fromAddress, bool expected)
+    {
+        await using var db = CreateDb();
+        var (accountId, _, mailId) = await SeedMailAsync(db, isRead: false);
+        var mail = await db.Mails.SingleAsync(x => x.Id == mailId);
+        mail.FromAddress = fromAddress;
+        await db.SaveChangesAsync();
+
+        var detail = await CreateService(db, new FakeReadFolder(new FakeRemoteMailFolder(7, new()))).GetAsync(accountId, mailId, CancellationToken.None);
+
+        Assert.Equal(expected, detail!.IsFromMe);
+    }
+
     [Fact]
     public async Task SetReadAsync_SameState_NoRemoteCall()
     {

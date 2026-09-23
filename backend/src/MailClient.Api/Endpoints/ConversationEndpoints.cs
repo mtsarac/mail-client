@@ -79,7 +79,7 @@ public static class ConversationEndpoints
                     folderTypes.Any(folder => folder.Id == mail.MailFolderId
                         && (folder.FolderType == MailClient.Domain.Enums.MailFolderType.Sent
                             || folder.FolderType == MailClient.Domain.Enums.MailFolderType.Drafts))
-                        || mail.FromAddress.ToLower() == self))
+                        || mail.FromAddress.ToUpper() == self))
                 .ToListAsync(ct);
             if (include == "body")
             {

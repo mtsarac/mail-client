@@ -129,7 +129,7 @@ public sealed class OAuthConnectionService(
         {
             throw new InvalidOperationException("mail_authentication_failed");
         }
-        var normalized = payload.Email.Trim().ToUpperInvariant();
+        var normalized = MailAccount.NormalizeEmailAddress(payload.Email);
         var account = await db.MailAccounts.Include(x => x.Credentials).SingleOrDefaultAsync(x => x.NormalizedEmailAddress == normalized, cancellationToken);
         var now = DateTime.UtcNow;
         if (account is null)

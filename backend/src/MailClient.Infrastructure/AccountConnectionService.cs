@@ -43,7 +43,7 @@ public sealed class AccountConnectionService(
         (await runtimePolicy.GetAsync(cancellationToken)).EnsureNewAccountAllowed(candidate.Provider, authentication.Type);
         if (!email.Contains('@', StringComparison.Ordinal)) throw new InvalidOperationException("invalid_email");
         if (!await allowlist.IsAllowedAsync(email, cancellationToken)) throw new InvalidOperationException(RuntimePolicyErrors.EmailNotAllowlisted);
-        var normalizedEmail = email.Trim().ToUpperInvariant();
+        var normalizedEmail = MailAccount.NormalizeEmailAddress(email);
         // Anonymous connection creates accounts only. Re-pointing an existing mailbox at different servers or
         // credentials would let any caller claim someone else's account with a mail server they control, so it
         // requires an authenticated account-scoped reconnect instead.
@@ -109,7 +109,7 @@ public sealed class AccountConnectionService(
         // No separate "well-formed email" check: a malformed address simply won't match any stored
         // NormalizedEmailAddress, so the lookup itself is the format check and reports the same
         // mail_account_not_found either way.
-        var normalizedEmail = email.Trim().ToUpperInvariant();
+        var normalizedEmail = MailAccount.NormalizeEmailAddress(email);
         var account = await db.MailAccounts.SingleOrDefaultAsync(item => item.NormalizedEmailAddress == normalizedEmail, cancellationToken)
             ?? throw new InvalidOperationException("mail_account_not_found");
         if (account.Status == MailAccountStatus.Disabled) throw new InvalidOperationException("mail_account_disabled");
