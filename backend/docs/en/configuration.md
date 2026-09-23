@@ -21,6 +21,7 @@ read by Docker Compose only — `dotnet run` does not load it (see
 | `ConnectionStrings__Default` | PostgreSQL connection string | local Postgres |
 | `Jwt__Issuer`, `Jwt__Audience` | JWT issuer/audience | `MailClient` |
 | `Jwt__Key` | HMAC key, **≥ 32 chars**; the built-in dev key is rejected outside Development | dev key |
+| `Jwt__KeyPath` | File containing the JWT key (trimmed); overrides `Jwt__Key` when set | unset |
 | `Jwt__AccessTokenMinutes` | Access token lifetime | 15 |
 | `Session__RefreshTokenLifetimeDays`, `Session__SlidingExpiration` | Refresh session | 180, true |
 | `DataProtection__KeyPath` | Key ring directory | `data/protection-keys` |

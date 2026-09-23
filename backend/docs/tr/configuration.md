@@ -21,6 +21,7 @@ yüklemez (bkz. [Geliştirme](development.md#yerelde-çalıştırma)).
 | `ConnectionStrings__Default` | PostgreSQL bağlantı dizesi | yerel Postgres |
 | `Jwt__Issuer`, `Jwt__Audience` | JWT issuer/audience | `MailClient` |
 | `Jwt__Key` | HMAC anahtarı, **≥ 32 karakter**; yerleşik dev anahtarı Development dışında reddedilir | dev anahtarı |
+| `Jwt__KeyPath` | JWT anahtarını içeren dosya (kırpılır); ayarlıysa `Jwt__Key`'i geçersiz kılar | yok |
 | `Jwt__AccessTokenMinutes` | Access token ömrü | 15 |
 | `Session__RefreshTokenLifetimeDays`, `Session__SlidingExpiration` | Refresh oturumu | 180, true |
 | `DataProtection__KeyPath` | Anahtar halkası dizini | `data/protection-keys` |
