@@ -180,11 +180,8 @@ public sealed class SendServiceTests
         Assert.Equal("invalid_recipient", error.Message);
     }
 
-    private static MailSendService CreateService(AppDbContext db, FakeMailTransport transport) =>
-        new(db, transport, CreateStore(db), new MailSyncOptions(), new AuditLogger(db), NullLogger<MailSendService>.Instance);
-
-    private static MailSendService CreateService(AppDbContext db, FakeMailTransport transport, Application.Observability.MailClientMetrics metrics) =>
-        new(db, transport, CreateStore(db), RuntimeOperationSettings.FromMailSyncOptions(new MailSyncOptions()), new AuditLogger(db), NullLogger<MailSendService>.Instance, metrics);
+    private static MailSendService CreateService(AppDbContext db, FakeMailTransport transport, Application.Observability.MailClientMetrics? metrics = null) =>
+        new(db, transport, CreateStore(db), FixedRuntimeSettingsStore.Operation(), TestServices.InlineSync(), new AuditLogger(db), NullLogger<MailSendService>.Instance, metrics);
 
     private static SendOperationStore CreateStore(AppDbContext db) =>
         new(db, NullLogger<SendOperationStore>.Instance);

@@ -1,3 +1,4 @@
+using MailClient.Application.Runtime;
 using MailClient.Application.Sync;
 using MailClient.Domain.Entities;
 using MailClient.Domain.Enums;
@@ -13,16 +14,8 @@ namespace MailClient.Tests;
 
 public sealed class SyncServiceTests
 {
-    private static MailSyncOptions Options(int maxMessages) => new()
-    {
-        Enabled = true,
-        PollIntervalSeconds = 30,
-        FlagSyncIntervalSeconds = 3600,
-        MaxMessagesPerRun = maxMessages,
-        MaxAttachmentBytes = 500,
-        MaxMessageAttachmentBytes = 800,
-        MaxMessageBytes = 100000
-    };
+    private static RuntimeSettings Options(int maxMessages) =>
+        TestServices.SyncSettings(maxMessages, flagSyncIntervalSeconds: 3600, maxAttachmentBytes: 500, maxMessageAttachmentBytes: 800, maxMessageBytes: 100000);
 
     [Fact]
     public async Task HugeBacklog_SearchIsBounded_FirstRunEndsAtCorrectCheckpoint()
@@ -298,14 +291,14 @@ public sealed class SyncServiceTests
         }
     }
 
-    private static MailFolderSyncService CreateService(AppDbContext db, MailSyncOptions options, FakePushNotificationService? push = null, FakeFileStorage? storage = null) =>
+    private static MailFolderSyncService CreateService(AppDbContext db, RuntimeSettings options, FakePushNotificationService? push = null, FakeFileStorage? storage = null) =>
         new(db,
-            new MailCredentialResolver(db, new PassthroughProtector()),
+            TestServices.Credentials(db),
             new Infrastructure.Mail.MailConnectionHelper(
                 new OutboundHostValidator(new FakeDns(System.Net.IPAddress.Loopback)),
                 NullLogger<Infrastructure.Mail.MailConnectionHelper>.Instance),
             storage ?? new FakeFileStorage(),
-            options,
+            FixedRuntimeSettingsStore.Operation(options),
             push ?? new FakePushNotificationService(),
             new MailClient.Infrastructure.Services.ConversationService(db), new MailReconciliationService(db), NullLogger<MailFolderSyncService>.Instance);
 

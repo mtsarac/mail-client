@@ -261,7 +261,7 @@ public sealed class PushNotificationTests
         await using var db = CreateDb(DbName());
         var accountId = await SeedOAuthAsync(db);
         var push = new FakePushNotificationService();
-        var resolver = new MailCredentialResolver(db, new PassthroughProtector(), [FailingOAuthProvider.InvalidGrant()], new DefaultRuntimePolicyProvider(), push);
+        var resolver = TestServices.Credentials(db, oauthProviders: [FailingOAuthProvider.InvalidGrant()], push: push);
 
         var first = await Assert.ThrowsAsync<InvalidOperationException>(() => resolver.ResolveAsync(accountId, CancellationToken.None));
         Assert.Equal("mail_account_needs_reauthentication", first.Message);
@@ -330,21 +330,12 @@ public sealed class PushNotificationTests
 
     private static MailFolderSyncService CreateSyncService(AppDbContext db, IPushNotificationService push) =>
         new(db,
-            new MailCredentialResolver(db, new PassthroughProtector()),
+            TestServices.Credentials(db),
             new MailConnectionHelper(
                 new OutboundHostValidator(new FakeDns(System.Net.IPAddress.Loopback)),
                 NullLogger<MailConnectionHelper>.Instance),
             new FakeFileStorage(),
-            new MailClient.Application.Sync.MailSyncOptions
-            {
-                Enabled = true,
-                PollIntervalSeconds = 30,
-                FlagSyncIntervalSeconds = 3600,
-                MaxMessagesPerRun = 100,
-                MaxAttachmentBytes = 500,
-                MaxMessageAttachmentBytes = 800,
-                MaxMessageBytes = 100000
-            },
+            FixedRuntimeSettingsStore.Operation(TestServices.SyncSettings(flagSyncIntervalSeconds: 3600, maxAttachmentBytes: 500, maxMessageAttachmentBytes: 800, maxMessageBytes: 100000)),
             push,
             new ConversationService(db),
             new MailReconciliationService(db),

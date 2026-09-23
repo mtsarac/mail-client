@@ -152,20 +152,8 @@ public interface IEmailAllowlistService
     Task<bool> IsAllowedAsync(string email, CancellationToken cancellationToken);
 
     /// <summary>True only when allowlist side effects (rejecting signups, disabling/restoring accounts,
-    /// grace-period deletion) should actually apply right now: enabled, and running in Production.</summary>
+    /// grace-period deletion) should apply: enforcement is enabled in the runtime settings.</summary>
     Task<bool> IsEnforcedAsync(CancellationToken cancellationToken);
-}
-
-public sealed class DefaultRuntimePolicyProvider : IRuntimePolicyProvider
-{
-    public Task<RuntimeProviderPolicy> GetAsync(CancellationToken cancellationToken) =>
-        Task.FromResult(RuntimeProviderPolicy.Create(new RuntimeSettings(), new ProviderCapabilities(false, false)));
-}
-
-public sealed class DefaultEmailAllowlistService : IEmailAllowlistService
-{
-    public Task<bool> IsAllowedAsync(string email, CancellationToken cancellationToken) => Task.FromResult(true);
-    public Task<bool> IsEnforcedAsync(CancellationToken cancellationToken) => Task.FromResult(false);
 }
 
 public static class RuntimePolicyErrors

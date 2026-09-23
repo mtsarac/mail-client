@@ -26,19 +26,6 @@ public sealed class MailFolderSyncService(
     MailReconciliationService reconciliations,
     ILogger<MailFolderSyncService> logger) : ISyncExecutor
 {
-    public MailFolderSyncService(
-        AppDbContext db,
-        MailCredentialResolver credentials,
-        Mail.MailConnectionHelper connections,
-        IFileStorage storage,
-        MailSyncOptions options,
-        IPushNotificationService push,
-        ConversationService conversations,
-        MailReconciliationService reconciliations,
-        ILogger<MailFolderSyncService> logger)
-        : this(db, credentials, connections, storage, RuntimeOperationSettings.FromMailSyncOptions(options), push, conversations, reconciliations, logger)
-    {
-    }
     private async Task MarkReauthenticationAsync(Guid accountId, CancellationToken cancellationToken)
     {
         var account = await db.MailAccounts.SingleOrDefaultAsync(item => item.Id == accountId, cancellationToken);
@@ -70,8 +57,6 @@ public sealed class MailFolderSyncService(
     /// </summary>
     public async Task SyncFolderAsync(Guid accountId, Guid folderId, CancellationToken cancellationToken)
     {
-        // Loads the runtime limits (operationSettings.Current) the import below uses for this scope.
-        await operationSettings.GetAsync(cancellationToken);
         var account = await db.MailAccounts.AsNoTracking()
             .SingleOrDefaultAsync(item => item.Id == accountId, cancellationToken);
         if (account is null || account.Status != MailAccountStatus.Active)
@@ -132,6 +117,8 @@ public sealed class MailFolderSyncService(
         IRemoteMailFolder remote,
         CancellationToken cancellationToken)
     {
+        // Loads the runtime limits (operationSettings.Current) used below for this scope.
+        await operationSettings.GetAsync(cancellationToken);
         var localFolder = await db.MailFolders
             .Include(folder => folder.SyncState)
             .SingleAsync(folder => folder.Id == folderId, cancellationToken);
@@ -182,7 +169,7 @@ public sealed class MailFolderSyncService(
             }
         }
 
-        var budget = operationSettings.Current.MaxMessagesPerRun;
+        var budget = operationSettings.Current.Sync.MaxMessagesPerRun;
         var afterUid = state.NextUidScanStart <= 1
             ? 0u
             : (uint)Math.Min(state.NextUidScanStart - 1, (long)uint.MaxValue);
@@ -315,7 +302,7 @@ public sealed class MailFolderSyncService(
         // A pass already in progress continues on every poll; a finished pass restarts only when due.
         var due = state.FlagScanCursorUid > 0
             || state.LastFlagSyncAt is null
-            || DateTime.UtcNow - state.LastFlagSyncAt.Value >= TimeSpan.FromSeconds(operationSettings.Current.FlagSyncIntervalSeconds);
+            || DateTime.UtcNow - state.LastFlagSyncAt.Value >= TimeSpan.FromSeconds(operationSettings.Current.Sync.FlagSyncIntervalSeconds);
         if (!due)
             return;
 
@@ -493,7 +480,7 @@ public sealed class MailFolderSyncService(
                 return null;
             }
 
-            if (summary.Size > (ulong)operationSettings.Current.MaxMessageBytes)
+            if (summary.Size > (ulong)operationSettings.Current.Limits.MaxMessageBytes)
             {
                 logger.LogWarning("Skipped an oversized message ({Size} bytes).", summary.Size);
                 await SkipAndAdvanceAsync(state, folderId, uid.Id, "oversized", "Message exceeds MaxMessageBytes.",
@@ -558,7 +545,7 @@ public sealed class MailFolderSyncService(
             foreach (var attachment in incoming.Attachments)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var remaining = operationSettings.Current.MaxMessageAttachmentBytes - messageAttachmentBytes;
+                var remaining = operationSettings.Current.Limits.MaxMessageAttachmentBytes - messageAttachmentBytes;
                 if (remaining <= 0)
                 {
                     logger.LogWarning("Skipped an oversized attachment.");
@@ -574,7 +561,7 @@ public sealed class MailFolderSyncService(
                         mail.Id,
                         attachmentId,
                         (destination, ct) => attachment.Content.DecodeToAsync(destination, ct),
-                        Math.Min(operationSettings.Current.MaxAttachmentBytes, remaining),
+                        Math.Min(operationSettings.Current.Limits.MaxAttachmentBytes, remaining),
                         cancellationToken);
                 }
                 catch (OperationCanceledException)

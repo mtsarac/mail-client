@@ -159,7 +159,7 @@ public sealed class PostgresIntegrationTests(PostgresFixture fixture)
         var folderId = await SeedFolderAsync(db, accountId);
         db.Mails.Add(new Domain.Entities.Mail { Id = Guid.NewGuid(), MailAccountId = accountId, MailFolderId = folderId, Uid = 100, Subject = "quarterly report", BodyText = "unusual orchid", FromAddress = "sender@example.test", ReceivedAt = DateTime.UtcNow });
         await db.SaveChangesAsync();
-        var service = new MailSearchService(db);
+        var service = new MailSearchService(db, FixedRuntimeSettingsStore.Operation());
 
         var result = await service.SearchAsync(accountId, new MailSearchRequest("orchid", null, null, null, null, null, null, null, null, null, 1, 20), CancellationToken.None);
 
@@ -175,7 +175,7 @@ public sealed class PostgresIntegrationTests(PostgresFixture fixture)
         var folderId = await SeedFolderAsync(db, accountId);
         db.Mails.Add(new Domain.Entities.Mail { Id = Guid.NewGuid(), MailAccountId = accountId, MailFolderId = folderId, Uid = 110, Subject = "dated", FromAddress = "sender@example.test", ReceivedAt = new DateTime(2026, 3, 10, 12, 0, 0, DateTimeKind.Utc) });
         await db.SaveChangesAsync();
-        var service = new MailSearchService(db);
+        var service = new MailSearchService(db, FixedRuntimeSettingsStore.Operation());
 
         // Query-string binding yields DateTimeKind.Unspecified for "2026-03-10"; timestamptz rejects that kind as-is.
         var result = await service.SearchAsync(accountId, new MailSearchRequest(null, null, null, null, null,
@@ -197,7 +197,7 @@ public sealed class PostgresIntegrationTests(PostgresFixture fixture)
         db.Participants.Add(new MailParticipant { Id = Guid.NewGuid(), MailId = mailId, Type = ParticipantType.ReplyTo, Address = "reply-search@example.test", DisplayName = "Reply" });
         db.Attachments.Add(new Attachment { Id = Guid.NewGuid(), MailAccountId = accountId, MailId = mailId, FileName = "invoice-search.pdf", StoragePath = "x" });
         await db.SaveChangesAsync();
-        var service = new MailSearchService(db);
+        var service = new MailSearchService(db, FixedRuntimeSettingsStore.Operation());
 
         Assert.Single((await service.SearchAsync(accountId, new MailSearchRequest("cc-search", null, null, null, null, null, null, null, null, null, 1, 20), CancellationToken.None)).Items);
         Assert.Single((await service.SearchAsync(accountId, new MailSearchRequest("invoice-search", null, null, null, null, null, null, null, null, null, 1, 20), CancellationToken.None)).Items);
@@ -218,7 +218,7 @@ public sealed class PostgresIntegrationTests(PostgresFixture fixture)
         db.Mails.Add(new Domain.Entities.Mail { Id = Guid.NewGuid(), MailAccountId = accountId, MailFolderId = folderId, Uid = 202, Subject = "needle beta", BodyText = "body", FromAddress = "person@example.test", ToAddress = "to@example.test", IsRead = false, Flagged = true, HasAttachments = true, ReceivedAt = DateTime.UtcNow.AddMinutes(-1) });
         db.Mails.Add(new Domain.Entities.Mail { Id = Guid.NewGuid(), MailAccountId = otherAccountId, MailFolderId = otherFolderId, Uid = 203, Subject = "needle other", BodyText = "body", FromAddress = "person@example.test", ToAddress = "to@example.test", IsRead = false, Flagged = true, HasAttachments = true, ReceivedAt = DateTime.UtcNow });
         await db.SaveChangesAsync();
-        var service = new MailSearchService(db);
+        var service = new MailSearchService(db, FixedRuntimeSettingsStore.Operation());
 
         var first = await service.SearchAsync(accountId, new MailSearchRequest("needle", folderId, null, "person@example.test", "to@example.test", null, null, false, true, true, 1, 1), CancellationToken.None);
         var second = await service.SearchAsync(accountId, new MailSearchRequest("needle", folderId, null, "person@example.test", "to@example.test", null, null, false, true, true, 2, 1), CancellationToken.None);
@@ -241,7 +241,7 @@ public sealed class PostgresIntegrationTests(PostgresFixture fixture)
         db.Mails.Add(new Domain.Entities.Mail { Id = Guid.NewGuid(), MailAccountId = accountId, MailFolderId = folderId, Uid = 301, Subject = "migrated zebra", FromAddress = "sender@example.test", ReceivedAt = DateTime.UtcNow });
         await db.SaveChangesAsync();
         db.ChangeTracker.Clear();
-        var service = new MailSearchService(db);
+        var service = new MailSearchService(db, FixedRuntimeSettingsStore.Operation());
 
         var result = await service.SearchAsync(accountId, new MailSearchRequest("zebra", null, null, null, null, null, null, null, null, null, 1, 20), CancellationToken.None);
 
@@ -401,22 +401,10 @@ public sealed class PostgresIntegrationTests(PostgresFixture fixture)
 
         await using var firstDb = fixture.CreateDb();
         await using var secondDb = fixture.CreateDb();
-        var first = new MailCredentialResolver(
-            firstDb,
-            new PassthroughProtector(),
-            [new BlockingOAuthProvider(refreshCalls, refreshedToken, firstRefreshStarted, allowFirstRefresh)],
-            new DefaultRuntimePolicyProvider(),
-            null,
-            null,
-            locks);
-        var second = new MailCredentialResolver(
-            secondDb,
-            new PassthroughProtector(),
-            [new CountingOAuthProvider(refreshCalls, refreshedToken, secondRefreshStarted)],
-            new DefaultRuntimePolicyProvider(),
-            null,
-            null,
-            locks);
+        var first = TestServices.Credentials(firstDb,
+            oauthProviders: [new BlockingOAuthProvider(refreshCalls, refreshedToken, firstRefreshStarted, allowFirstRefresh)], locks: locks);
+        var second = TestServices.Credentials(secondDb,
+            oauthProviders: [new CountingOAuthProvider(refreshCalls, refreshedToken, secondRefreshStarted)], locks: locks);
 
         var firstResolving = first.ResolveAsync(accountId, CancellationToken.None);
         await firstRefreshStarted.Task;

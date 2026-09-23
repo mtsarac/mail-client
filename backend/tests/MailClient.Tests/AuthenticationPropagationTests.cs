@@ -139,10 +139,10 @@ public sealed class AuthenticationPropagationTests
 
     private static MailFolderSyncService CreateSyncService(AppDbContext db, MailConnectionHelper connections) =>
         new(db,
-            new MailCredentialResolver(db, new PassthroughProtector()),
+            TestServices.Credentials(db),
             connections,
             new FakeFileStorage(),
-            new MailSyncOptions(),
+            FixedRuntimeSettingsStore.Operation(),
             new FakePushNotificationService(),
             new ConversationService(db),
             new MailReconciliationService(db),
@@ -161,7 +161,7 @@ public sealed class AuthenticationPropagationTests
             new MailClient.Api.Auth.JwtTokenIssuer(new MailClient.Api.Auth.JwtOptions("i", "a", new string('k', 40))),
             new FakeSyncScheduler(),
             new MailKitFolderExplorer(connections),
-            new MailCredentialResolver(db, protector),
+            TestServices.Credentials(db, protector),
             new DefaultRuntimePolicyProvider(),
             new DefaultEmailAllowlistService(),
             NullLogger<AccountConnectionService>.Instance);

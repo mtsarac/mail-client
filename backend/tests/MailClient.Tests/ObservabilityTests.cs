@@ -263,7 +263,7 @@ public sealed class ObservabilityTests
         using var capture = new MetricsCapture();
         await using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>().UseInMemoryDatabase(Guid.NewGuid().ToString("N")).Options);
         var accountId = Guid.NewGuid();
-        var service = new MailSearchService(db, new RuntimeOperationSettings(new DefaultRuntimeSettingsStore()), capture.Metrics);
+        var service = new MailSearchService(db, FixedRuntimeSettingsStore.Operation(), capture.Metrics);
 
         var response = await service.SearchAsync(
             accountId,

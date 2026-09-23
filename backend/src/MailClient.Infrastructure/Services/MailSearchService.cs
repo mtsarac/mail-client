@@ -10,11 +10,6 @@ namespace MailClient.Infrastructure.Services;
 
 public sealed class MailSearchService(AppDbContext db, RuntimeOperationSettings operationSettings, MailClientMetrics? metrics = null)
 {
-    public MailSearchService(AppDbContext db)
-        : this(db, new RuntimeOperationSettings(new DefaultRuntimeSettingsStore()))
-    {
-    }
-
     private const int DefaultPageSize = 50;
 
     public async Task<MailListResponse> SearchAsync(Guid accountId, MailSearchRequest request, CancellationToken cancellationToken)

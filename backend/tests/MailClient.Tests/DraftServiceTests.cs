@@ -163,8 +163,9 @@ public sealed class DraftServiceTests
         var reader = new MailReadService(db, folders, audit, NullLogger<MailReadService>.Instance);
         var operations = new MailOperationService(db, folders, reader, audit, new FakeSyncScheduler(), NullLogger<MailOperationService>.Instance, new FakePushNotificationService());
         var sendOperations = new SendOperationStore(db, NullLogger<SendOperationStore>.Instance);
-        var sender = new MailSendService(db, transport ?? new FakeMailTransport(), sendOperations, new MailSyncOptions(), audit, NullLogger<MailSendService>.Instance);
-        return new(db, folders, new InlineFolderSync(new InMemorySyncLockProvider(), sync, new FakeSyncScheduler()), reader, operations, sender, sendOperations, new FakeFileStorage(), audit, NullLogger<DraftService>.Instance);
+        var inlineSync = TestServices.InlineSync(sync);
+        var sender = new MailSendService(db, transport ?? new FakeMailTransport(), sendOperations, FixedRuntimeSettingsStore.Operation(), inlineSync, audit, NullLogger<MailSendService>.Instance);
+        return new(db, folders, inlineSync, reader, operations, sender, sendOperations, new FakeFileStorage(), audit, NullLogger<DraftService>.Instance);
     }
 
     private static AppDbContext CreateDb() => new(new DbContextOptionsBuilder<AppDbContext>().UseInMemoryDatabase(Guid.NewGuid().ToString("N")).Options);

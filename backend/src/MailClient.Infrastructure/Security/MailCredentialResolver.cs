@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.Json;
 using MailClient.Application.Accounts;
@@ -27,22 +26,11 @@ public sealed class MailCredentialResolver(
     ICredentialProtector protector,
     IEnumerable<IOAuthProvider> oauthProviders,
     IRuntimePolicyProvider runtimePolicy,
-    IPushNotificationService? push = null,
-    ILogger<MailCredentialResolver>? logger = null,
-    ISyncLockProvider? syncLocks = null,
+    ISyncLockProvider syncLocks,
+    IPushNotificationService push,
+    ILogger<MailCredentialResolver> logger,
     MailClientMetrics? metrics = null)
 {
-    public MailCredentialResolver(AppDbContext db, ICredentialProtector protector)
-        : this(db, protector, [], new DefaultRuntimePolicyProvider())
-    {
-    }
-
-    public MailCredentialResolver(AppDbContext db, ICredentialProtector protector, IEnumerable<IOAuthProvider> oauthProviders)
-        : this(db, protector, oauthProviders, new DefaultRuntimePolicyProvider())
-    {
-    }
-
-    private static readonly ConcurrentDictionary<Guid, SemaphoreSlim> RefreshLocks = new();
     private static readonly TimeSpan RefreshWindow = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan DistributedLockRetryDelay = TimeSpan.FromMilliseconds(50);
 
@@ -57,41 +45,19 @@ public sealed class MailCredentialResolver(
         return await ResolveOAuthAsync(accountId, cancellationToken);
     }
 
+    // The refresh runs under the account's OAuthRefresh lock (cross-instance with PostgreSQL), so concurrent requests
+    // never spend the same refresh token twice; losers re-read the token the winner stored.
     private async Task<ResolvedCredential> ResolveOAuthAsync(Guid accountId, CancellationToken cancellationToken)
-    {
-        if (await TryFreshTokenAsync(accountId, cancellationToken) is { } fresh)
-            return fresh;
-        if (syncLocks is not null)
-            return await ResolveOAuthWithDistributedLockAsync(accountId, syncLocks, cancellationToken);
-        var refreshLock = RefreshLocks.GetOrAdd(accountId, static _ => new SemaphoreSlim(1, 1));
-        await refreshLock.WaitAsync(cancellationToken);
-        try
-        {
-            return await TryFreshTokenAsync(accountId, cancellationToken)
-                ?? await RefreshOAuthTokenAsync(accountId, cancellationToken);
-        }
-        finally
-        {
-            refreshLock.Release();
-        }
-    }
-
-    private async Task<ResolvedCredential> ResolveOAuthWithDistributedLockAsync(
-        Guid accountId,
-        ISyncLockProvider lockProvider,
-        CancellationToken cancellationToken)
     {
         while (true)
         {
-            await using var distributedLock = await lockProvider.TryAcquireAsync(
-                accountId,
-                SyncLockPurpose.OAuthRefresh,
-                cancellationToken);
             if (await TryFreshTokenAsync(accountId, cancellationToken) is { } fresh)
                 return fresh;
-            if (distributedLock.IsAcquired)
-                return await RefreshOAuthTokenAsync(accountId, cancellationToken);
-            if (distributedLock.Status == SyncLockStatus.InfrastructureFailure)
+            await using var refreshLock = await syncLocks.TryAcquireAsync(accountId, SyncLockPurpose.OAuthRefresh, cancellationToken);
+            if (refreshLock.IsAcquired)
+                return await TryFreshTokenAsync(accountId, cancellationToken)
+                    ?? await RefreshOAuthTokenAsync(accountId, cancellationToken);
+            if (refreshLock.Status == SyncLockStatus.InfrastructureFailure)
                 throw new InvalidOperationException(SyncFailureClassifier.OAuthRefreshLockUnavailable);
             await Task.Delay(DistributedLockRetryDelay, cancellationToken);
         }
@@ -189,7 +155,7 @@ public sealed class MailCredentialResolver(
         await db.SaveChangesAsync(cancellationToken);
         if (transitioned)
             metrics?.RecordOAuthReauthenticationRequired(account.Provider);
-        if (transitioned && push is not null)
+        if (transitioned)
         {
             try
             {
@@ -201,7 +167,7 @@ public sealed class MailCredentialResolver(
             }
             catch (Exception ex)
             {
-                logger?.LogWarning(ex, "Reauthentication push failed. Credential state is unaffected.");
+                logger.LogWarning(ex, "Reauthentication push failed. Credential state is unaffected.");
             }
         }
 

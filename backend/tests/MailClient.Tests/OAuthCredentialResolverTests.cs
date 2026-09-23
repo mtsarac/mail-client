@@ -20,7 +20,7 @@ public sealed class OAuthCredentialResolverTests
         var db = Db();
         var accountId = await SeedOAuthAsync(db, DateTime.UtcNow.AddMinutes(1), "old-access", "old-refresh");
         var provider = new FakeOAuthProvider(new OAuthToken("new-access", "new-refresh", DateTime.UtcNow.AddHours(1), "scope"));
-        var resolver = new MailCredentialResolver(db, new PrefixProtector(), new[] { provider });
+        var resolver = TestServices.Credentials(db, new PrefixProtector(), [provider]);
 
         var resolved = await resolver.ResolveAsync(accountId, CancellationToken.None);
 
@@ -39,7 +39,7 @@ public sealed class OAuthCredentialResolverTests
     {
         var db = Db();
         var accountId = await SeedOAuthAsync(db, DateTime.UtcNow.AddMinutes(1), "old-access", "old-refresh");
-        var resolver = new MailCredentialResolver(db, new PrefixProtector(), new[] { FakeOAuthProvider.InvalidGrant() });
+        var resolver = TestServices.Credentials(db, new PrefixProtector(), [FakeOAuthProvider.InvalidGrant()]);
 
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() => resolver.ResolveAsync(accountId, CancellationToken.None));
 
@@ -77,7 +77,7 @@ public sealed class OAuthCredentialResolverTests
         var accountId = await SeedOAuthAsync(db, DateTime.UtcNow.AddMinutes(1), "old-access", "old-refresh");
         var provider = new FakeOAuthProvider(new OAuthToken("new-access", "new-refresh", DateTime.UtcNow.AddHours(1), "scope"));
         var locks = new StubSyncLockProvider(SyncLockStatus.InfrastructureFailure);
-        var resolver = new MailCredentialResolver(db, new PrefixProtector(), [provider], new DefaultRuntimePolicyProvider(), null, null, locks);
+        var resolver = TestServices.Credentials(db, new PrefixProtector(), [provider], locks);
 
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() => resolver.ResolveAsync(accountId, CancellationToken.None));
 
@@ -95,7 +95,7 @@ public sealed class OAuthCredentialResolverTests
         var accountId = await SeedOAuthAsync(db, DateTime.UtcNow.AddMinutes(1), "old-access", "old-refresh");
         var provider = new FakeOAuthProvider(new OAuthToken("new-access", "new-refresh", DateTime.UtcNow.AddHours(1), "scope"));
         var locks = new StubSyncLockProvider(SyncLockStatus.Contended, SyncLockStatus.Acquired);
-        var resolver = new MailCredentialResolver(db, new PrefixProtector(), [provider], new DefaultRuntimePolicyProvider(), null, null, locks);
+        var resolver = TestServices.Credentials(db, new PrefixProtector(), [provider], locks);
 
         var resolved = await resolver.ResolveAsync(accountId, CancellationToken.None);
 
@@ -111,8 +111,7 @@ public sealed class OAuthCredentialResolverTests
         var accountId = await SeedOAuthAsync(db, DateTime.UtcNow.AddMinutes(1), "old-access", "old-refresh");
         var account = await db.MailAccounts.SingleAsync(x => x.Id == accountId);
         var provider = new FakeOAuthProvider(new OAuthToken("new-access", "new-refresh", DateTime.UtcNow.AddHours(1), "scope"));
-        var resolver = new MailCredentialResolver(db, new PrefixProtector(), [provider], new DefaultRuntimePolicyProvider(), null, null,
-            new StubSyncLockProvider(SyncLockStatus.Acquired));
+        var resolver = TestServices.Credentials(db, new PrefixProtector(), [provider], new StubSyncLockProvider(SyncLockStatus.Acquired));
 
         await resolver.ResolveAsync(accountId, CancellationToken.None);
         account.DisplayName = "changed after refresh";
@@ -128,7 +127,7 @@ public sealed class OAuthCredentialResolverTests
         var db = Db();
         var accountId = await SeedPasswordAsync(db);
         var provider = new FakeOAuthProvider(new OAuthToken("new-access", "new-refresh", DateTime.UtcNow.AddHours(1), "scope"));
-        var resolver = new MailCredentialResolver(db, new PrefixProtector(), new[] { provider });
+        var resolver = TestServices.Credentials(db, new PrefixProtector(), [provider]);
 
         var resolved = await resolver.ResolveAsync(accountId, CancellationToken.None);
 
@@ -194,7 +193,7 @@ public sealed class OAuthCredentialResolverTests
     }
 
     private static MailCredentialResolver Resolver(AppDbContext db, IOAuthProvider provider, MetricsCapture capture) =>
-        new(db, new PrefixProtector(), [provider], new DefaultRuntimePolicyProvider(), null, null, null, capture.Metrics);
+        TestServices.Credentials(db, new PrefixProtector(), [provider], metrics: capture.Metrics);
 
     private static AppDbContext Db() => new(new DbContextOptionsBuilder<AppDbContext>()
         .UseInMemoryDatabase(Guid.NewGuid().ToString("N"))

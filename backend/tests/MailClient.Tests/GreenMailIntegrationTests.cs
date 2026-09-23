@@ -315,19 +315,10 @@ public sealed class GreenMailIntegrationTests(GreenMailFixture greenmail)
 
     private static MailFolderSyncService CreateSyncService(AppDbContext db) => new(
         db,
-        new MailCredentialResolver(db, new PassthroughProtector()),
+        TestServices.Credentials(db),
         new MailConnectionHelper(new OutboundHostValidator(new FakeDns(System.Net.IPAddress.Loopback)), NullLogger<MailConnectionHelper>.Instance),
         new FakeFileStorage(),
-        new MailSyncOptions
-        {
-            Enabled = true,
-            PollIntervalSeconds = 30,
-            FlagSyncIntervalSeconds = 120,
-            MaxMessagesPerRun = 100,
-            MaxAttachmentBytes = 1024 * 1024,
-            MaxMessageAttachmentBytes = 10 * 1024 * 1024,
-            MaxMessageBytes = 100 * 1024 * 1024
-        },
+        FixedRuntimeSettingsStore.Operation(TestServices.SyncSettings(maxAttachmentBytes: 1024 * 1024, maxMessageAttachmentBytes: 10 * 1024 * 1024)),
         new FakePushNotificationService(),
         new MailClient.Infrastructure.Services.ConversationService(db), new MailReconciliationService(db), NullLogger<MailFolderSyncService>.Instance);
 

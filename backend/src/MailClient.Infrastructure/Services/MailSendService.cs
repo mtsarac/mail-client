@@ -25,22 +25,11 @@ public sealed class MailSendService(
     Mail.IMailTransport transport,
     SendOperationStore operations,
     RuntimeOperationSettings operationSettings,
+    Sync.InlineFolderSync inlineSync,
     AuditLogger audit,
     ILogger<MailSendService> logger,
-    MailClientMetrics? metrics = null,
-    Sync.InlineFolderSync? inlineSync = null)
+    MailClientMetrics? metrics = null)
 {
-    public MailSendService(
-        AppDbContext db,
-        Mail.IMailTransport transport,
-        SendOperationStore operations,
-        MailSyncOptions options,
-        AuditLogger audit,
-        ILogger<MailSendService> logger)
-        : this(db, transport, operations, RuntimeOperationSettings.FromMailSyncOptions(options), audit, logger)
-    {
-    }
-
     private const int MaxAttachmentCount = 20;
 
     public async Task<SendMailResult> SendAsync(
@@ -253,7 +242,7 @@ public sealed class MailSendService(
     /// <summary>Best effort: pulls the Sent folder so the reply is queryable at once. Null ids just mean sync will catch up.</summary>
     private async Task<(Guid? MailId, Guid? ConversationId)> FindSentCopyAsync(Guid accountId, string sentFullName, string? messageId, CancellationToken cancellationToken)
     {
-        if (inlineSync is null || messageId is null)
+        if (messageId is null)
             return (null, null);
         try
         {
