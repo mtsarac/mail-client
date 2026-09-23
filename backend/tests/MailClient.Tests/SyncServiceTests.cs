@@ -280,13 +280,56 @@ public sealed class SyncServiceTests
         Assert.NotNull(after.LastFlagSyncAt);
     }
 
-    private static MailFolderSyncService CreateService(AppDbContext db, MailSyncOptions options, FakePushNotificationService? push = null) =>
+    [Fact]
+    public async Task ConversationAssignmentFailure_KeepsImportedMailAndItsAttachments()
+    {
+        await using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString("N"))
+            .AddInterceptors(new FailConversationInsertInterceptor())
+            .Options);
+        var (accountId, folderId) = await SeedFolderAsync(db);
+        var remote = new FakeRemoteMailFolder(7, new() { [1] = () => MessageWithAttachment("with file"), [2] = () => SimpleMessage("next") });
+        var storage = new FakeFileStorage();
+        var service = CreateService(db, Options(100), storage: storage);
+
+        await service.SyncFolderCoreAsync(accountId, folderId, remote, CancellationToken.None);
+
+        Assert.Equal(2, await db.Mails.CountAsync());
+        var attachment = await db.Attachments.SingleAsync();
+        Assert.True(storage.Content.ContainsKey(attachment.StoragePath));
+        Assert.Empty(storage.Deleted);
+        Assert.Equal(2u, (await db.SyncStates.SingleAsync()).LastUid);
+    }
+
+    private static MimeKit.MimeMessage MessageWithAttachment(string subject)
+    {
+        var message = SimpleMessage(subject);
+        var body = new MimeKit.BodyBuilder { TextBody = "hello" };
+        body.Attachments.Add("note.txt", System.Text.Encoding.UTF8.GetBytes("file"));
+        message.Body = body.ToMessageBody();
+        return message;
+    }
+
+    private sealed class FailConversationInsertInterceptor : Microsoft.EntityFrameworkCore.Diagnostics.SaveChangesInterceptor
+    {
+        public override ValueTask<Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<int>> SavingChangesAsync(
+            Microsoft.EntityFrameworkCore.Diagnostics.DbContextEventData eventData,
+            Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<int> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (eventData.Context!.ChangeTracker.Entries<Conversation>().Any(entry => entry.State == EntityState.Added))
+                throw new DbUpdateException("conversation insert failed");
+            return ValueTask.FromResult(result);
+        }
+    }
+
+    private static MailFolderSyncService CreateService(AppDbContext db, MailSyncOptions options, FakePushNotificationService? push = null, FakeFileStorage? storage = null) =>
         new(db,
             new MailCredentialResolver(db, new PassthroughProtector()),
             new Infrastructure.Mail.MailConnectionHelper(
                 new OutboundHostValidator(new FakeDns(System.Net.IPAddress.Loopback)),
                 NullLogger<Infrastructure.Mail.MailConnectionHelper>.Instance),
-            new FakeFileStorage(),
+            storage ?? new FakeFileStorage(),
             options,
             push ?? new FakePushNotificationService(),
             new MailClient.Infrastructure.Services.ConversationService(db), new MailReconciliationService(db), NullLogger<MailFolderSyncService>.Instance);

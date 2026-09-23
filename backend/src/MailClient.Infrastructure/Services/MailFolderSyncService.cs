@@ -694,7 +694,6 @@ public sealed class MailFolderSyncService(
             try
             {
                 await db.SaveChangesAsync(cancellationToken);
-                await conversations.AssignAsync(mail.Id, cancellationToken);
             }
             catch
             {
@@ -702,6 +701,9 @@ public sealed class MailFolderSyncService(
                 throw;
             }
 
+            // The committed row owns its attachment files now; no later failure may delete them.
+            createdPaths.Clear();
+            await AssignConversationAsync(mail.Id, cancellationToken);
             var candidate = new NewMailCandidate(mail.Id, mail.FromAddress, mail.FromDisplayName, mail.Subject, mail.ConversationId);
             Detach(mail);
             return candidate;
@@ -777,6 +779,30 @@ public sealed class MailFolderSyncService(
             state.LastUid = uid;
         await db.SaveChangesAsync(cancellationToken);
         logger.LogWarning("Marked a message as skipped ({Kind}).", kind);
+    }
+
+    /// <summary>
+    /// Threading is a derived view of an already committed message: a failure here must not undo the import, so it
+    /// is logged and the message stays unthreaded instead of losing its attachments or being retried as new mail.
+    /// </summary>
+    private async Task AssignConversationAsync(Guid mailId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await conversations.AssignAsync(mailId, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            foreach (var entry in db.ChangeTracker.Entries()
+                .Where(entry => entry.Entity is MailEntity or Conversation && entry.State != EntityState.Unchanged)
+                .ToList())
+                entry.State = EntityState.Detached;
+            logger.LogWarning(ex, "Conversation assignment failed for an imported message.");
+        }
     }
 
     private async Task CleanupCreatedFilesAsync(List<string> paths)
