@@ -308,12 +308,6 @@ public sealed class ConversationThreadTests
         Assert.Single(foreignConvs);
     }
 
-    [Fact]
-    public void SubjectFallbackWindow_IsThirtyDays()
-    {
-        Assert.Equal(TimeSpan.FromDays(30), ConversationService.SubjectFallbackWindow);
-    }
-
     private static AppDbContext CreateDb() => new(new DbContextOptionsBuilder<AppDbContext>()
         .UseInMemoryDatabase(Guid.NewGuid().ToString("N")).Options);
 

@@ -209,7 +209,7 @@ else
     builder.Services.AddSingleton(new LocalAttachmentStorage(Path.Combine(builder.Environment.ContentRootPath, "data")));
     builder.Services.AddSingleton<IFileStorage>(sp => sp.GetRequiredService<LocalAttachmentStorage>());
 }
-var jwt = builder.Configuration.GetSection("Jwt").Get<JwtOptions>() ?? new("MailClient", "MailClient", "development-only-key-change-before-production-123456789", 15);
+var jwt = builder.Configuration.GetSection("Jwt").Get<JwtOptions>() ?? new("MailClient", "MailClient", JwtOptions.DevelopmentKey);
 if (jwt.Key.Length < 32) throw new InvalidOperationException("Jwt:Key must contain at least 32 characters.");
 if (!builder.Environment.IsDevelopment() && !builder.Environment.IsEnvironment("Test") && jwt.Key == JwtOptions.DevelopmentKey)
     throw new InvalidOperationException("Jwt:Key must be provided via configuration in production; the development key is not allowed.");
