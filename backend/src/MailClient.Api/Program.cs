@@ -300,19 +300,25 @@ if (trustedProxy)
 var app = builder.Build();
 app.UseMiddleware<CorrelationMiddleware>();
 app.UseMiddleware<HttpBodyLoggingMiddleware>();
-app.UseExceptionHandler(error => error.Run(async context =>
+app.UseExceptionHandler(new ExceptionHandlerOptions
 {
-    var exception = context.Features.Get<Microsoft.AspNetCore.Diagnostics.IExceptionHandlerFeature>()?.Error;
-    var (code, status) = ApiFailureMapper.MapFailure(exception);
-    if (status >= 500)
-        app.Logger.LogError(exception, "Unhandled request failure {Code} for {Method} {Path}.", code, context.Request.Method, context.Request.Path);
-    var correlationId = context.RequestServices.GetRequiredService<CorrelationContext>().CorrelationId;
-    var extensions = new Dictionary<string, object?> { ["code"] = code, ["correlationId"] = correlationId };
-    if (app.Environment.IsDevelopment() && exception is not null)
-        extensions["detail"] = $"{exception.GetType().Name}: {exception.Message}";
-    context.Response.StatusCode = status;
-    await Results.Problem(title: code.Replace('_', ' '), statusCode: status, extensions: extensions).ExecuteAsync(context);
-}));
+    // Expected failures (stable 4xx codes) are part of the API contract, not errors; the handler below logs
+    // each server failure exactly once, so the middleware's own "unhandled exception" log is suppressed.
+    SuppressDiagnosticsCallback = _ => true,
+    ExceptionHandler = async context =>
+    {
+        var exception = context.Features.Get<Microsoft.AspNetCore.Diagnostics.IExceptionHandlerFeature>()?.Error;
+        var (code, status) = ApiFailureMapper.MapFailure(exception);
+        if (status >= 500)
+            app.Logger.LogError(exception, "Request failed with {Code} for {Method} {Path}.", code, context.Request.Method, context.Request.Path);
+        var correlationId = context.RequestServices.GetRequiredService<CorrelationContext>().CorrelationId;
+        var extensions = new Dictionary<string, object?> { ["code"] = code, ["correlationId"] = correlationId };
+        if (app.Environment.IsDevelopment() && exception is not null)
+            extensions["detail"] = $"{exception.GetType().Name}: {exception.Message}";
+        context.Response.StatusCode = status;
+        await Results.Problem(title: code.Replace('_', ' '), statusCode: status, extensions: extensions).ExecuteAsync(context);
+    }
+});
 if (trustedProxy)
     app.UseForwardedHeaders();
 if (!app.Environment.IsDevelopment() && !app.Environment.IsEnvironment("Test"))

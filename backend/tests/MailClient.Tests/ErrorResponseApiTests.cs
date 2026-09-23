@@ -1,12 +1,14 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace MailClient.Tests;
 
-public sealed class MalformedRequestApiTests(AcceptingApiFactory factory) : IClassFixture<AcceptingApiFactory>
+public sealed class ErrorResponseApiTests(LogCapturingApiFactory factory) : IClassFixture<LogCapturingApiFactory>
 {
     [Theory]
     [InlineData("/api/mails/send")]
@@ -34,6 +36,20 @@ public sealed class MalformedRequestApiTests(AcceptingApiFactory factory) : ICla
         await AssertInvalidRequestAsync(response);
     }
 
+    [Fact]
+    public async Task ExpectedClientErrors_AreNotLoggedAsErrors()
+    {
+        var email = $"{Guid.NewGuid():N}@mail.test.invalid";
+        var client = factory.CreateClient();
+        (await client.PostAsJsonAsync("/api/accounts/connect-manual", ManualRequestBuilder.Build("mail.test.invalid", "mail.test.invalid", email))).EnsureSuccessStatusCode();
+        factory.Events.Clear();
+
+        var duplicate = await client.PostAsJsonAsync("/api/accounts/connect-manual", ManualRequestBuilder.Build("mail.test.invalid", "mail.test.invalid", email));
+
+        Assert.Equal(HttpStatusCode.Conflict, duplicate.StatusCode);
+        Assert.DoesNotContain(factory.Events, logEvent => logEvent.Level >= Serilog.Events.LogEventLevel.Error);
+    }
+
     private static async Task AssertInvalidRequestAsync(HttpResponseMessage response)
     {
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
@@ -50,5 +66,21 @@ public sealed class MalformedRequestApiTests(AcceptingApiFactory factory) : ICla
         var tokens = await response.Content.ReadFromJsonAsync<JsonDocument>();
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", tokens!.RootElement.GetProperty("accessToken").GetString());
         return client;
+    }
+}
+
+public sealed class LogCapturingApiFactory : MailClientApiFactory
+{
+    public ConcurrentQueue<Serilog.Events.LogEvent> Events { get; } = new();
+
+    protected override void ConfigureWebHost(Microsoft.AspNetCore.Hosting.IWebHostBuilder builder)
+    {
+        base.ConfigureWebHost(builder);
+        builder.ConfigureServices(services => services.AddSingleton<Serilog.Core.ILogEventSink>(new QueueSink(Events)));
+    }
+
+    private sealed class QueueSink(ConcurrentQueue<Serilog.Events.LogEvent> events) : Serilog.Core.ILogEventSink
+    {
+        public void Emit(Serilog.Events.LogEvent logEvent) => events.Enqueue(logEvent);
     }
 }
