@@ -1,4 +1,5 @@
 using MailClient.Application.Runtime;
+using MailClient.Domain.Entities;
 using MailClient.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 
@@ -10,7 +11,7 @@ public sealed class EmailAllowlistService(AppDbContext db, IRuntimeSettingsStore
     {
         if (!await IsEnforcedAsync(cancellationToken))
             return true;
-        var normalized = Normalize(email);
+        var normalized = MailAccount.NormalizeEmailAddress(email);
         return await db.AllowlistedEmails.AsNoTracking().AnyAsync(item => item.NormalizedEmail == normalized, cancellationToken);
     }
 
@@ -23,6 +24,4 @@ public sealed class EmailAllowlistService(AppDbContext db, IRuntimeSettingsStore
         var snapshot = await settings.GetAsync(cancellationToken);
         return snapshot.Settings.Whitelist.Enabled;
     }
-
-    public static string Normalize(string email) => email.Trim().ToUpperInvariant();
 }

@@ -10,6 +10,8 @@ using MailClient.Infrastructure.Security;
 using MailClient.Infrastructure.Services;
 using MailClient.Infrastructure.Sync;
 using Microsoft.EntityFrameworkCore;
+using System.Net.Http.Json;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 
@@ -157,11 +159,29 @@ public sealed class PostgresIntegrationTests(PostgresFixture fixture)
         var folderId = await SeedFolderAsync(db, accountId);
         db.Mails.Add(new Domain.Entities.Mail { Id = Guid.NewGuid(), MailAccountId = accountId, MailFolderId = folderId, Uid = 100, Subject = "quarterly report", BodyText = "unusual orchid", FromAddress = "sender@example.test", ReceivedAt = DateTime.UtcNow });
         await db.SaveChangesAsync();
-        var service = new MailSearchService(db);
+        var service = new MailSearchService(db, FixedRuntimeSettingsStore.Operation());
 
         var result = await service.SearchAsync(accountId, new MailSearchRequest("orchid", null, null, null, null, null, null, null, null, null, 1, 20), CancellationToken.None);
 
         Assert.Contains(result.Items, mail => mail.Subject == "quarterly report");
+    }
+
+    [Fact]
+    public async Task Search_DateFilterWithoutOffset_IsTreatedAsUtc()
+    {
+        if (!IntegrationEnvironment.PostgresEnabled) return;
+        var accountId = await SeedAccountAsync();
+        await using var db = fixture.CreateDb();
+        var folderId = await SeedFolderAsync(db, accountId);
+        db.Mails.Add(new Domain.Entities.Mail { Id = Guid.NewGuid(), MailAccountId = accountId, MailFolderId = folderId, Uid = 110, Subject = "dated", FromAddress = "sender@example.test", ReceivedAt = new DateTime(2026, 3, 10, 12, 0, 0, DateTimeKind.Utc) });
+        await db.SaveChangesAsync();
+        var service = new MailSearchService(db, FixedRuntimeSettingsStore.Operation());
+
+        // Query-string binding yields DateTimeKind.Unspecified for "2026-03-10"; timestamptz rejects that kind as-is.
+        var result = await service.SearchAsync(accountId, new MailSearchRequest(null, null, null, null, null,
+            new DateTime(2026, 3, 10), new DateTime(2026, 3, 11), null, null, null, 1, 20), CancellationToken.None);
+
+        Assert.Equal("dated", Assert.Single(result.Items).Subject);
     }
 
     [Fact]
@@ -177,10 +197,35 @@ public sealed class PostgresIntegrationTests(PostgresFixture fixture)
         db.Participants.Add(new MailParticipant { Id = Guid.NewGuid(), MailId = mailId, Type = ParticipantType.ReplyTo, Address = "reply-search@example.test", DisplayName = "Reply" });
         db.Attachments.Add(new Attachment { Id = Guid.NewGuid(), MailAccountId = accountId, MailId = mailId, FileName = "invoice-search.pdf", StoragePath = "x" });
         await db.SaveChangesAsync();
-        var service = new MailSearchService(db);
+        var service = new MailSearchService(db, FixedRuntimeSettingsStore.Operation());
 
         Assert.Single((await service.SearchAsync(accountId, new MailSearchRequest("cc-search", null, null, null, null, null, null, null, null, null, 1, 20), CancellationToken.None)).Items);
         Assert.Single((await service.SearchAsync(accountId, new MailSearchRequest("invoice-search", null, null, null, null, null, null, null, null, null, 1, 20), CancellationToken.None)).Items);
+    }
+
+    [Fact]
+    public async Task Search_FromAndToFilters_MatchPartialAddressOrName_CaseInsensitive()
+    {
+        if (!IntegrationEnvironment.PostgresEnabled) return;
+        var accountId = await SeedAccountAsync();
+        await using var db = fixture.CreateDb();
+        var folderId = await SeedFolderAsync(db, accountId);
+        var match = Guid.NewGuid();
+        var other = Guid.NewGuid();
+        db.Mails.Add(new Domain.Entities.Mail { Id = match, MailAccountId = accountId, MailFolderId = folderId, Uid = 111, Subject = "match", FromAddress = "alice@corp.test", FromDisplayName = "Alice Smith", ReceivedAt = DateTime.UtcNow });
+        db.Mails.Add(new Domain.Entities.Mail { Id = other, MailAccountId = accountId, MailFolderId = folderId, Uid = 112, Subject = "other", FromAddress = "bob@elsewhere.test", FromDisplayName = "Bob", ReceivedAt = DateTime.UtcNow });
+        db.Participants.Add(new MailParticipant { Id = Guid.NewGuid(), MailId = match, Type = ParticipantType.Cc, Address = "carol@partner.test", NormalizedAddress = "carol@partner.test", DisplayName = "Carol" });
+        db.Participants.Add(new MailParticipant { Id = Guid.NewGuid(), MailId = other, Type = ParticipantType.ReplyTo, Address = "carol@partner.test", NormalizedAddress = "carol@partner.test", DisplayName = "Carol" });
+        await db.SaveChangesAsync();
+        var service = new MailSearchService(db, FixedRuntimeSettingsStore.Operation());
+
+        async Task<string> OnlySubject(string? from, string? to) => Assert.Single((await service.SearchAsync(accountId,
+            new MailSearchRequest(null, folderId, null, from, to, null, null, null, null, null, 1, 20), CancellationToken.None)).Items).Subject;
+
+        Assert.Equal("match", await OnlySubject("SMITH", null));
+        Assert.Equal("match", await OnlySubject("corp.test", null));
+        Assert.Equal("match", await OnlySubject(null, "PARTNER"));
+        Assert.Empty((await service.SearchAsync(accountId, new MailSearchRequest("%", folderId, null, null, null, null, null, null, null, null, 1, 20), CancellationToken.None)).Items);
     }
 
     [Fact]
@@ -198,7 +243,7 @@ public sealed class PostgresIntegrationTests(PostgresFixture fixture)
         db.Mails.Add(new Domain.Entities.Mail { Id = Guid.NewGuid(), MailAccountId = accountId, MailFolderId = folderId, Uid = 202, Subject = "needle beta", BodyText = "body", FromAddress = "person@example.test", ToAddress = "to@example.test", IsRead = false, Flagged = true, HasAttachments = true, ReceivedAt = DateTime.UtcNow.AddMinutes(-1) });
         db.Mails.Add(new Domain.Entities.Mail { Id = Guid.NewGuid(), MailAccountId = otherAccountId, MailFolderId = otherFolderId, Uid = 203, Subject = "needle other", BodyText = "body", FromAddress = "person@example.test", ToAddress = "to@example.test", IsRead = false, Flagged = true, HasAttachments = true, ReceivedAt = DateTime.UtcNow });
         await db.SaveChangesAsync();
-        var service = new MailSearchService(db);
+        var service = new MailSearchService(db, FixedRuntimeSettingsStore.Operation());
 
         var first = await service.SearchAsync(accountId, new MailSearchRequest("needle", folderId, null, "person@example.test", "to@example.test", null, null, false, true, true, 1, 1), CancellationToken.None);
         var second = await service.SearchAsync(accountId, new MailSearchRequest("needle", folderId, null, "person@example.test", "to@example.test", null, null, false, true, true, 2, 1), CancellationToken.None);
@@ -221,7 +266,7 @@ public sealed class PostgresIntegrationTests(PostgresFixture fixture)
         db.Mails.Add(new Domain.Entities.Mail { Id = Guid.NewGuid(), MailAccountId = accountId, MailFolderId = folderId, Uid = 301, Subject = "migrated zebra", FromAddress = "sender@example.test", ReceivedAt = DateTime.UtcNow });
         await db.SaveChangesAsync();
         db.ChangeTracker.Clear();
-        var service = new MailSearchService(db);
+        var service = new MailSearchService(db, FixedRuntimeSettingsStore.Operation());
 
         var result = await service.SearchAsync(accountId, new MailSearchRequest("zebra", null, null, null, null, null, null, null, null, null, 1, 20), CancellationToken.None);
 
@@ -381,22 +426,10 @@ public sealed class PostgresIntegrationTests(PostgresFixture fixture)
 
         await using var firstDb = fixture.CreateDb();
         await using var secondDb = fixture.CreateDb();
-        var first = new MailCredentialResolver(
-            firstDb,
-            new PassthroughProtector(),
-            [new BlockingOAuthProvider(refreshCalls, refreshedToken, firstRefreshStarted, allowFirstRefresh)],
-            new DefaultRuntimePolicyProvider(),
-            null,
-            null,
-            locks);
-        var second = new MailCredentialResolver(
-            secondDb,
-            new PassthroughProtector(),
-            [new CountingOAuthProvider(refreshCalls, refreshedToken, secondRefreshStarted)],
-            new DefaultRuntimePolicyProvider(),
-            null,
-            null,
-            locks);
+        var first = TestServices.Credentials(firstDb,
+            oauthProviders: [new BlockingOAuthProvider(refreshCalls, refreshedToken, firstRefreshStarted, allowFirstRefresh)], locks: locks);
+        var second = TestServices.Credentials(secondDb,
+            oauthProviders: [new CountingOAuthProvider(refreshCalls, refreshedToken, secondRefreshStarted)], locks: locks);
 
         var firstResolving = first.ResolveAsync(accountId, CancellationToken.None);
         await firstRefreshStarted.Task;
@@ -482,6 +515,40 @@ public sealed class PostgresIntegrationTests(PostgresFixture fixture)
             await allowRefresh.Task.WaitAsync(cancellationToken);
             return token;
         }
+    }
+
+    [Fact]
+    public async Task ConversationEndpoints_TranslateOnPostgres_WithDistinctSendersAndOwnMessages()
+    {
+        if (!IntegrationEnvironment.PostgresEnabled) return;
+        var accountId = await SeedAccountAsync();
+        var conversationId = Guid.NewGuid();
+        await using (var db = fixture.CreateDb())
+        {
+            var folderId = await SeedFolderAsync(db, accountId);
+            var ownAddress = await db.MailAccounts.Where(account => account.Id == accountId).Select(account => account.EmailAddress).SingleAsync();
+            db.Conversations.Add(new Conversation { Id = conversationId, MailAccountId = accountId, NormalizedSubject = "pg thread", StartedAt = DateTime.UtcNow, LastMessageAt = DateTime.UtcNow });
+            foreach (var (uid, from, name) in new[] { (401u, "alice@example.test", "Alice"), (402u, "alice@example.test", "Alice"), (403u, ownAddress.ToUpperInvariant(), "Me") })
+            {
+                var mail = Mail(accountId, folderId, uid);
+                mail.ConversationId = conversationId;
+                mail.FromAddress = from;
+                mail.Participants.Add(new MailParticipant { Id = Guid.NewGuid(), MailId = mail.Id, Type = ParticipantType.From, Address = from, NormalizedAddress = from.ToLowerInvariant(), DisplayName = name });
+                db.Mails.Add(mail);
+            }
+            await db.SaveChangesAsync();
+        }
+
+        using var factory = new NpgsqlApiFactory(fixture.ConnectionString);
+        var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer",
+            factory.Services.GetRequiredService<MailClient.Application.Accounts.IJwtTokenIssuer>().Issue(accountId).Token);
+
+        var list = await client.GetFromJsonAsync<System.Text.Json.JsonDocument>("/api/conversations");
+        var detail = await client.GetFromJsonAsync<System.Text.Json.JsonDocument>($"/api/conversations/{conversationId}");
+
+        Assert.Equal(["Alice", "Me"], list!.RootElement.GetProperty("items")[0].GetProperty("participants").EnumerateArray().Select(name => name.GetString()));
+        Assert.Equal([false, false, true], detail!.RootElement.GetProperty("messages").EnumerateArray().Select(message => message.GetProperty("isFromMe").GetBoolean()));
     }
 
     private static async Task<Guid> SeedFolderAsync(AppDbContext db, Guid accountId)

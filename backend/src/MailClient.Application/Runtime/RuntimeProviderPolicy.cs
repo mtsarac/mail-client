@@ -4,7 +4,6 @@ namespace MailClient.Application.Runtime;
 
 public sealed class RuntimeProviderPolicy(RuntimeSettings settings, ProviderCapabilities capabilities)
 {
-    public static RuntimeProviderPolicy Create(RuntimeSettings settings, ProviderCapabilities capabilities) => new(settings, capabilities);
 
     public IReadOnlyList<AuthenticationMethod> GetAuthenticationMethods(MailProvider provider)
     {

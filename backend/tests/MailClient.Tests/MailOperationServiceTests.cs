@@ -60,22 +60,27 @@ public sealed class MailOperationServiceTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_MoveWithoutDestinationUid_RequiresReconciliationAndDoesNotChangeCache()
+    public async Task ExecuteAsync_MoveWithoutDestinationUidOrMessageId_LeavesRowForVanishCleanup()
     {
         await using var db = CreateDb();
         var (accountId, folderId, mailId) = await SeedAsync(db);
         var destinationId = Guid.NewGuid();
         db.MailFolders.Add(new MailFolder { Id = destinationId, MailAccountId = accountId, Name = "Archive", FullName = "Archive", FolderType = MailFolderType.Archive, UidValidity = 8 });
+        var seeded = await db.Mails.SingleAsync(x => x.Id == mailId);
+        seeded.MessageId = "";
         await db.SaveChangesAsync();
-        var remote = new RecordingRemoteFolder(7);
-        var service = CreateService(db, new FakeMailFolderClient(remote));
+        db.ChangeTracker.Clear();
+        var scheduler = new FakeSyncScheduler();
+        var service = CreateService(db, new FakeMailFolderClient(new NullDestinationRemote(7)), scheduler);
 
         var result = await service.ExecuteAsync(accountId, new(mailId, MailOperationKind.Move, destinationId), null, CancellationToken.None);
 
         Assert.True(result.Success);
-        Assert.True(result.ReconciliationPending);
         var mail = await db.Mails.SingleAsync(x => x.Id == mailId);
         Assert.Equal(folderId, mail.MailFolderId);
+        Assert.Equal(MailReconciliationState.None, mail.ReconciliationState);
+        Assert.Null(mail.ExpectedMailFolderId);
+        Assert.Contains(scheduler.Scheduled, item => item.FolderId == destinationId);
     }
 
     [Fact]
@@ -107,12 +112,20 @@ public sealed class MailOperationServiceTests
     [Fact]
     public async Task ExecuteAsync_MoveWithoutDestinationUid_MarksReconciliationPending()
     {
-        await using var db = CreateDb();
+        var databaseName = Guid.NewGuid().ToString();
+        await using var db = CreateDb(databaseName);
         var (accountId, folderId, mailId) = await SeedAsync(db);
         var destinationId = Guid.NewGuid();
         db.MailFolders.Add(new MailFolder { Id = destinationId, MailAccountId = accountId, Name = "Archive", FullName = "Archive", FolderType = MailFolderType.Archive, UidValidity = 8 });
         await db.SaveChangesAsync();
-        var service = CreateService(db, new FakeMailFolderClient(new NullDestinationRemote(7)));
+        var persistedWhenScheduled = MailReconciliationState.None;
+        var scheduler = new FakeSyncScheduler(() =>
+        {
+            // The coordinator reads through its own scope; the pending marker must already be committed.
+            using var observer = CreateDb(databaseName);
+            persistedWhenScheduled = observer.Mails.Single(x => x.Id == mailId).ReconciliationState;
+        });
+        var service = CreateService(db, new FakeMailFolderClient(new NullDestinationRemote(7)), scheduler);
 
         var result = await service.ExecuteAsync(accountId, new(mailId, MailOperationKind.Move, destinationId), null, CancellationToken.None);
 
@@ -121,6 +134,7 @@ public sealed class MailOperationServiceTests
         var mail = await db.Mails.SingleAsync(x => x.Id == mailId);
         Assert.Equal(MailReconciliationState.Pending, mail.ReconciliationState);
         Assert.NotEqual(destinationId, mail.MailFolderId);
+        Assert.Equal(MailReconciliationState.Pending, persistedWhenScheduled);
     }
 
     [Fact]
@@ -149,8 +163,8 @@ public sealed class MailOperationServiceTests
         Assert.True((await db.Mails.SingleAsync(x => x.Id == secondMailId)).Flagged);
     }
 
-    private static MailOperationService CreateService(AppDbContext db, IMailFolderClient folders) =>
-        new(db, folders, new MailReadService(db, folders, new AuditLogger(db), NullLogger<MailReadService>.Instance), new AuditLogger(db), new FakeSyncScheduler(), NullLogger<MailOperationService>.Instance, new FakePushNotificationService());
+    private static MailOperationService CreateService(AppDbContext db, IMailFolderClient folders, FakeSyncScheduler? scheduler = null) =>
+        new(db, folders, new MailReadService(db, folders, new AuditLogger(db), NullLogger<MailReadService>.Instance), new AuditLogger(db), scheduler ?? new FakeSyncScheduler(), NullLogger<MailOperationService>.Instance, new FakePushNotificationService());
 
     private static async Task<(Guid AccountId, Guid FolderId, Guid MailId)> SeedAsync(AppDbContext db)
     {
@@ -159,13 +173,13 @@ public sealed class MailOperationServiceTests
         var mailId = Guid.NewGuid();
         db.MailAccounts.Add(new MailAccount { Id = accountId, EmailAddress = "a@example.test", NormalizedEmailAddress = "A@EXAMPLE.TEST", Username = "a", Status = MailAccountStatus.Active });
         db.MailFolders.Add(new MailFolder { Id = folderId, MailAccountId = accountId, Name = "INBOX", FullName = "INBOX", FolderType = MailFolderType.Inbox, UidValidity = 7 });
-        db.Mails.Add(new Mail { Id = mailId, MailAccountId = accountId, MailFolderId = folderId, Uid = 5, UidValidity = 7, Subject = "test" });
+        db.Mails.Add(new Mail { Id = mailId, MailAccountId = accountId, MailFolderId = folderId, Uid = 5, UidValidity = 7, Subject = "test", MessageId = "seed@example.test" });
         await db.SaveChangesAsync();
         db.ChangeTracker.Clear();
         return (accountId, folderId, mailId);
     }
 
-    private static AppDbContext CreateDb() => new(new DbContextOptionsBuilder<AppDbContext>().UseInMemoryDatabase(Guid.NewGuid().ToString()).Options);
+    private static AppDbContext CreateDb(string? name = null) => new(new DbContextOptionsBuilder<AppDbContext>().UseInMemoryDatabase(name ?? Guid.NewGuid().ToString()).Options);
 
     private sealed class RecordingRemoteFolder(uint uidValidity) : FakeRemoteMailFolder(uidValidity, new())
     {

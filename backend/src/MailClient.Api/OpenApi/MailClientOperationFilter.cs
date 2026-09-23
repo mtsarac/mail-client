@@ -16,11 +16,11 @@ public sealed class MailClientOperationFilter : IOperationFilter
         ["folderId"] = "Folder id from GET /api/folders.",
         ["conversationId"] = "Conversation id from GET /api/conversations.",
         ["q"] = "Free-text query, e.g. 'invoice'.",
-        ["search"] = "Free-text filter on subject/sender.",
-        ["from"] = "Sender address or name contains this text.",
-        ["to"] = "Recipient address or name contains this text.",
-        ["fromDate"] = "Only mail sent on or after this UTC date-time.",
-        ["toDate"] = "Only mail sent on or before this UTC date-time.",
+        ["search"] = "Free-text search, same as `q` on GET /api/search (subject, body, participants, attachment names).",
+        ["from"] = "Sender address or name contains this text (case-insensitive).",
+        ["to"] = "A To/Cc/Bcc recipient address or name contains this text (case-insensitive).",
+        ["fromDate"] = "Only mail received at or after this date-time (UTC when no offset is given).",
+        ["toDate"] = "Only mail received before this date-time, exclusive (UTC when no offset is given).",
         ["isRead"] = "true = read only, false = unread only, omitted = both.",
         ["flagged"] = "true = starred only.",
         ["hasAttachment"] = "true = only mail with attachments.",
@@ -87,8 +87,8 @@ public sealed class MailClientOperationFilter : IOperationFilter
                 parameter.Description = path.Contains("/folders/") ? "Folder id." : path.Contains("/devices/") ? "Device id." : path.Contains("/conversations/") ? "Conversation id." : "Mail id.";
             if (parameter.Name == "action" && parameter.Schema is OpenApiSchema schema)
             {
-                parameter.Description = "Bulk operation: read, unread, archive, trash or move (move requires folderId in the body).";
-                schema.Enum = ["read", "unread", "archive", "trash", "move"];
+                parameter.Description = "Bulk operation (move requires folderId in the body).";
+                schema.Enum = ["read", "unread", "star", "unstar", "archive", "trash", "restore", "spam", "not-spam", "move"];
             }
             if (parameter.Name == "provider" && parameter.Schema is OpenApiSchema providerSchema)
                 providerSchema.Enum = ["google", "microsoft"];
@@ -100,14 +100,17 @@ public sealed class MailClientOperationFilter : IOperationFilter
         if (endpointName is not ("SendMail" or "SendDraft"))
             return;
         operation.Parameters ??= [];
-        if (operation.Parameters.Any(parameter => string.Equals(parameter.Name, "Idempotency-Key", StringComparison.OrdinalIgnoreCase)))
-            return;
+        // SendMail binds the header itself (so it is already listed as optional); replace it with the documented,
+        // required form. The services reject a missing key with idempotency_key_required.
+        var existing = operation.Parameters.FirstOrDefault(parameter => string.Equals(parameter.Name, "Idempotency-Key", StringComparison.OrdinalIgnoreCase));
+        if (existing is not null)
+            operation.Parameters.Remove(existing);
         operation.Parameters.Add(new OpenApiParameter
         {
             Name = "Idempotency-Key",
             In = ParameterLocation.Header,
             Required = true,
-            Description = "Client-generated unique key (e.g. a GUID, max 128 chars). Retrying with the same key never sends twice.",
+            Description = "Client-generated unique key (e.g. a GUID, max 200 chars). Retrying with the same key never sends twice.",
             Schema = new OpenApiSchema { Type = JsonSchemaType.String },
             Example = JsonValue.Create("2f6c1d1e-0a4b-4c1e-9c55-6f0b3e2a7d10")
         });

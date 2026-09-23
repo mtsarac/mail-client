@@ -107,18 +107,33 @@ Grafana then reads metrics from Prometheus and traces from Tempo. Startup does n
 
 One application meter, `MailClient`. Instruments use dot-separated OpenTelemetry names; the Prometheus exporter converts them (for example `mailclient.sync.completed` → `mailclient_sync_completed_total`). Durations are histograms in seconds.
 
-| Area | Instruments | Dimensions |
+| Instrument | Kind | Tags |
 |---|---|---|
-| Sync scheduling | `mailclient.sync.scheduled`, `mailclient.sync.queue.rejected`, `mailclient.sync.queue.pending` (gauge) | `origin`, `reason` (`queue_full`, `shed`) |
-| Sync execution | `mailclient.sync.completed`, `mailclient.sync.failures`, `mailclient.sync.duration`, `mailclient.sync.active.accounts`, `mailclient.sync.active.folders`, `mailclient.sync.connection_budget.wait` | `origin`, `folder_type`, `result`, `failure_category` |
-| Sync recovery | `mailclient.sync.retries`, `mailclient.sync.retries.exhausted`, `mailclient.sync.recoveries` | `origin`, `folder_type`, `failure_category` |
-| Distributed locks | `mailclient.lock.acquisitions` | `purpose` (`account_sync`, `oauth_refresh`), `result` (`acquired`, `contended`, `failed`) |
-| OAuth | `mailclient.oauth.authorization.started`, `mailclient.oauth.authorization.completed`, `mailclient.oauth.token.refresh`, `mailclient.oauth.token.refresh.duration`, `mailclient.oauth.reauthentication.required` | `provider`, `result` |
-| Send | `mailclient.mail.send`, `mailclient.mail.send.duration`, `mailclient.mail.sent_copy.failures` | `provider`, `result` (`success`, `failure`, `delivery_unknown`, `cancelled`) |
-| Search | `mailclient.mail.search`, `mailclient.mail.search.duration`, `mailclient.mail.search.result_count` | `has_text_query`, `result` |
-| Push | `mailclient.push.notifications`, `mailclient.push.failures`, `mailclient.push.invalid_tokens`, `mailclient.push.duration` | `event_type`, `result` |
-| Discovery / connections | `mailclient.discovery`, `mailclient.discovery.duration`, `mailclient.mail.connection.failures` | `result`, `discovery_source`, `provider`, `protocol` (`imap`, `smtp`), `failure_category` |
-| Runtime settings | `mailclient.runtime_settings.load_failures` | none |
+| `mailclient.sync.scheduled` | counter | `origin` |
+| `mailclient.sync.queue.rejected` | counter | `origin`, `reason` (`queue_full`, `shed`) |
+| `mailclient.sync.queue.pending` | gauge | none |
+| `mailclient.sync.completed` | counter | `origin`, `folder_type` |
+| `mailclient.sync.failures` | counter | `origin`, `folder_type`, `failure_category` |
+| `mailclient.sync.duration` | histogram (s) | `origin`, `folder_type`, `result` (`success`, `failure`, `cancelled`) |
+| `mailclient.sync.active.accounts`, `mailclient.sync.active.folders` | up/down counter | none |
+| `mailclient.sync.connection_budget.wait` | histogram (s) | none |
+| `mailclient.sync.retries` | counter | `origin`, `failure_category` (always `transient`) |
+| `mailclient.sync.retries.exhausted` | counter | `origin` |
+| `mailclient.sync.recoveries` | counter | `origin`, `folder_type` |
+| `mailclient.lock.acquisitions` | counter | `purpose` (`account_sync`, `oauth_refresh`), `result` (`acquired`, `contended`, `failed`) |
+| `mailclient.oauth.authorization.started`, `mailclient.oauth.reauthentication.required` | counter | `provider` |
+| `mailclient.oauth.authorization.completed` | counter | `provider`, `result` (`success`, `failure`) |
+| `mailclient.oauth.token.refresh`, `mailclient.oauth.token.refresh.duration` | counter / histogram (s) | `provider`, `result` (`success`, `failure`, `reauthentication_required`) |
+| `mailclient.mail.send`, `mailclient.mail.send.duration` | counter / histogram (s) | `provider`, `result` (`success`, `failure`, `delivery_unknown`, `cancelled`) |
+| `mailclient.mail.sent_copy.failures` | counter | `provider` |
+| `mailclient.mail.search`, `mailclient.mail.search.duration` | counter / histogram (s) | `has_text_query`, `result` (`success`, `failure`, `cancelled`) |
+| `mailclient.mail.search.result_count` | histogram | `has_text_query` |
+| `mailclient.push.notifications` | counter | `event_type`, `result` (`success`, `failure`) |
+| `mailclient.push.failures`, `mailclient.push.invalid_tokens`, `mailclient.push.duration` | counter / counter / histogram (s) | `event_type` |
+| `mailclient.discovery` | counter | `result`; `discovery_source` and `provider` when known |
+| `mailclient.discovery.duration` | histogram (s) | `result` |
+| `mailclient.mail.connection.failures` | counter | `protocol` (`imap`, `smtp`), `failure_category` |
+| `mailclient.runtime_settings.load_failures` | counter | none |
 
 Send failures are `mailclient.mail.send{result="failure"}`; sync failure categories come from the existing sync failure classifier, never from exception text.
 
@@ -138,11 +153,14 @@ Adding a new instrument or tag must go through `MailClientMetrics` / `MailClient
 
 - HTTP server spans come from ASP.NET Core instrumentation. `/health*` and `/metrics` are not traced. `url.path`, `url.query` and `url.full` are removed (paths contain mail/folder GUIDs, queries contain search text); `http.route` keeps the bounded template. Exceptions are not recorded as span events, and request/response bodies are never traced.
 - Application spans from ActivitySource `MailClient`: `mailclient.sync.account`, `mailclient.sync.folder`, `mailclient.mail.send`, `mailclient.mail.search`, `mailclient.oauth.refresh`, `mailclient.discovery`.
-- Scheduled background sync (periodic, initial, reconciliation, retry) starts its own root `mailclient.sync.account` trace, with one `mailclient.sync.folder` child per folder. There are no per-message spans. Failed spans get `Error` status and `error.type` (exception type name only).
+- Scheduled background sync (periodic, initial, reconciliation, retry) starts its own root `mailclient.sync.account` trace, with one `mailclient.sync.folder` child per folder. There are no per-message spans. Failed spans get `Error` status and `error.type` set to the exception's fully qualified type name (`Exception.GetType().FullName`).
 
 ## Logs
 
 - `logs/app-*.json` (application) and `logs/http-*.json` (redacted HTTP bodies) roll daily and on size, keeping the configured number of files. No Elasticsearch or Loki dependency is needed.
+- `logs/http-*.json` holds only the HTTP body log events (marked with the `HttpBodyLog` property). Everything else, including application errors and warnings written while a request is running, goes to `logs/app-*.json`.
+- Logged bodies are redacted: secret keys (passwords, tokens, API keys, …) become `[REDACTED]`, as do `code`/`state` in an OAuth authorization response; mail content (`bodyHtml`, `bodyText`, `html`, `snippet`) is reduced to its length.
+- Expected API failures (stable 4xx codes) are not logged as errors. Server (5xx) failures are logged once by the exception handler (`Request failed with {Code} for {Method} {Path}.`).
 - Every event written inside an Activity includes `TraceId` and `SpanId`, so background sync logs correlate with traces. HTTP requests keep `CorrelationId` (the `X-Correlation-ID` header), and authenticated requests keep `MailAccountId`.
 - Scheduler logs describe failures by failure category, origin, folder type and attempt, without account or folder GUIDs.
 - Unreadable or invalid persisted runtime settings are logged as errors, increment `mailclient.runtime_settings.load_failures`, and fail the operation; they are never silently replaced with defaults.

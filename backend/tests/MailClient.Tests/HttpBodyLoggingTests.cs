@@ -52,8 +52,18 @@ public sealed class HttpBodyLoggingTests : IDisposable
     private LogEvent SingleEvent()
     {
         var evt = Assert.Single(_events);
-        Assert.True(evt.Properties.ContainsKey("RequestPath"));
+        Assert.True(HttpBodyLoggingMiddleware.IsHttpBodyEvent(evt));
         return evt;
+    }
+
+    [Fact]
+    public void ApplicationEventInsideRequestScope_IsNotHttpBodyEvent()
+    {
+        var logger = new LoggerConfiguration().Enrich.FromLogContext().WriteTo.Sink(new CapturingSink(_events)).CreateLogger();
+        using (Serilog.Context.LogContext.PushProperty("RequestPath", "/api/mails"))
+            logger.Error("Mail operation failed.");
+
+        Assert.False(HttpBodyLoggingMiddleware.IsHttpBodyEvent(Assert.Single(_events)));
     }
 
     [Fact]
@@ -114,6 +124,36 @@ public sealed class HttpBodyLoggingTests : IDisposable
         Assert.DoesNotContain("deep-secret", rendered);
         Assert.DoesNotContain("resp-secret", rendered);
         Assert.Contains("[REDACTED]", rendered);
+    }
+
+    [Fact]
+    public async Task MailContentInResponse_LoggedAsLengthOnly()
+    {
+        var middleware = Create(async context =>
+        {
+            context.Response.ContentType = "application/json";
+            await context.Response.WriteAsync(
+                "{\"subject\":\"visible\",\"body\":{\"html\":\"<p>secret-html</p>\"},\"items\":[{\"snippet\":\"secret-snippet\"}]}");
+        });
+        var context = JsonContext("GET", "/api/mails/11111111-1111-1111-1111-111111111111", "");
+
+        await middleware.InvokeAsync(context);
+
+        var rendered = Render(SingleEvent());
+        Assert.DoesNotContain("secret-html", rendered);
+        Assert.DoesNotContain("secret-snippet", rendered);
+        Assert.Contains("[length:18 chars]", rendered);
+    }
+
+    [Fact]
+    public void Redact_OAuthAuthorizationResponse_RemovesCodeAndState_ButKeepsErrorCodes()
+    {
+        var oauth = LogRedactor.Redact("{\"state\":\"protected-state\",\"code\":\"auth-code-secret\"}");
+        var problem = LogRedactor.Redact("{\"status\":409,\"code\":\"mail_account_already_exists\"}");
+
+        Assert.DoesNotContain("auth-code-secret", oauth);
+        Assert.DoesNotContain("protected-state", oauth);
+        Assert.Contains("mail_account_already_exists", problem);
     }
 
     [Fact]

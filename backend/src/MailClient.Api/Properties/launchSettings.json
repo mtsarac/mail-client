@@ -28,7 +28,6 @@
       "applicationUrl": "http://0.0.0.0:5071",
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Production",
-        "Jwt__Key": "9747f4cc5a3a1f0cd193d65533d0a1a32b75a27a341c30c8aeb8446d535e4f82",
         "DataProtection__KeyPath": "./data/protection-keys",
         "DataProtection__CertificatePath": "./data/lan-dataprotection.pfx",
         "Firebase__Enabled": "true",

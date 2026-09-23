@@ -1,6 +1,8 @@
 using System.Net;
 using MailClient.Application.Accounts;
 using MailClient.Application.Mail;
+using MailClient.Application.Runtime;
+using MailClient.Infrastructure.Runtime;
 using MailClient.Application.Sync;
 using MailClient.Domain.Entities;
 using MailClient.Domain.Enums;
@@ -8,6 +10,7 @@ using MailClient.Infrastructure.Email;
 using MailClient.Infrastructure.Mail;
 using MailClient.Infrastructure.Network;
 using MailClient.Infrastructure.Persistence;
+using MailClient.Infrastructure.Security;
 using Microsoft.EntityFrameworkCore;
 using MailKit;
 using MimeKit;
@@ -197,18 +200,20 @@ public sealed class FakeFileStorage : IFileStorage
     public Task<bool> IsAvailableAsync(CancellationToken cancellationToken) => Task.FromResult(Available);
 }
 
-internal sealed class FakeSyncScheduler : ISyncScheduler
+internal sealed class FakeSyncScheduler(Action? onSchedule = null) : ISyncScheduler
 {
     public List<(Guid AccountId, Guid? FolderId, SyncOrigin Origin)> Scheduled { get; } = [];
     public ValueTask ScheduleAccountAsync(Guid accountId, SyncOrigin origin, CancellationToken cancellationToken)
     {
         Scheduled.Add((accountId, null, origin));
+        onSchedule?.Invoke();
         return ValueTask.CompletedTask;
     }
 
     public ValueTask ScheduleFolderAsync(Guid accountId, Guid folderId, SyncOrigin origin, CancellationToken cancellationToken)
     {
         Scheduled.Add((accountId, folderId, origin));
+        onSchedule?.Invoke();
         return ValueTask.CompletedTask;
     }
 }
@@ -287,4 +292,93 @@ internal static class SyncTestSeed
         message.Body = new TextPart("plain") { Text = "hello" };
         return message;
     }
+}
+
+internal sealed class FakeMailTransport : MailClient.Infrastructure.Mail.IMailTransport
+{
+    public int SentCount { get; private set; }
+    public int AppendCount { get; private set; }
+    public Exception? SendFailure { get; init; }
+    public MimeMessage? Message { get; private set; }
+
+    public Task SendAsync(MailAccount account, MimeMessage message, CancellationToken cancellationToken)
+    {
+        if (SendFailure is not null) throw SendFailure;
+        Message = message;
+        SentCount++;
+        return Task.CompletedTask;
+    }
+
+    public Task AppendToSentAsync(MailAccount account, string sentFullName, MimeMessage message, CancellationToken cancellationToken)
+    {
+        AppendCount++;
+        return Task.CompletedTask;
+    }
+}
+
+internal sealed class DefaultRuntimePolicyProvider : IRuntimePolicyProvider
+{
+    public Task<RuntimeProviderPolicy> GetAsync(CancellationToken cancellationToken) =>
+        Task.FromResult(new RuntimeProviderPolicy(new RuntimeSettings(), new ProviderCapabilities(false, false)));
+}
+
+internal sealed class DefaultEmailAllowlistService : IEmailAllowlistService
+{
+    public Task<bool> IsAllowedAsync(string email, CancellationToken cancellationToken) => Task.FromResult(true);
+    public Task<bool> IsEnforcedAsync(CancellationToken cancellationToken) => Task.FromResult(false);
+}
+
+/// <summary>Runtime settings for services under test; defaults unless a document is supplied.</summary>
+internal sealed class FixedRuntimeSettingsStore(RuntimeSettings? settings = null) : IRuntimeSettingsStore
+{
+    public Task<RuntimeSettingsSnapshot> GetAsync(CancellationToken cancellationToken) =>
+        Task.FromResult(new RuntimeSettingsSnapshot(settings ?? new RuntimeSettings(), 1, DateTime.UtcNow));
+
+    public Task<RuntimeSettingsSnapshot> ReplaceAsync(int expectedVersion, RuntimeSettings replacement, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public static RuntimeOperationSettings Operation(RuntimeSettings? settings = null) => new(new FixedRuntimeSettingsStore(settings));
+}
+
+internal static class TestServices
+{
+    public static MailCredentialResolver Credentials(
+        AppDbContext db,
+        ICredentialProtector? protector = null,
+        IEnumerable<MailClient.Infrastructure.OAuth.IOAuthProvider>? oauthProviders = null,
+        MailClient.Infrastructure.Sync.ISyncLockProvider? locks = null,
+        IPushNotificationService? push = null,
+        MailClient.Application.Observability.MailClientMetrics? metrics = null) =>
+        new(db,
+            protector ?? new PassthroughProtector(),
+            oauthProviders ?? [],
+            new DefaultRuntimePolicyProvider(),
+            locks ?? new MailClient.Infrastructure.Sync.InMemorySyncLockProvider(),
+            push ?? new FakePushNotificationService(),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<MailCredentialResolver>.Instance,
+            metrics);
+
+    public static MailClient.Infrastructure.Sync.InlineFolderSync InlineSync(ISyncExecutor? executor = null) =>
+        new(new MailClient.Infrastructure.Sync.InMemorySyncLockProvider(), executor ?? new NoOpSyncExecutor(), new FakeSyncScheduler());
+
+    public static RuntimeSettings SyncSettings(
+        int maxMessagesPerRun = 100,
+        int flagSyncIntervalSeconds = 120,
+        long maxAttachmentBytes = 25 * 1024 * 1024,
+        long maxMessageAttachmentBytes = 50 * 1024 * 1024,
+        long maxMessageBytes = 100 * 1024 * 1024) => new()
+        {
+            Sync = new RuntimeSyncSettings { MaxMessagesPerRun = maxMessagesPerRun, FlagSyncIntervalSeconds = flagSyncIntervalSeconds },
+            Limits = new RuntimeLimitSettings
+            {
+                MaxAttachmentBytes = maxAttachmentBytes,
+                MaxMessageAttachmentBytes = maxMessageAttachmentBytes,
+                MaxMessageBytes = maxMessageBytes
+            }
+        };
+}
+
+internal sealed class NoOpSyncExecutor : ISyncExecutor
+{
+    public Task SyncFolderAsync(Guid accountId, Guid folderId, CancellationToken cancellationToken) => Task.CompletedTask;
 }

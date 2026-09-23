@@ -68,4 +68,18 @@ public static class ConversationEngine
             .Where(reference => reference.Length > 0)
             .Distinct()
             .ToList();
+
+    /// <summary>
+    /// Threading headers for a reply to a message: In-Reply-To is the source Message-ID, References is the source
+    /// References chain followed by the source Message-ID (RFC 5322 §3.6.4).
+    /// </summary>
+    public static (string InReplyTo, string References) ReplyHeaders(string? sourceMessageId, string? sourceReferences)
+    {
+        var messageId = NormalizeMessageId(sourceMessageId);
+        var references = ParseReferences(sourceReferences)
+            .Append(messageId)
+            .Where(reference => reference.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+        return (messageId, string.Join(' ', references));
+    }
 }

@@ -56,13 +56,13 @@ builder.Host.UseSerilog((context, services, configuration) => configuration
     .Enrich.FromLogContext()
     .WriteTo.Console()
     .WriteTo.Logger(appLog => appLog
-        .Filter.ByExcluding(log => log.Properties.ContainsKey("RequestPath"))
+        .Filter.ByExcluding(HttpBodyLoggingMiddleware.IsHttpBodyEvent)
         .WriteTo.File(new JsonFormatter(), "logs/app-.json", rollingInterval: RollingInterval.Day,
             retainedFileCountLimit: logFiles.App.RetainedFileCountLimit,
             fileSizeLimitBytes: logFiles.App.FileSizeLimitBytes,
             rollOnFileSizeLimit: true))
     .WriteTo.Logger(httpLog => httpLog
-        .Filter.ByIncludingOnly(log => log.Properties.ContainsKey("RequestPath"))
+        .Filter.ByIncludingOnly(HttpBodyLoggingMiddleware.IsHttpBodyEvent)
         .WriteTo.File(new JsonFormatter(), "logs/http-.json", rollingInterval: RollingInterval.Day,
             retainedFileCountLimit: logFiles.Http.RetainedFileCountLimit,
             fileSizeLimitBytes: logFiles.Http.FileSizeLimitBytes,
@@ -72,6 +72,9 @@ builder.Services.AddMailClientHealthChecks();
 builder.Services.Configure<HttpLoggingOptions>(builder.Configuration.GetSection("HttpLogging"));
 builder.Services.AddSingleton<Serilog.ILogger>(_ => Serilog.Log.Logger);
 builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
+// Binding failures (malformed JSON or multipart bodies) go through the exception handler in every environment so
+// clients always receive the same problem+json contract with a stable `code` (invalid_request).
+builder.Services.Configure<RouteHandlerOptions>(options => options.ThrowOnBadRequest = true);
 builder.Services.AddProblemDetails(options => options.CustomizeProblemDetails = context =>
 {
     var correlation = context.HttpContext.RequestServices.GetService<CorrelationContext>();
@@ -144,9 +147,9 @@ builder.Services.AddScoped<IMailTransport, MailKitMailTransport>();
 builder.Services.AddScoped<IMailFolderClient, MailFolderClient>();
 builder.Services.AddScoped<MailFolderSyncService>();
 builder.Services.AddScoped<ISyncExecutor>(sp => sp.GetRequiredService<MailFolderSyncService>());
+builder.Services.AddScoped<InlineFolderSync>();
 builder.Services.AddScoped<MailReadService>();
 builder.Services.AddScoped<MailSearchService>();
-builder.Services.AddScoped<MailQueryService>();
 
 builder.Services.AddScoped<SendOperationStore>();
 builder.Services.AddScoped<MailSendService>();
@@ -206,7 +209,7 @@ else
     builder.Services.AddSingleton(new LocalAttachmentStorage(Path.Combine(builder.Environment.ContentRootPath, "data")));
     builder.Services.AddSingleton<IFileStorage>(sp => sp.GetRequiredService<LocalAttachmentStorage>());
 }
-var jwt = builder.Configuration.GetSection("Jwt").Get<JwtOptions>() ?? new("MailClient", "MailClient", "development-only-key-change-before-production-123456789", 15);
+var jwt = builder.Configuration.GetSection("Jwt").Get<JwtOptions>() ?? new("MailClient", "MailClient", JwtOptions.DevelopmentKey);
 if (jwt.Key.Length < 32) throw new InvalidOperationException("Jwt:Key must contain at least 32 characters.");
 if (!builder.Environment.IsDevelopment() && !builder.Environment.IsEnvironment("Test") && jwt.Key == JwtOptions.DevelopmentKey)
     throw new InvalidOperationException("Jwt:Key must be provided via configuration in production; the development key is not allowed.");
@@ -297,19 +300,25 @@ if (trustedProxy)
 var app = builder.Build();
 app.UseMiddleware<CorrelationMiddleware>();
 app.UseMiddleware<HttpBodyLoggingMiddleware>();
-app.UseExceptionHandler(error => error.Run(async context =>
+app.UseExceptionHandler(new ExceptionHandlerOptions
 {
-    var exception = context.Features.Get<Microsoft.AspNetCore.Diagnostics.IExceptionHandlerFeature>()?.Error;
-    var (code, status) = ApiFailureMapper.MapFailure(exception);
-    if (status >= 500)
-        app.Logger.LogError(exception, "Unhandled request failure {Code} for {Method} {Path}.", code, context.Request.Method, context.Request.Path);
-    var correlationId = context.RequestServices.GetRequiredService<CorrelationContext>().CorrelationId;
-    var extensions = new Dictionary<string, object?> { ["code"] = code, ["correlationId"] = correlationId };
-    if (app.Environment.IsDevelopment() && exception is not null)
-        extensions["detail"] = $"{exception.GetType().Name}: {exception.Message}";
-    context.Response.StatusCode = status;
-    await Results.Problem(title: code.Replace('_', ' '), statusCode: status, extensions: extensions).ExecuteAsync(context);
-}));
+    // Expected failures (stable 4xx codes) are part of the API contract, not errors; the handler below logs
+    // each server failure exactly once, so the middleware's own "unhandled exception" log is suppressed.
+    SuppressDiagnosticsCallback = _ => true,
+    ExceptionHandler = async context =>
+    {
+        var exception = context.Features.Get<Microsoft.AspNetCore.Diagnostics.IExceptionHandlerFeature>()?.Error;
+        var (code, status) = ApiFailureMapper.MapFailure(exception);
+        if (status >= 500)
+            app.Logger.LogError(exception, "Request failed with {Code} for {Method} {Path}.", code, context.Request.Method, context.Request.Path);
+        var correlationId = context.RequestServices.GetRequiredService<CorrelationContext>().CorrelationId;
+        var extensions = new Dictionary<string, object?> { ["code"] = code, ["correlationId"] = correlationId };
+        if (app.Environment.IsDevelopment() && exception is not null)
+            extensions["detail"] = $"{exception.GetType().Name}: {exception.Message}";
+        context.Response.StatusCode = status;
+        await Results.Problem(title: code.Replace('_', ' '), statusCode: status, extensions: extensions).ExecuteAsync(context);
+    }
+});
 if (trustedProxy)
     app.UseForwardedHeaders();
 if (!app.Environment.IsDevelopment() && !app.Environment.IsEnvironment("Test"))

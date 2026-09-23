@@ -25,6 +25,8 @@ public sealed class SyncCoordinator : BackgroundService, ISyncScheduler
     private readonly ILogger<SyncCoordinator> _logger;
     private readonly MailClientMetrics? _metrics;
     private readonly Channel<SyncScheduleSignal> _signals = Channel.CreateUnbounded<SyncScheduleSignal>();
+    private readonly object _runningGate = new();
+    private readonly Dictionary<Guid, Task> _runningAccounts = [];
 
     public SyncCoordinator(
         IServiceScopeFactory scopes,
@@ -127,18 +129,27 @@ public sealed class SyncCoordinator : BackgroundService, ISyncScheduler
     {
         await RecoverPendingReconciliationAsync(stoppingToken);
 
-        while (!stoppingToken.IsCancellationRequested)
+        try
         {
-            RuntimeSettings settings = await CurrentSettingsAsync(stoppingToken);
-            if (!settings.Sync.Enabled)
+            while (!stoppingToken.IsCancellationRequested)
             {
-                await WaitForSignalAsync(TimeSpan.FromSeconds(settings.Sync.PollIntervalSeconds), stoppingToken);
-                continue;
-            }
+                RuntimeSettings settings = await CurrentSettingsAsync(stoppingToken);
+                if (!settings.Sync.Enabled)
+                {
+                    await WaitForSignalAsync(TimeSpan.FromSeconds(settings.Sync.PollIntervalSeconds), stoppingToken);
+                    continue;
+                }
 
-            await DispatchReadyWorkAsync(settings, stoppingToken);
-            var delay = TimeSpan.FromMilliseconds(250);
-            await WaitForSignalAsync(delay, stoppingToken);
+                StartReadyWork(settings, stoppingToken);
+                await WaitForSignalAsync(TimeSpan.FromMilliseconds(250), stoppingToken);
+            }
+        }
+        finally
+        {
+            Task[] running;
+            lock (_runningGate)
+                running = [.. _runningAccounts.Values];
+            await Task.WhenAll(running).ContinueWith(static _ => { }, TaskScheduler.Default);
         }
     }
 
@@ -147,10 +158,11 @@ public sealed class SyncCoordinator : BackgroundService, ISyncScheduler
         var settings = await CurrentSettingsAsync(cancellationToken);
         if (!settings.Sync.Enabled)
             return;
-        await DispatchReadyWorkAsync(settings, cancellationToken);
+        await Task.WhenAll(StartReadyWork(settings, cancellationToken));
     }
 
-    // ponytail: the loop ticks every 250 ms; re-reading settings from the DB each tick is wasteful. Settings edits apply within SettingsCacheTtl.
+    // The loop ticks every 250 ms; re-reading settings from the DB each tick is wasteful. Edits apply within
+    // SettingsCacheTtl, or immediately through NotifySettingsChanged.
     private static readonly TimeSpan SettingsCacheTtl = TimeSpan.FromSeconds(5);
     private RuntimeSettings? _settings;
     private long _settingsExpiresAt;
@@ -163,27 +175,40 @@ public sealed class SyncCoordinator : BackgroundService, ISyncScheduler
         await using var scope = _scopes.CreateAsyncScope();
         var operationSettings = scope.ServiceProvider.GetRequiredService<RuntimeOperationSettings>();
         var settings = (await operationSettings.GetAsync(cancellationToken)).Settings;
+        _queue.UpdateCapacity(settings.Sync.QueueCapacity);
         _settings = settings;
         Interlocked.Exchange(ref _settingsExpiresAt, Environment.TickCount64 + (long)SettingsCacheTtl.TotalMilliseconds);
         return settings;
     }
 
-    private async Task DispatchReadyWorkAsync(RuntimeSettings settings, CancellationToken cancellationToken)
+    /// <summary>
+    /// Starts queued work for accounts that are not already syncing, up to MaxConcurrentAccounts in flight, without
+    /// waiting for it: a slow account must not delay other accounts' (especially user-requested) syncs. Work for a
+    /// busy account stays queued until that account's run finishes.
+    /// </summary>
+    private List<Task> StartReadyWork(RuntimeSettings settings, CancellationToken cancellationToken)
     {
         var groups = new Dictionary<Guid, List<ScheduledSyncRequest>>();
         var deferred = new List<ScheduledSyncRequest>();
+        int running;
+        lock (_runningGate)
+            running = _runningAccounts.Count;
         while (_queue.TryDequeue(out var next))
         {
-            if (groups.Count >= settings.Sync.MaxConcurrentAccounts && !groups.ContainsKey(next.Request.AccountId))
+            var accountId = next.Request.AccountId;
+            bool busy;
+            lock (_runningGate)
+                busy = _runningAccounts.ContainsKey(accountId);
+            if (busy || (!groups.ContainsKey(accountId) && running + groups.Count >= settings.Sync.MaxConcurrentAccounts))
             {
                 deferred.Add(next);
                 continue;
             }
 
-            if (!groups.TryGetValue(next.Request.AccountId, out var group))
+            if (!groups.TryGetValue(accountId, out var group))
             {
                 group = [];
-                groups[next.Request.AccountId] = group;
+                groups[accountId] = group;
             }
 
             group.Add(next);
@@ -192,8 +217,24 @@ public sealed class SyncCoordinator : BackgroundService, ISyncScheduler
         foreach (var item in deferred)
             Enqueue(item);
 
-        var tasks = groups.Values.Select(group => RunAccountGroupAsync(group, settings, cancellationToken));
-        await Task.WhenAll(tasks);
+        var started = new List<Task>(groups.Count);
+        foreach (var (accountId, group) in groups)
+        {
+            var task = RunAccountGroupAsync(group, settings, cancellationToken);
+            lock (_runningGate)
+                _runningAccounts[accountId] = task;
+            task.ContinueWith(completed =>
+            {
+                lock (_runningGate)
+                    _runningAccounts.Remove(accountId);
+                if (completed.IsFaulted)
+                    _logger.LogError(completed.Exception, "Account sync run failed unexpectedly.");
+                _signals.Writer.TryWrite(new SyncScheduleSignal());
+            }, TaskScheduler.Default);
+            started.Add(task);
+        }
+
+        return started;
     }
 
     private async Task RunAccountGroupAsync(List<ScheduledSyncRequest> group, RuntimeSettings settings, CancellationToken cancellationToken)

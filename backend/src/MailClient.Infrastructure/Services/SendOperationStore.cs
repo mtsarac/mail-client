@@ -17,7 +17,8 @@ public sealed class SendOperationStore(AppDbContext db, ILogger<SendOperationSto
     public abstract record Claim;
     public sealed record Proceed(SendOperation Operation) : Claim;
     public sealed record Replay(SendOperation Operation) : Claim;
-    public sealed record Denied(string Reason) : Claim;
+    /// <param name="Code">Stable API error code: idempotency_conflict, send_in_progress or delivery_unknown.</param>
+    public sealed record Denied(string Code) : Claim;
 
     public async Task<Claim> ClaimAsync(
         Guid accountId,
@@ -37,8 +38,16 @@ public sealed class SendOperationStore(AppDbContext db, ILogger<SendOperationSto
             }
         }
 
-        return new Denied("Send operation is already in progress.");
+        return new Denied("send_in_progress");
     }
+
+    /// <summary>The successfully delivered operation for this key, if any.</summary>
+    public Task<SendOperation?> FindCompletedAsync(Guid accountId, string key, CancellationToken cancellationToken) =>
+        db.SendOperations.AsNoTracking().SingleOrDefaultAsync(
+            operation => operation.MailAccountId == accountId
+                && operation.IdempotencyKey == key
+                && (operation.Status == SendOperationStatus.Sent || operation.Status == SendOperationStatus.SentWithCopy),
+            cancellationToken);
 
     public Task<bool> TryCompleteAsync(
         Guid operationId,
@@ -106,7 +115,7 @@ public sealed class SendOperationStore(AppDbContext db, ILogger<SendOperationSto
         }
 
         if (!string.Equals(existing.Fingerprint, fingerprint, StringComparison.Ordinal))
-            return new Denied("Idempotency key was already used for a different request.");
+            return new Denied("idempotency_conflict");
 
         switch (existing.Status)
         {
@@ -119,11 +128,10 @@ public sealed class SendOperationStore(AppDbContext db, ILogger<SendOperationSto
                 await db.SaveChangesAsync(cancellationToken);
                 return new Proceed(existing);
             case SendOperationStatus.DeliveryUnknown:
-                return new Denied("Send operation delivery status is uncertain; the message may have been sent.");
+                return new Denied("delivery_unknown");
             default:
-                return existing.UpdatedAt > now - StaleAfter
-                    ? new Denied("Send operation is already in progress.")
-                    : new Denied("Send operation status is uncertain; the message may have been sent.");
+                // An attempt that stopped updating may have reached the server before its process died.
+                return new Denied(existing.UpdatedAt > now - StaleAfter ? "send_in_progress" : "delivery_unknown");
         }
     }
 

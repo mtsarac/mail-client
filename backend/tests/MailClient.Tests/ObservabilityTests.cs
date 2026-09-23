@@ -263,7 +263,7 @@ public sealed class ObservabilityTests
         using var capture = new MetricsCapture();
         await using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>().UseInMemoryDatabase(Guid.NewGuid().ToString("N")).Options);
         var accountId = Guid.NewGuid();
-        var service = new MailSearchService(db, new RuntimeOperationSettings(new DefaultRuntimeSettingsStore()), capture.Metrics);
+        var service = new MailSearchService(db, FixedRuntimeSettingsStore.Operation(), capture.Metrics);
 
         var response = await service.SearchAsync(
             accountId,
@@ -333,7 +333,6 @@ public sealed class ObservabilityTests
 
     private sealed class ActivityObservingExecutor(ConcurrentQueue<Activity?> observed) : ISyncExecutor
     {
-        public Task SyncAccountAsync(Guid accountId, CancellationToken cancellationToken) => Task.CompletedTask;
 
         public Task SyncFolderAsync(Guid accountId, Guid folderId, CancellationToken cancellationToken)
         {

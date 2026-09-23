@@ -26,6 +26,13 @@ public sealed class HttpBodyLoggingMiddleware(
     IOptions<HttpLoggingOptions> options,
     Serilog.ILogger logger)
 {
+    // Every log event written inside a request carries ASP.NET's RequestPath scope property, so the app/http
+    // file split keys on this dedicated marker instead.
+    private const string HttpBodyEventProperty = "HttpBodyLog";
+
+    public static bool IsHttpBodyEvent(Serilog.Events.LogEvent logEvent) =>
+        logEvent.Properties.ContainsKey(HttpBodyEventProperty);
+
     public async Task InvokeAsync(HttpContext context)
     {
         var config = options.Value;
@@ -111,6 +118,7 @@ public sealed class HttpBodyLoggingMiddleware(
         var method = Sanitize(context.Request.Method);
         var query = context.Request.QueryString.Value;
         var log = logger
+            .ForContext(HttpBodyEventProperty, true)
             .ForContext("RequestPath", path)
             .ForContext("Path", path)
             .ForContext("Method", method)
@@ -196,14 +204,20 @@ public sealed class HttpBodyLoggingMiddleware(
         return bytes.Length > maxBytes ? (bytes[..maxBytes], true) : (bytes, false);
     }
 
+    // Mail content is never logged; only its length is kept. Covers request fields (bodyHtml/bodyText) and
+    // response fields (MailDetailResponse.body.html, list item snippets).
+    private static readonly HashSet<string> MailContentKeys = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "bodyHtml", "bodyText", "html", "snippet"
+    };
+
     private static void MaskLongTextFields(JsonNode? node)
     {
         if (node is JsonObject obj)
         {
             foreach (var key in obj.Select(item => item.Key).ToArray())
             {
-                if ((key.Equals("bodyHtml", StringComparison.OrdinalIgnoreCase)
-                        || key.Equals("bodyText", StringComparison.OrdinalIgnoreCase))
+                if (MailContentKeys.Contains(key)
                     && obj[key] is JsonValue value
                     && value.TryGetValue<string>(out var text)
                     && text is not null)

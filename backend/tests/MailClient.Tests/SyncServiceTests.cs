@@ -1,3 +1,4 @@
+using MailClient.Application.Runtime;
 using MailClient.Application.Sync;
 using MailClient.Domain.Entities;
 using MailClient.Domain.Enums;
@@ -13,16 +14,8 @@ namespace MailClient.Tests;
 
 public sealed class SyncServiceTests
 {
-    private static MailSyncOptions Options(int maxMessages) => new()
-    {
-        Enabled = true,
-        PollIntervalSeconds = 30,
-        FlagSyncIntervalSeconds = 3600,
-        MaxMessagesPerRun = maxMessages,
-        MaxAttachmentBytes = 500,
-        MaxMessageAttachmentBytes = 800,
-        MaxMessageBytes = 100000
-    };
+    private static RuntimeSettings Options(int maxMessages) =>
+        TestServices.SyncSettings(maxMessages, flagSyncIntervalSeconds: 3600, maxAttachmentBytes: 500, maxMessageAttachmentBytes: 800, maxMessageBytes: 100000);
 
     [Fact]
     public async Task HugeBacklog_SearchIsBounded_FirstRunEndsAtCorrectCheckpoint()
@@ -69,6 +62,7 @@ public sealed class SyncServiceTests
         state.UidValidity = 6;
         state.LastUid = 500;
         state.NextUidScanStart = 999;
+        state.BackfillNextUid = 400;
         await db.SaveChangesAsync();
         db.ChangeTracker.Clear();
         var remote = new FakeRemoteMailFolder(7, new Dictionary<uint, Func<MimeKit.MimeMessage>>
@@ -83,6 +77,21 @@ public sealed class SyncServiceTests
         Assert.Equal(600u, updated.LastUid);
         Assert.Equal(601L, updated.NextUidScanStart);
         Assert.Single(await db.Mails.ToListAsync());
+        Assert.Equal(0, updated.BackfillNextUid);
+        Assert.Equal(0, remote.LastBackfillBelowUid);
+    }
+
+    [Fact]
+    public async Task ForwardSearch_WithoutServerUidNext_StillFindsNewMessages()
+    {
+        uint[] remoteUids = [5, 11, 12, 13];
+        var result = await Infrastructure.Email.MailKitRemoteMailFolder.SearchPagedAsync(10, 2, () => 0,
+            (low, high, _) => Task.FromResult<IList<MailKit.UniqueId>>(
+                [.. remoteUids.Where(uid => uid >= low && uid <= high).Select(uid => new MailKit.UniqueId(uid))]),
+            CancellationToken.None);
+
+        Assert.Equal([11u, 12u], result.Uids.Select(uid => uid.Id));
+        Assert.Equal(12u, result.ScannedUpTo);
     }
 
     [Fact]
@@ -136,47 +145,6 @@ public sealed class SyncServiceTests
 
         var notification = Assert.Single(push.Notifications);
         Assert.Equal(accountId, notification.MailAccountId);
-    }
-
-    [Fact]
-    public async Task TargetedFolderSelection_IncludesDisabledAvailableFolder()
-    {
-        await using var db = CreateDb();
-        var (accountId, folderId) = await SeedFolderAsync(db);
-        var folder = await db.MailFolders.SingleAsync(x => x.Id == folderId);
-        folder.IsSyncEnabled = false;
-        await db.SaveChangesAsync();
-
-        var folders = await CreateService(db, Options(100)).GetSyncableFolderAsync(accountId, folderId, CancellationToken.None);
-
-        Assert.Equal((folderId, "INBOX"), folders);
-    }
-
-    [Fact]
-    public async Task BackgroundFolderSelection_ExcludesDisabledFolder()
-    {
-        await using var db = CreateDb();
-        var (accountId, folderId) = await SeedFolderAsync(db);
-        var folder = await db.MailFolders.SingleAsync(x => x.Id == folderId);
-        folder.IsSyncEnabled = false;
-        await db.SaveChangesAsync();
-
-        var folders = await CreateService(db, Options(100)).GetSyncableFoldersAsync(accountId, CancellationToken.None);
-
-        Assert.Empty(folders);
-    }
-
-    [Fact]
-    public async Task SyncAll_MissingCredential_MarksReauthenticationWithoutThrowing()
-    {
-        await using var db = CreateDb();
-        var (accountId, _) = await SeedFolderAsync(db);
-        var service = CreateService(db, Options(100));
-
-        await service.SyncAllAsync(CancellationToken.None);
-
-        Assert.Equal(MailAccountStatus.NeedsReauthentication,
-            (await db.MailAccounts.SingleAsync(x => x.Id == accountId)).Status);
     }
 
     [Theory]
@@ -280,14 +248,57 @@ public sealed class SyncServiceTests
         Assert.NotNull(after.LastFlagSyncAt);
     }
 
-    private static MailFolderSyncService CreateService(AppDbContext db, MailSyncOptions options, FakePushNotificationService? push = null) =>
+    [Fact]
+    public async Task ConversationAssignmentFailure_KeepsImportedMailAndItsAttachments()
+    {
+        await using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString("N"))
+            .AddInterceptors(new FailConversationInsertInterceptor())
+            .Options);
+        var (accountId, folderId) = await SeedFolderAsync(db);
+        var remote = new FakeRemoteMailFolder(7, new() { [1] = () => MessageWithAttachment("with file"), [2] = () => SimpleMessage("next") });
+        var storage = new FakeFileStorage();
+        var service = CreateService(db, Options(100), storage: storage);
+
+        await service.SyncFolderCoreAsync(accountId, folderId, remote, CancellationToken.None);
+
+        Assert.Equal(2, await db.Mails.CountAsync());
+        var attachment = await db.Attachments.SingleAsync();
+        Assert.True(storage.Content.ContainsKey(attachment.StoragePath));
+        Assert.Empty(storage.Deleted);
+        Assert.Equal(2u, (await db.SyncStates.SingleAsync()).LastUid);
+    }
+
+    private static MimeKit.MimeMessage MessageWithAttachment(string subject)
+    {
+        var message = SimpleMessage(subject);
+        var body = new MimeKit.BodyBuilder { TextBody = "hello" };
+        body.Attachments.Add("note.txt", System.Text.Encoding.UTF8.GetBytes("file"));
+        message.Body = body.ToMessageBody();
+        return message;
+    }
+
+    private sealed class FailConversationInsertInterceptor : Microsoft.EntityFrameworkCore.Diagnostics.SaveChangesInterceptor
+    {
+        public override ValueTask<Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<int>> SavingChangesAsync(
+            Microsoft.EntityFrameworkCore.Diagnostics.DbContextEventData eventData,
+            Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<int> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (eventData.Context!.ChangeTracker.Entries<Conversation>().Any(entry => entry.State == EntityState.Added))
+                throw new DbUpdateException("conversation insert failed");
+            return ValueTask.FromResult(result);
+        }
+    }
+
+    private static MailFolderSyncService CreateService(AppDbContext db, RuntimeSettings options, FakePushNotificationService? push = null, FakeFileStorage? storage = null) =>
         new(db,
-            new MailCredentialResolver(db, new PassthroughProtector()),
+            TestServices.Credentials(db),
             new Infrastructure.Mail.MailConnectionHelper(
                 new OutboundHostValidator(new FakeDns(System.Net.IPAddress.Loopback)),
                 NullLogger<Infrastructure.Mail.MailConnectionHelper>.Instance),
-            new FakeFileStorage(),
-            options,
+            storage ?? new FakeFileStorage(),
+            FixedRuntimeSettingsStore.Operation(options),
             push ?? new FakePushNotificationService(),
             new MailClient.Infrastructure.Services.ConversationService(db), new MailReconciliationService(db), NullLogger<MailFolderSyncService>.Instance);
 

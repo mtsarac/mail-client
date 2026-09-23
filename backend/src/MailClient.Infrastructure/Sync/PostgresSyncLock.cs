@@ -169,15 +169,13 @@ public sealed class InMemorySyncLockProvider(MailClientMetrics? metrics = null) 
     {
         var gate = Locks.GetOrAdd((accountId, purpose), static _ => new SemaphoreSlim(1, 1));
         var acquisition = gate.Wait(0, cancellationToken)
-            ? SyncLockAcquisition.Acquired(new Handle(gate, accountId, purpose))
+            ? SyncLockAcquisition.Acquired(new Handle(gate))
             : SyncLockAcquisition.Contended;
         return Task.FromResult(SyncLockMetrics.Record(metrics, purpose, acquisition));
     }
 
-    private sealed class Handle(SemaphoreSlim gate, Guid accountId, SyncLockPurpose purpose) : ISyncLock
+    private sealed class Handle(SemaphoreSlim gate) : ISyncLock
     {
-        public Guid AccountId => accountId;
-        public SyncLockPurpose Purpose => purpose;
         public ValueTask DisposeAsync()
         {
             gate.Release();

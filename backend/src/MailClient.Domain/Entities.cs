@@ -29,6 +29,9 @@ public sealed class MailAccount
     public ICollection<MailSession> Sessions { get; set; } = [];
     public ICollection<MailFolder> Folders { get; set; } = [];
     public ICollection<Mail> Mails { get; set; } = [];
+
+    /// <summary>Canonical form stored in <see cref="NormalizedEmailAddress"/> and allowlist entries.</summary>
+    public static string NormalizeEmailAddress(string email) => email.Trim().ToUpperInvariant();
 }
 
 public sealed class MailCredential

@@ -72,8 +72,6 @@ public sealed class MailOperationService(
                 var uid = new UniqueId(mail.Uid);
                 return request.Kind switch
                 {
-                    MailOperationKind.Read => await SetSeen(remote, uid, true, ct),
-                    MailOperationKind.Unread => await SetSeen(remote, uid, false, ct),
                     MailOperationKind.Star => await SetFlagged(remote, uid, true, ct),
                     MailOperationKind.Unstar => await SetFlagged(remote, uid, false, ct),
                     MailOperationKind.Move or MailOperationKind.Trash or MailOperationKind.Archive or MailOperationKind.Spam or MailOperationKind.NotSpam
@@ -89,13 +87,20 @@ public sealed class MailOperationService(
                     return new(false, MailOperationError.MoveFailed, true);
                 if (moveResult.DestinationUid is not { } destinationUid)
                 {
-                    if (auditKind is MailOperationKind.Trash or MailOperationKind.Spam)
-                        mail.PreviousMailFolderId = mail.MailFolderId;
-                    mail.ExpectedMailFolderId = target!.Id;
-                    mail.ReconciliationState = MailReconciliationState.Pending;
-                    mail.IsRestoreReconciliation = auditKind == MailOperationKind.Restore;
-                    await scheduler.ScheduleFolderAsync(accountId, target.Id, SyncOrigin.Reconciliation, cancellationToken);
-                    await db.SaveChangesAsync(cancellationToken);
+                    // Without the destination UID the local row can only be matched to its moved copy by Message-ID.
+                    // A message without one would stay pending forever (pending rows are never treated as vanished),
+                    // so leave it unmarked: the source flag pass removes it and the destination sync imports the copy.
+                    if (!string.IsNullOrWhiteSpace(mail.MessageId))
+                    {
+                        if (auditKind is MailOperationKind.Trash or MailOperationKind.Spam)
+                            mail.PreviousMailFolderId = mail.MailFolderId;
+                        mail.ExpectedMailFolderId = target!.Id;
+                        mail.ReconciliationState = MailReconciliationState.Pending;
+                        mail.IsRestoreReconciliation = auditKind == MailOperationKind.Restore;
+                        // Commit the pending marker first: the coordinator may run the reconciliation sync immediately.
+                        await db.SaveChangesAsync(cancellationToken);
+                    }
+                    await scheduler.ScheduleFolderAsync(accountId, target!.Id, SyncOrigin.Reconciliation, cancellationToken);
                     await NotifyStateChangedAsync(accountId, mail, target.Id, OperationName(auditKind), cancellationToken);
                     return await AuditSuccess(accountId, auditKind, mail.Id, correlationId, cancellationToken, new(true, MailOperationError.None, true));
                 }
@@ -109,8 +114,6 @@ public sealed class MailOperationService(
                 mail.ExpectedMailFolderId = null;
                 mail.IsRestoreReconciliation = false;
             }
-            else if (request.Kind is MailOperationKind.Read or MailOperationKind.Unread)
-                mail.IsRead = request.Kind == MailOperationKind.Read;
             else if (request.Kind is MailOperationKind.Star or MailOperationKind.Unstar)
                 mail.Flagged = request.Kind == MailOperationKind.Star;
             else if (request.Kind == MailOperationKind.Copy)
@@ -165,12 +168,6 @@ public sealed class MailOperationService(
             .Where(folder => folder.MailAccountId == accountId && folder.FolderType == type && folder.IsAvailable)
             .OrderBy(folder => folder.Id)
             .FirstOrDefaultAsync(cancellationToken);
-    }
-
-    private static async Task<RemoteMoveResult?> SetSeen(IRemoteMailFolder remote, UniqueId uid, bool value, CancellationToken cancellationToken)
-    {
-        await remote.SetSeenAsync(uid, value, cancellationToken);
-        return null;
     }
 
     private static async Task<RemoteMoveResult?> SetFlagged(IRemoteMailFolder remote, UniqueId uid, bool value, CancellationToken cancellationToken)

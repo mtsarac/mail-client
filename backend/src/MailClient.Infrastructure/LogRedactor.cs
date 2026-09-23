@@ -21,9 +21,13 @@ public static class LogRedactor
     {
         if (node is JsonObject obj)
         {
+            // "code" is also the stable error-code field of problem responses, so it is only a secret in the
+            // OAuth authorization-response shape { state, code }; the state carries the protected PKCE verifier.
+            var isOAuthAuthorizationResponse = obj.ContainsKey("state") && obj.ContainsKey("code");
             foreach (var key in obj.Select(item => item.Key).ToArray())
             {
-                if (SecretKeys.Contains(key)) obj[key] = "[REDACTED]";
+                if (SecretKeys.Contains(key) || isOAuthAuthorizationResponse && key is "code" or "state")
+                    obj[key] = "[REDACTED]";
                 else RedactNode(obj[key]);
             }
         }

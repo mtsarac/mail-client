@@ -1,5 +1,6 @@
+using MailClient.Domain;
 using MailClient.Application.Mail;
-using MailClient.Application.Sync;
+using MailClient.Infrastructure.Sync;
 using MailClient.Domain.Entities;
 using MailClient.Domain.Enums;
 using MailClient.Infrastructure.Email;
@@ -18,9 +19,12 @@ namespace MailClient.Infrastructure.Services;
 public sealed class DraftService(
     AppDbContext db,
     IMailFolderClient folders,
-    ISyncExecutor sync,
+    InlineFolderSync inlineSync,
     MailReadService reader,
     IMailOperationService operations,
+    MailSendService sender,
+    SendOperationStore sendOperations,
+    IFileStorage storage,
     AuditLogger audit,
     ILogger<DraftService> logger)
 {
@@ -31,7 +35,7 @@ public sealed class DraftService(
         var append = await AppendAsync(account, folder, message, cancellationToken);
         var messageId = message.MessageId ?? throw new InvalidOperationException("message_not_constructible");
         var mailId = await ReconcileAndFindAsync(accountId, folder, messageId, append, null, cancellationToken);
-        await audit.WriteAsync(accountId, "draft.created", "Mail", mailId?.ToString(), null, correlationId, cancellationToken);
+        await audit.WriteAsync(accountId, AuditActions.DraftCreated, "Mail", mailId?.ToString(), null, correlationId, cancellationToken);
         return new(true, mailId, mailId is null, null);
     }
 
@@ -46,7 +50,7 @@ public sealed class DraftService(
         if (replacementId is null)
             return new(false, null, true, "Draft replacement stored; refresh Drafts before retrying cleanup.");
         await MoveToTrashAsync(accountId, draftId, correlationId, cancellationToken);
-        await audit.WriteAsync(accountId, "draft.updated", "Mail", replacementId.Value.ToString(), null, correlationId, cancellationToken);
+        await audit.WriteAsync(accountId, AuditActions.DraftUpdated, "Mail", replacementId.Value.ToString(), null, correlationId, cancellationToken);
         return new(false, replacementId, false, null);
     }
 
@@ -62,12 +66,17 @@ public sealed class DraftService(
         return new(await reader.GetAsync(accountId, draftId, cancellationToken), DraftLookupError.None);
     }
 
-    public async Task<DraftSendResult> SendAsync(Guid accountId, Guid draftId, string idempotencyKey, MailSendService sender, IFileStorage storage, string? correlationId, CancellationToken cancellationToken)
+    public async Task<DraftSendResult> SendAsync(Guid accountId, Guid draftId, string idempotencyKey, string? correlationId, CancellationToken cancellationToken)
     {
+        // A retry after a successful send must replay the outcome even though the draft has already moved to Trash.
+        if (await sendOperations.FindCompletedAsync(accountId, idempotencyKey, cancellationToken) is { } completed)
+            return await RemoveSentDraftAsync(accountId, draftId, correlationId, new SendMailResult(true, completed.SentCopySaved, completed.Warning));
+
         var draft = await GetDraftEntityAsync(accountId, draftId, cancellationToken);
         await db.Entry(draft).Collection(mail => mail.Participants).LoadAsync(cancellationToken);
         await db.Entry(draft).Collection(mail => mail.Attachments).LoadAsync(cancellationToken);
         var attachments = new List<SendMailAttachment>();
+        SendMailResult result;
         try
         {
             foreach (var attachment in draft.Attachments)
@@ -87,22 +96,7 @@ public sealed class DraftService(
                 TrustedInReplyToMessageId = draft.InReplyToMessageId,
                 TrustedReferences = draft.References
             };
-            var result = await sender.SendAsync(accountId, command, correlationId, cancellationToken);
-            if (!result.Sent)
-                return new(false, result.SentCopySaved, false, result.Warning);
-            try
-            {
-                await MoveToTrashAsync(accountId, draftId, correlationId, CancellationToken.None);
-                return new(true, result.SentCopySaved, true, result.Warning, result.MailId, result.ConversationId);
-            }
-            catch (Exception ex)
-            {
-                logger.LogWarning(ex, "Draft cleanup failed after successful delivery for draft {DraftId}.", draftId);
-                var warning = string.IsNullOrWhiteSpace(result.Warning)
-                    ? "Message was sent, but draft cleanup failed."
-                    : $"{result.Warning} Draft cleanup failed.";
-                return new(true, result.SentCopySaved, false, warning, result.MailId, result.ConversationId);
-            }
+            result = await sender.SendAsync(accountId, command, correlationId, cancellationToken);
         }
         catch
         {
@@ -110,13 +104,40 @@ public sealed class DraftService(
                 await attachment.Content.DisposeAsync();
             throw;
         }
+
+        return result.Sent
+            ? await RemoveSentDraftAsync(accountId, draftId, correlationId, result)
+            : new(false, result.SentCopySaved, false, result.Warning);
+    }
+
+    private async Task<DraftSendResult> RemoveSentDraftAsync(Guid accountId, Guid draftId, string? correlationId, SendMailResult sent)
+    {
+        var stillInDrafts = await db.Mails.AnyAsync(mail => mail.Id == draftId
+            && mail.MailAccountId == accountId
+            && mail.ExpectedMailFolderId == null
+            && mail.MailFolder!.FolderType == MailFolderType.Drafts, CancellationToken.None);
+        if (!stillInDrafts)
+            return new(true, sent.SentCopySaved, true, sent.Warning, sent.MailId, sent.ConversationId);
+        try
+        {
+            await MoveToTrashAsync(accountId, draftId, correlationId, CancellationToken.None);
+            return new(true, sent.SentCopySaved, true, sent.Warning, sent.MailId, sent.ConversationId);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Draft cleanup failed after successful delivery for draft {DraftId}.", draftId);
+            var warning = string.IsNullOrWhiteSpace(sent.Warning)
+                ? "Message was sent, but draft cleanup failed."
+                : $"{sent.Warning} Draft cleanup failed.";
+            return new(true, sent.SentCopySaved, false, warning, sent.MailId, sent.ConversationId);
+        }
     }
 
     public async Task<DraftDeleteResult> DeleteAsync(Guid accountId, Guid draftId, string? correlationId, CancellationToken cancellationToken)
     {
         await GetDraftEntityAsync(accountId, draftId, cancellationToken);
         await MoveToTrashAsync(accountId, draftId, correlationId, cancellationToken);
-        await audit.WriteAsync(accountId, "draft.deleted", "Mail", draftId.ToString(), null, correlationId, cancellationToken);
+        await audit.WriteAsync(accountId, AuditActions.DraftDeleted, "Mail", draftId.ToString(), null, correlationId, cancellationToken);
         return new(true, null);
     }
 
@@ -168,7 +189,9 @@ public sealed class DraftService(
 
     private async Task<Guid?> ReconcileAndFindAsync(Guid accountId, MailFolderEntity folder, string messageId, RemoteAppendResult append, Guid? sourceDraftId, CancellationToken cancellationToken)
     {
-        await sync.SyncFolderAsync(accountId, folder.Id, cancellationToken);
+        // When another sync owns the account the append is imported by the queued sync; the id is then unknown yet.
+        if (!await inlineSync.TrySyncNowAsync(accountId, folder.Id, cancellationToken))
+            return null;
         var query = db.Mails.AsNoTracking()
             .Where(mail => mail.MailAccountId == accountId && mail.MailFolderId == folder.Id && mail.MessageId == messageId);
         if (sourceDraftId is not null)
@@ -210,13 +233,12 @@ public sealed class DraftService(
     {
         if (sourceMailId is null)
             return (null, null);
-        var source = await db.Mails.AsNoTracking().SingleOrDefaultAsync(mail => mail.Id == sourceMailId && mail.MailAccountId == accountId, cancellationToken)
+        var source = await db.Mails.AsNoTracking()
+            .Where(mail => mail.Id == sourceMailId && mail.MailAccountId == accountId)
+            .Select(mail => new { mail.MessageId, mail.References })
+            .SingleOrDefaultAsync(cancellationToken)
             ?? throw new InvalidOperationException("mail_not_found");
-        var references = MailClient.Application.Conversations.ConversationEngine.ParseReferences(source.References)
-            .Append(MailClient.Application.Conversations.ConversationEngine.NormalizeMessageId(source.MessageId))
-            .Where(value => value.Length > 0)
-            .Distinct(StringComparer.OrdinalIgnoreCase);
-        return (MailClient.Application.Conversations.ConversationEngine.NormalizeMessageId(source.MessageId), string.Join(' ', references));
+        return MailClient.Application.Conversations.ConversationEngine.ReplyHeaders(source.MessageId, source.References);
     }
 
     private static IReadOnlyList<string> Participants(MailClient.Domain.Entities.Mail draft, ParticipantType type) =>

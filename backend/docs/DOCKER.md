@@ -25,6 +25,12 @@ See [Development](en/development.md) / [Geliştirme](tr/development.md).
 
 See [Production](en/production.md) / [Production (TR)](tr/production.md).
 
+## Traefik + Cloudflare Tunnel (`docker-compose.traefik.yml`)
+
+Same stack as production, wired to an existing Traefik (`traefik-net`, no
+published ports). See [Production → Run](en/production.md#3-run) /
+[Production (TR)](tr/production.md#3-çalıştırma).
+
 ## Volumes
 
 | Volume | Contents | Notes |

@@ -28,7 +28,6 @@ public sealed class MailSyncService(
                 var operationSettings = provider.GetRequiredService<RuntimeOperationSettings>();
                 var snapshot = await operationSettings.GetAsync(stoppingToken);
                 pollIntervalSeconds = snapshot.Settings.Sync.PollIntervalSeconds;
-                queue.UpdateCapacity(snapshot.Settings.Sync.QueueCapacity);
                 if (snapshot.Settings.Sync.Enabled)
                     await SchedulePeriodicAsync(provider, stoppingToken);
             }

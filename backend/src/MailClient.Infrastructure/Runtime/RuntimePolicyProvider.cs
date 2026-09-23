@@ -10,7 +10,7 @@ public sealed class RuntimePolicyProvider(
     public async Task<RuntimeProviderPolicy> GetAsync(CancellationToken cancellationToken)
     {
         var snapshot = await settingsStore.GetAsync(cancellationToken);
-        return RuntimeProviderPolicy.Create(snapshot.Settings, new ProviderCapabilities(
+        return new RuntimeProviderPolicy(snapshot.Settings, new ProviderCapabilities(
             oauthProviders.Any(provider => provider.Provider == Domain.Enums.MailProvider.Google && provider.IsConfigured),
             oauthProviders.Any(provider => provider.Provider == Domain.Enums.MailProvider.Microsoft && provider.IsConfigured)));
     }

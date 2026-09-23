@@ -10,9 +10,13 @@ mobile client: [Flutter guide](../flutter-api-integration.md) (Turkish).
 
 - Auth `bearer` = `Authorization: Bearer <accessToken>`; `anon` = no token.
 - Errors are RFC 7807 problem details with a stable snake_case `code` extension.
+  A malformed JSON body → `400` `invalid_request`; a truncated/aborted multipart
+  body gets a bare `400`.
 - Every response carries `X-Correlation-ID`; send your own to trace a request.
 - Rate limit: 60 requests/minute per account (per IP when anonymous) → `429`.
 - Mail mutations are remote-first (applied on the IMAP server, then mirrored).
+- `Idempotency-Key` (send endpoints): required, at most 200 characters
+  (`idempotency_key_required` / `idempotency_key_too_long`).
 
 ### Accounts
 
@@ -55,11 +59,16 @@ mobile client: [Flutter guide](../flutter-api-integration.md) (Turkish).
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | GET | `/api/mails` | bearer | List mail (`folderId`, `isRead`, `hasAttachments`, `search`, `page`, `pageSize` ≤ 100) |
-| GET | `/api/mails/{id}` | bearer | Mail detail |
-| GET | `/api/search` | bearer | Search cached mail (all filters optional, AND-combined) |
+| GET | `/api/mails/{id}` | bearer | Mail detail (`isFromMe`: Sent/Drafts mail, or sender equals the account address case-insensitively, in any folder) |
+| GET | `/api/search` | bearer | Search cached mail (all filters optional, AND-combined; see below) |
 | GET | `/api/mails/{mailId}/attachments/{attachmentId}` | bearer | Download an attachment |
 | POST | `/api/mails/send` | bearer + `Idempotency-Key` | Send mail (multipart/form-data) |
 | GET | `/api/mails/{id}/compose/reply · reply-all · forward` | bearer | Prefilled compose context |
+
+`/api/search` filters: `from` = case-insensitive contains on sender address or
+display name; `to` = case-insensitive contains on any To/Cc/Bcc address or name;
+`fromDate`/`toDate` filter on received time, `fromDate` inclusive, `toDate`
+exclusive; values without a UTC offset are treated as UTC.
 
 ### Drafts
 
@@ -69,7 +78,7 @@ mobile client: [Flutter guide](../flutter-api-integration.md) (Turkish).
 | POST | `/api/drafts` | bearer | Create draft (saved to server Drafts folder) |
 | PUT | `/api/drafts/{id}` | bearer | Replace draft (returned `mailId` may differ) |
 | DELETE | `/api/drafts/{id}` | bearer | Delete draft |
-| POST | `/api/drafts/{id}/send` | bearer + `Idempotency-Key` | Send the draft and remove it |
+| POST | `/api/drafts/{id}/send` | bearer + `Idempotency-Key` | Send the draft and remove it; retrying a successful send with the same key replays the result (`sent: true`, `draftRemoved: true`) instead of `422 mail_not_draft` |
 
 ### Mail ops
 
@@ -78,14 +87,14 @@ mobile client: [Flutter guide](../flutter-api-integration.md) (Turkish).
 | PATCH | `/api/mails/{id}/read` | bearer | Set read state (body) |
 | POST | `/api/mails/{id}/{op}` | bearer | `op`: read, unread, star, unstar, trash, restore, archive, spam, not-spam (204, no body) |
 | POST | `/api/mails/{id}/move · copy` | bearer | Move/copy to a folder (body) |
-| POST | `/api/mails/bulk/{action}` | bearer | Bulk op on up to 100 `mailIds`; `read`, `unread`, `star`, `unstar`, `archive`, `trash`, `restore`, `spam`, `not-spam`, `move` |
+| POST | `/api/mails/bulk/{action}` | bearer | Bulk op on up to 100 `mailIds`; `read`, `unread`, `star`, `unstar`, `archive`, `trash`, `restore`, `spam`, `not-spam`, `move` (`move` requires `folderId`) |
 
 ### Conversations
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| GET | `/api/conversations` | bearer | List threads, newest first (`page`, `pageSize` ≤ 100) |
-| GET | `/api/conversations/{id}` | bearer | Thread with its messages (`includeTrash`, `include=body`) |
+| GET | `/api/conversations` | bearer | List threads, newest first (`page`, `pageSize` ≤ 100); `participants` = distinct sender names (display name, else address), alphabetical, max 10 |
+| GET | `/api/conversations/{id}` | bearer | Thread with its messages (`includeTrash`, `include=body`); `isFromMe` as in mail detail |
 
 ### Devices
 

@@ -1,3 +1,4 @@
+using MailClient.Domain;
 using System.Security.Cryptography;
 using MailClient.Application.Mail;
 using MailClient.Domain.Entities;
@@ -30,10 +31,11 @@ public sealed class MailReadService(
         if (mail is null)
             return null;
 
+        var normalizedFrom = MailAccount.NormalizeEmailAddress(mail.FromAddress);
         var isFromMe = await db.MailFolders.AnyAsync(folder => folder.Id == mail.MailFolderId
                 && (folder.FolderType == MailFolderType.Sent || folder.FolderType == MailFolderType.Drafts), cancellationToken)
             || await db.MailAccounts.AnyAsync(account => account.Id == accountId
-                && account.NormalizedEmailAddress == mail.FromAddress.ToLower(), cancellationToken);
+                && account.NormalizedEmailAddress == normalizedFrom, cancellationToken);
         var body = HtmlMailBodyRenderer.Render(mail, mail.BodyHtml);
         var bodyContract = new MailBodyResponse(body.Html, body.HasRemoteContent, body.RemoteContentHosts, body.TrackingPixelHosts);
 
@@ -137,7 +139,7 @@ public sealed class MailReadService(
 
         mail.IsRead = isRead;
         await db.SaveChangesAsync(cancellationToken);
-        await audit.WriteAsync(accountId, "mail.read-state-changed", "Mail", mail.Id.ToString(),
+        await audit.WriteAsync(accountId, AuditActions.MailReadStateChanged, "Mail", mail.Id.ToString(),
             new Dictionary<string, string?> { ["isRead"] = isRead.ToString() }, correlationId, cancellationToken);
         return new MailReadOutcome(true, true, false, false);
     }

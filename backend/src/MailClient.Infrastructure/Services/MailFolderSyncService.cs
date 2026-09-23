@@ -26,53 +26,6 @@ public sealed class MailFolderSyncService(
     MailReconciliationService reconciliations,
     ILogger<MailFolderSyncService> logger) : ISyncExecutor
 {
-    public MailFolderSyncService(
-        AppDbContext db,
-        MailCredentialResolver credentials,
-        Mail.MailConnectionHelper connections,
-        IFileStorage storage,
-        MailSyncOptions options,
-        IPushNotificationService push,
-        ConversationService conversations,
-        MailReconciliationService reconciliations,
-        ILogger<MailFolderSyncService> logger)
-        : this(db, credentials, connections, storage, RuntimeOperationSettings.FromMailSyncOptions(options), push, conversations, reconciliations, logger)
-    {
-    }
-    public async Task SyncAllAsync(CancellationToken cancellationToken)
-    {
-        var accountIds = await db.MailAccounts
-            .Where(account => account.Status == MailAccountStatus.Active && account.Folders.Any(folder => folder.IsSyncEnabled && folder.IsAvailable))
-            .Select(account => account.Id)
-            .ToListAsync(cancellationToken);
-
-        foreach (var accountId in accountIds)
-        {
-            try
-            {
-                await SyncAccountCoreAsync(accountId, null, cancellationToken);
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-            catch (CryptographicException ex)
-            {
-                logger.LogError(ex, "Mail sync failed because the stored credential cannot be decrypted.");
-                await MarkReauthenticationAsync(accountId, cancellationToken);
-            }
-            catch (MailConnectionException ex) when (ex.Failure == MailConnectionFailure.Authentication)
-            {
-                logger.LogWarning(ex, "Mail sync failed because the provider rejected the credential.");
-                await MarkReauthenticationAsync(accountId, cancellationToken);
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Mail sync failed.");
-            }
-        }
-    }
-
     private async Task MarkReauthenticationAsync(Guid accountId, CancellationToken cancellationToken)
     {
         var account = await db.MailAccounts.SingleOrDefaultAsync(item => item.Id == accountId, cancellationToken);
@@ -98,19 +51,23 @@ public sealed class MailFolderSyncService(
         }
     }
 
-    public Task SyncAccountAsync(Guid accountId, CancellationToken cancellationToken) =>
-        SyncAccountCoreAsync(accountId, null, cancellationToken);
-
-    public Task SyncFolderAsync(Guid accountId, Guid folderId, CancellationToken cancellationToken) =>
-        SyncAccountCoreAsync(accountId, folderId, cancellationToken);
-
-    private async Task SyncAccountCoreAsync(Guid accountId, Guid? targetFolderId, CancellationToken cancellationToken)
+    /// <summary>
+    /// Syncs one available folder of an active account. Credential problems move the account to
+    /// NeedsReauthentication instead of failing; any other failure propagates to the caller (coordinator retry policy).
+    /// </summary>
+    public async Task SyncFolderAsync(Guid accountId, Guid folderId, CancellationToken cancellationToken)
     {
-        var runtimeOptions = RuntimeOperationSettings.ToMailSyncOptions((await operationSettings.GetAsync(cancellationToken)).Settings);
-        var account = await db.MailAccounts
+        var account = await db.MailAccounts.AsNoTracking()
             .SingleOrDefaultAsync(item => item.Id == accountId, cancellationToken);
         if (account is null || account.Status != MailAccountStatus.Active)
             return;
+        var fullName = await db.MailFolders.AsNoTracking()
+            .Where(item => item.Id == folderId && item.MailAccountId == accountId && item.IsAvailable)
+            .Select(item => item.FullName)
+            .SingleOrDefaultAsync(cancellationToken);
+        if (fullName is null)
+            return;
+
         ResolvedCredential resolved;
         try
         {
@@ -130,85 +87,28 @@ public sealed class MailFolderSyncService(
         }
 
         var endpoint = new MailServerEndpoint(resolved.Account.ImapHost, resolved.Account.ImapPort, resolved.Account.ImapSecurity);
-
-        foreach (var (folderId, fullName) in await SelectFoldersAsync(accountId, targetFolderId, cancellationToken))
+        try
         {
-            try
-            {
-                if (!await db.MailAccounts.AnyAsync(item => item.Id == accountId, cancellationToken))
-                    return;
-                await connections.WithImapAsync(
-                    endpoint,
-                    resolved.Username,
-                    resolved.Password,
-                    "SyncFolder",
-                    async (client, ct) =>
-                    {
-                        var remote = new MailKitRemoteMailFolder(
-                            await client.GetFolderAsync(fullName, ct));
-                        await remote.OpenAsync(ct);
-                        await SyncFolderCoreAsync(account.Id, folderId, remote, ct);
-                        return true;
-                    },
-                    cancellationToken,
-                    resolved.AuthenticationMethod);
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-            catch (MailConnectionException ex) when (ex.Failure == MailConnectionFailure.Authentication)
-            {
-                logger.LogWarning(ex, "Mail sync failed because the provider rejected the credential.");
-                await MarkReauthenticationAsync(accountId, cancellationToken);
-                return;
-            }
-            catch (Exception) when (targetFolderId is not null)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                logger.LogWarning(ex, "Mail sync failed while communicating with the provider.");
-            }
+            await connections.WithImapAsync(
+                endpoint,
+                resolved.Username,
+                resolved.Secret,
+                "SyncFolder",
+                async (client, ct) =>
+                {
+                    var remote = new MailKitRemoteMailFolder(await client.GetFolderAsync(fullName, ct));
+                    await remote.OpenAsync(ct);
+                    await SyncFolderCoreAsync(accountId, folderId, remote, ct);
+                    return true;
+                },
+                cancellationToken,
+                resolved.AuthenticationMethod);
         }
-    }
-
-    internal async Task<IReadOnlyList<(Guid FolderId, string FullName)>> GetSyncableFoldersAsync(
-        Guid accountId,
-        CancellationToken cancellationToken)
-    {
-        return (await db.MailFolders
-            .AsNoTracking()
-            .Where(folder => folder.MailAccountId == accountId && folder.IsSyncEnabled && folder.IsAvailable)
-            .Select(folder => new { folder.Id, folder.FullName })
-            .ToListAsync(cancellationToken))
-            .Select(folder => (folder.Id, folder.FullName))
-            .ToList();
-    }
-
-    private async Task<IReadOnlyList<(Guid FolderId, string FullName)>> SelectFoldersAsync(
-        Guid accountId,
-        Guid? targetFolderId,
-        CancellationToken cancellationToken)
-    {
-        if (targetFolderId is not { } folderId)
-            return await GetSyncableFoldersAsync(accountId, cancellationToken);
-        var single = await GetSyncableFolderAsync(accountId, folderId, cancellationToken);
-        return single is { } value ? [value] : [];
-    }
-
-    internal async Task<(Guid FolderId, string FullName)?> GetSyncableFolderAsync(
-        Guid accountId,
-        Guid folderId,
-        CancellationToken cancellationToken)
-    {
-        var folder = await db.MailFolders
-            .AsNoTracking()
-            .Where(item => item.Id == folderId && item.MailAccountId == accountId && item.IsAvailable)
-            .Select(item => new { item.Id, item.FullName })
-            .SingleOrDefaultAsync(cancellationToken);
-        return folder is null ? null : (folder.Id, folder.FullName);
+        catch (MailConnectionException ex) when (ex.Failure == MailConnectionFailure.Authentication)
+        {
+            logger.LogWarning(ex, "Mail sync failed because the provider rejected the credential.");
+            await MarkReauthenticationAsync(accountId, cancellationToken);
+        }
     }
 
     internal async Task SyncFolderCoreAsync(
@@ -217,6 +117,8 @@ public sealed class MailFolderSyncService(
         IRemoteMailFolder remote,
         CancellationToken cancellationToken)
     {
+        // Loads the runtime limits (operationSettings.Current) used below for this scope.
+        await operationSettings.GetAsync(cancellationToken);
         var localFolder = await db.MailFolders
             .Include(folder => folder.SyncState)
             .SingleAsync(folder => folder.Id == folderId, cancellationToken);
@@ -247,6 +149,7 @@ public sealed class MailFolderSyncService(
             state.LastUid = 0;
             state.NextUidScanStart = 1;
             state.FlagScanCursorUid = 0;
+            state.BackfillNextUid = 0;
             StartNewestFirst(state, remote);
             await db.SaveChangesAsync(cancellationToken);
             foreach (var path in obsoletePaths)
@@ -266,7 +169,7 @@ public sealed class MailFolderSyncService(
             }
         }
 
-        var budget = operationSettings.Current.MaxMessagesPerRun;
+        var budget = operationSettings.Current.Sync.MaxMessagesPerRun;
         var afterUid = state.NextUidScanStart <= 1
             ? 0u
             : (uint)Math.Min(state.NextUidScanStart - 1, (long)uint.MaxValue);
@@ -399,7 +302,7 @@ public sealed class MailFolderSyncService(
         // A pass already in progress continues on every poll; a finished pass restarts only when due.
         var due = state.FlagScanCursorUid > 0
             || state.LastFlagSyncAt is null
-            || DateTime.UtcNow - state.LastFlagSyncAt.Value >= TimeSpan.FromSeconds(operationSettings.Current.FlagSyncIntervalSeconds);
+            || DateTime.UtcNow - state.LastFlagSyncAt.Value >= TimeSpan.FromSeconds(operationSettings.Current.Sync.FlagSyncIntervalSeconds);
         if (!due)
             return;
 
@@ -573,15 +476,15 @@ public sealed class MailFolderSyncService(
             if (summary is null)
             {
                 await SkipAndAdvanceAsync(state, folderId, uid.Id, "gone", "Message no longer exists on server.",
-                    accountId, folderId, cancellationToken);
+                    accountId, cancellationToken);
                 return null;
             }
 
-            if (summary.Size > (ulong)operationSettings.Current.MaxMessageBytes)
+            if (summary.Size > (ulong)operationSettings.Current.Limits.MaxMessageBytes)
             {
                 logger.LogWarning("Skipped an oversized message ({Size} bytes).", summary.Size);
                 await SkipAndAdvanceAsync(state, folderId, uid.Id, "oversized", "Message exceeds MaxMessageBytes.",
-                    accountId, folderId, cancellationToken);
+                    accountId, cancellationToken);
                 return null;
             }
 
@@ -642,7 +545,7 @@ public sealed class MailFolderSyncService(
             foreach (var attachment in incoming.Attachments)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var remaining = operationSettings.Current.MaxMessageAttachmentBytes - messageAttachmentBytes;
+                var remaining = operationSettings.Current.Limits.MaxMessageAttachmentBytes - messageAttachmentBytes;
                 if (remaining <= 0)
                 {
                     logger.LogWarning("Skipped an oversized attachment.");
@@ -658,7 +561,7 @@ public sealed class MailFolderSyncService(
                         mail.Id,
                         attachmentId,
                         (destination, ct) => attachment.Content.DecodeToAsync(destination, ct),
-                        Math.Min(operationSettings.Current.MaxAttachmentBytes, remaining),
+                        Math.Min(operationSettings.Current.Limits.MaxAttachmentBytes, remaining),
                         cancellationToken);
                 }
                 catch (OperationCanceledException)
@@ -694,7 +597,6 @@ public sealed class MailFolderSyncService(
             try
             {
                 await db.SaveChangesAsync(cancellationToken);
-                await conversations.AssignAsync(mail.Id, cancellationToken);
             }
             catch
             {
@@ -702,6 +604,9 @@ public sealed class MailFolderSyncService(
                 throw;
             }
 
+            // The committed row owns its attachment files now; no later failure may delete them.
+            createdPaths.Clear();
+            await AssignConversationAsync(mail.Id, cancellationToken);
             var candidate = new NewMailCandidate(mail.Id, mail.FromAddress, mail.FromDisplayName, mail.Subject, mail.ConversationId);
             Detach(mail);
             return candidate;
@@ -719,7 +624,7 @@ public sealed class MailFolderSyncService(
             try
             {
                 await SkipAndAdvanceAsync(state, folderId, uid.Id, "failed", ex.GetType().Name,
-                    accountId, folderId, cancellationToken);
+                    accountId, cancellationToken);
             }
             catch
             {
@@ -754,7 +659,6 @@ public sealed class MailFolderSyncService(
         string kind,
         string detail,
         Guid accountId,
-        Guid logFolderId,
         CancellationToken cancellationToken)
     {
         var exists = await db.SyncSkippedUids.AnyAsync(
@@ -777,6 +681,30 @@ public sealed class MailFolderSyncService(
             state.LastUid = uid;
         await db.SaveChangesAsync(cancellationToken);
         logger.LogWarning("Marked a message as skipped ({Kind}).", kind);
+    }
+
+    /// <summary>
+    /// Threading is a derived view of an already committed message: a failure here must not undo the import, so it
+    /// is logged and the message stays unthreaded instead of losing its attachments or being retried as new mail.
+    /// </summary>
+    private async Task AssignConversationAsync(Guid mailId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await conversations.AssignAsync(mailId, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            foreach (var entry in db.ChangeTracker.Entries()
+                .Where(entry => entry.Entity is MailEntity or Conversation && entry.State != EntityState.Unchanged)
+                .ToList())
+                entry.State = EntityState.Detached;
+            logger.LogWarning(ex, "Conversation assignment failed for an imported message.");
+        }
     }
 
     private async Task CleanupCreatedFilesAsync(List<string> paths)

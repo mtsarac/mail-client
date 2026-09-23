@@ -88,6 +88,22 @@ public sealed class SendServiceTests
     }
 
     [Fact]
+    public async Task SendAsync_RetryAfterUncertainDelivery_ReportsDeliveryUnknown()
+    {
+        await using var db = CreateDb();
+        var accountId = await SeedAccountAsync(db, saveSentCopy: false);
+        var transport = new FakeMailTransport { SendFailure = new TimeoutException("no reply after DATA") };
+        var service = CreateService(db, transport);
+        var command = new SendMailCommand(accountId, "friend@example.test", "Hello", null, "body", []) { IdempotencyKey = "send-uncertain" };
+
+        var first = await Assert.ThrowsAsync<InvalidOperationException>(() => service.SendAsync(accountId, command, null, CancellationToken.None));
+        var retry = await Assert.ThrowsAsync<InvalidOperationException>(() => service.SendAsync(accountId, command with { }, null, CancellationToken.None));
+
+        Assert.Equal("delivery_unknown", first.Message);
+        Assert.Equal("delivery_unknown", retry.Message);
+    }
+
+    [Fact]
     public async Task SendAsync_RecordsSuccessAndFailureMetricsWithoutMessageContent()
     {
         using var capture = new MetricsCapture();
@@ -180,11 +196,8 @@ public sealed class SendServiceTests
         Assert.Equal("invalid_recipient", error.Message);
     }
 
-    private static MailSendService CreateService(AppDbContext db, FakeMailTransport transport) =>
-        new(db, transport, CreateStore(db), new MailSyncOptions(), new AuditLogger(db), NullLogger<MailSendService>.Instance);
-
-    private static MailSendService CreateService(AppDbContext db, FakeMailTransport transport, Application.Observability.MailClientMetrics metrics) =>
-        new(db, transport, CreateStore(db), RuntimeOperationSettings.FromMailSyncOptions(new MailSyncOptions()), new AuditLogger(db), NullLogger<MailSendService>.Instance, metrics);
+    private static MailSendService CreateService(AppDbContext db, FakeMailTransport transport, Application.Observability.MailClientMetrics? metrics = null) =>
+        new(db, transport, CreateStore(db), FixedRuntimeSettingsStore.Operation(), TestServices.InlineSync(), new AuditLogger(db), NullLogger<MailSendService>.Instance, metrics);
 
     private static SendOperationStore CreateStore(AppDbContext db) =>
         new(db, NullLogger<SendOperationStore>.Instance);
@@ -223,26 +236,4 @@ public sealed class SendServiceTests
 
     private static AppDbContext CreateDb() => new(new DbContextOptionsBuilder<AppDbContext>()
         .UseInMemoryDatabase(Guid.NewGuid().ToString()).Options);
-
-    private sealed class FakeMailTransport : IMailTransport
-    {
-        public int SentCount { get; private set; }
-        public int AppendCount { get; private set; }
-        public Exception? SendFailure { get; init; }
-        public MimeMessage? Message { get; private set; }
-
-        public Task SendAsync(MailAccount account, MimeMessage message, CancellationToken cancellationToken)
-        {
-            if (SendFailure is not null) throw SendFailure;
-            Message = message;
-            SentCount++;
-            return Task.CompletedTask;
-        }
-
-        public Task AppendToSentAsync(MailAccount account, string sentFullName, MimeMessage message, CancellationToken cancellationToken)
-        {
-            AppendCount++;
-            return Task.CompletedTask;
-        }
-    }
 }

@@ -134,8 +134,15 @@ public sealed class MailKitRemoteMailFolder(IMailFolder folder, Func<string, Can
         const ulong GrowthFactor = 4;
         if (afterUid == uint.MaxValue || maxCount <= 0)
             return new UidSearchResult([], afterUid);
-        var found = new List<UniqueId>();
         var low = (ulong)afterUid + 1;
+        if (getUidNext() == 0)
+        {
+            // The server did not report UIDNEXT, so the range cannot be bounded: one open-ended search, oldest first.
+            var open = (await searchPage(low, uint.MaxValue, cancellationToken)).OrderBy(uid => uid.Id).Take(maxCount).ToList();
+            return new UidSearchResult(open, open.Count == 0 ? afterUid : open[^1].Id);
+        }
+
+        var found = new List<UniqueId>();
         var window = (ulong)Math.Max(4L * maxCount, 1);
         var pages = 0;
         var scannedUpTo = (ulong)afterUid;
@@ -143,7 +150,7 @@ public sealed class MailKitRemoteMailFolder(IMailFolder folder, Func<string, Can
         {
             cancellationToken.ThrowIfCancellationRequested();
             var uidNext = getUidNext();
-            if (uidNext == 0 || low >= uidNext)
+            if (low >= uidNext)
                 break;
             var high = Math.Min(low + window - 1, (ulong)uidNext - 1);
             var page = (await searchPage(low, high, cancellationToken)).OrderBy(uid => uid.Id).ToList();

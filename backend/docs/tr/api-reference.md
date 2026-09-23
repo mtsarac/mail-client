@@ -10,9 +10,13 @@ arayüzüne bakın (`/swagger`, yalnızca Development). Mobil istemci için örn
 
 - Yetki `bearer` = `Authorization: Bearer <accessToken>`; `anon` = token yok.
 - Hatalar RFC 7807 problem details'tir; sabit snake_case `code` alanı içerir.
+  Bozuk JSON gövdesi → `400` `invalid_request`; yarıda kesilmiş multipart gövde
+  gövdesiz `400` alır.
 - Her yanıt `X-Correlation-ID` taşır; isteği izlemek için kendi değerinizi gönderebilirsiniz.
 - Rate limit: hesap başına dakikada 60 istek (anonimde IP başına) → `429`.
 - Posta değişiklikleri remote-first'tür (önce IMAP sunucusunda uygulanır, sonra yansıtılır).
+- `Idempotency-Key` (gönderim uçları): zorunlu, en fazla 200 karakter
+  (`idempotency_key_required` / `idempotency_key_too_long`).
 
 ### Accounts
 
@@ -55,11 +59,16 @@ arayüzüne bakın (`/swagger`, yalnızca Development). Mobil istemci için örn
 | Metot | Yol | Yetki | Açıklama |
 |---|---|---|---|
 | GET | `/api/mails` | bearer | Posta listesi (`folderId`, `isRead`, `hasAttachments`, `search`, `page`, `pageSize` ≤ 100) |
-| GET | `/api/mails/{id}` | bearer | Posta detayı |
-| GET | `/api/search` | bearer | Önbellekteki postada arama (tüm filtreler opsiyonel, AND) |
+| GET | `/api/mails/{id}` | bearer | Posta detayı (`isFromMe`: Sent/Drafts postası ya da gönderen hesabın adresiyle büyük/küçük harf duyarsız aynıysa, klasörden bağımsız) |
+| GET | `/api/search` | bearer | Önbellekteki postada arama (tüm filtreler opsiyonel, AND; aşağıya bakın) |
 | GET | `/api/mails/{mailId}/attachments/{attachmentId}` | bearer | Eki indirir |
 | POST | `/api/mails/send` | bearer + `Idempotency-Key` | Posta gönderir (multipart/form-data) |
 | GET | `/api/mails/{id}/compose/reply · reply-all · forward` | bearer | Hazır doldurulmuş yazma bağlamı |
+
+`/api/search` filtreleri: `from` = gönderen adresi veya görünen adında büyük/küçük
+harf duyarsız "içerir"; `to` = herhangi bir To/Cc/Bcc adresi veya adında büyük/küçük
+harf duyarsız "içerir"; `fromDate`/`toDate` alınma zamanına göre filtreler,
+`fromDate` dahil, `toDate` hariç; UTC ofseti olmayan değerler UTC kabul edilir.
 
 ### Drafts
 
@@ -69,7 +78,7 @@ arayüzüne bakın (`/swagger`, yalnızca Development). Mobil istemci için örn
 | POST | `/api/drafts` | bearer | Taslak oluşturur (sunucudaki Taslaklar klasörüne) |
 | PUT | `/api/drafts/{id}` | bearer | Taslağı değiştirir (dönen `mailId` farklı olabilir) |
 | DELETE | `/api/drafts/{id}` | bearer | Taslağı siler |
-| POST | `/api/drafts/{id}/send` | bearer + `Idempotency-Key` | Taslağı gönderir ve siler |
+| POST | `/api/drafts/{id}/send` | bearer + `Idempotency-Key` | Taslağı gönderir ve siler; başarılı gönderim aynı key ile tekrarlanırsa `422 mail_not_draft` yerine kayıtlı sonuç döner (`sent: true`, `draftRemoved: true`) |
 
 ### Mail ops
 
@@ -78,14 +87,14 @@ arayüzüne bakın (`/swagger`, yalnızca Development). Mobil istemci için örn
 | PATCH | `/api/mails/{id}/read` | bearer | Okundu durumunu ayarlar (body) |
 | POST | `/api/mails/{id}/{op}` | bearer | `op`: read, unread, star, unstar, trash, restore, archive, spam, not-spam (204, gövdesiz) |
 | POST | `/api/mails/{id}/move · copy` | bearer | Klasöre taşır/kopyalar (body) |
-| POST | `/api/mails/bulk/{action}` | bearer | En fazla 100 `mailIds` üzerinde toplu işlem; `read`, `unread`, `star`, `unstar`, `archive`, `trash`, `restore`, `spam`, `not-spam`, `move` |
+| POST | `/api/mails/bulk/{action}` | bearer | En fazla 100 `mailIds` üzerinde toplu işlem; `read`, `unread`, `star`, `unstar`, `archive`, `trash`, `restore`, `spam`, `not-spam`, `move` (`move` için `folderId` zorunlu) |
 
 ### Conversations
 
 | Metot | Yol | Yetki | Açıklama |
 |---|---|---|---|
-| GET | `/api/conversations` | bearer | Konuşmaları yeniden eskiye listeler (`page`, `pageSize` ≤ 100) |
-| GET | `/api/conversations/{id}` | bearer | Konuşma ve mesajları (`includeTrash`, `include=body`) |
+| GET | `/api/conversations` | bearer | Konuşmaları yeniden eskiye listeler (`page`, `pageSize` ≤ 100); `participants` = tekil gönderen adları (görünen ad, yoksa adres), alfabetik, en fazla 10 |
+| GET | `/api/conversations/{id}` | bearer | Konuşma ve mesajları (`includeTrash`, `include=body`); `isFromMe` posta detayındaki gibi |
 
 ### Devices
 

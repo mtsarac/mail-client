@@ -22,10 +22,16 @@ IMAP/SMTP), `8080` (API) — bunlar makinenizde zaten çalışan bir şeyle
 çakışırsa `.env` içinde `POSTGRES_PORT` / `GREENMAIL_IMAP_PORT` /
 `GREENMAIL_SMTP_PORT` / `API_PORT` ile değiştirin.
 
-Docker olmadan: PostgreSQL'i başlatın, `.env` içinde `ConnectionStrings__Default`
-ayarlayın, migration'ları uygulayın, API'yi çalıştırın:
+Docker olmadan: PostgreSQL'i başlatın, migration'ları uygulayın, API'yi
+çalıştırın. `dotnet run` `.env` dosyasını okumaz — ayarları gerçek ortam
+değişkeni olarak verin (ör. `export ConnectionStrings__Default=...`) ya da
+`appsettings.json` varsayılanlarına güvenin (yerel `postgres`/`postgres`,
+`mailclient_v2` veritabanı). `dotnet ef` ise `DesignTimeDbContextFactory`'yi
+kullanır ve `MAILCLIENT_V2_CONNECTION` değişkenini okur (yoksa aynı yerel
+veritabanı, `GSS Encryption Mode=Disable` ile):
 
 ```bash
+export MAILCLIENT_V2_CONNECTION="Host=localhost;Port=5432;Database=mailclient_v2;Username=postgres;Password=postgres"
 dotnet ef database update --project backend/src/MailClient.Infrastructure --startup-project backend/src/MailClient.Api
 dotnet run --project backend/src/MailClient.Api
 ```
@@ -41,9 +47,13 @@ konfigürasyonunun kullandığı) bir `lan-http` profili var; API'yi
 LAN'daki başka bir cihazdan (ör. telefonda Flutter uygulaması) prod-benzeri
 davranışa karşı test için: HTTPS-redirect/HSTS mantığı aktif (düz LAN HTTP
 üzerinde zararsız — HTTPS portu yapılandırılmadığı için Kestrel bir uyarı
-loglar ve isteği yine de sunar), Swagger ve dev CORS kapalı, FCM açık. Bu
-profilin `environmentVariables`'ının beklediği ve gitignore'lu (`*.pfx`) iki
-dosyaya ihtiyaç var; temiz bir clone önce bunları üretmeli/edinmeli:
+loglar ve isteği yine de sunar), Swagger ve dev CORS kapalı, FCM açık.
+Production modu yerleşik development JWT anahtarını reddeder ve profil bilerek
+bir anahtar commit'lemez: başlatmadan önce shell'de ya da Rider çalıştırma
+konfigürasyonunun ortam değişkenlerinde `Jwt__Key` (32+ rastgele karakter, ör.
+`export Jwt__Key=$(openssl rand -hex 32)`) tanımlayın. Ayrıca profilin
+`environmentVariables`'ının işaret ettiği gitignore'lu iki dosyaya ihtiyaç var;
+temiz bir clone önce bunları üretmeli/edinmeli:
 
 - `backend/src/MailClient.Api/data/lan-dataprotection.pfx` — boş export
   şifreli self-signed bir Data Protection sertifikası:
@@ -56,9 +66,9 @@ dosyaya ihtiyaç var; temiz bir clone önce bunları üretmeli/edinmeli:
 
 ## Firebase Cloud Messaging
 
-Opsiyonel; etkinleştirilmedikçe push bildirimleri no-op olur. `.env` içinde
-ayarlayın: `Firebase__Enabled=true`, `Firebase__ProjectId=<id>`,
-`Firebase__CredentialsPath=<service-account JSON yolu>` (Firebase Console →
+Opsiyonel; etkinleştirilmedikçe push bildirimleri no-op olur. Ortam değişkeni
+olarak (Docker altında `.env` içinde) ayarlayın: `Firebase__Enabled=true`,
+`Firebase__ProjectId=<id>`, `Firebase__CredentialsPath=<service-account JSON yolu>` (Firebase Console →
 Project settings → Service accounts'tan alın). Docker altında bunun yerine
 `FIREBASE_CREDENTIALS_HOST_PATH` ayarlayın — compose onu bağlar ve
 `Firebase__CredentialsPath`'i container içi yola sabitler. Tam kurulum:

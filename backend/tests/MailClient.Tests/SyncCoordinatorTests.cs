@@ -99,6 +99,47 @@ public sealed class SyncCoordinatorTests
     }
 
     [Fact]
+    public async Task Coordinator_SlowAccount_DoesNotDelayOtherAccounts()
+    {
+        var slowGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var executor = new PerAccountGateExecutor(slowGate);
+        var harness = CreateHarness(executor, maxAccounts: 2, maxFolders: 1);
+        var slow = await harness.SeedAccountAsync(1);
+        var fast = await harness.SeedAccountAsync(1);
+        executor.SlowAccountId = slow;
+        await harness.Scheduler.StartAsync(CancellationToken.None);
+        try
+        {
+            await harness.Scheduler.ScheduleFolderAsync(slow, (await harness.FolderIdsAsync(slow))[0], SyncOrigin.UserRequested, CancellationToken.None);
+            await WaitUntilAsync(() => executor.Started.Contains(slow));
+
+            await harness.Scheduler.ScheduleFolderAsync(fast, (await harness.FolderIdsAsync(fast))[0], SyncOrigin.UserRequested, CancellationToken.None);
+
+            await WaitUntilAsync(() => executor.Completed.Contains(fast));
+            Assert.DoesNotContain(slow, executor.Completed);
+        }
+        finally
+        {
+            slowGate.TrySetResult();
+            await harness.Scheduler.StopAsync(CancellationToken.None);
+        }
+    }
+
+    private sealed class PerAccountGateExecutor(TaskCompletionSource slowGate) : ISyncExecutor
+    {
+        public Guid SlowAccountId { get; set; }
+        public ConcurrentBag<Guid> Started { get; } = [];
+        public ConcurrentBag<Guid> Completed { get; } = [];
+        public async Task SyncFolderAsync(Guid accountId, Guid folderId, CancellationToken cancellationToken)
+        {
+            Started.Add(accountId);
+            if (accountId == SlowAccountId)
+                await slowGate.Task;
+            Completed.Add(accountId);
+        }
+    }
+
+    [Fact]
     public async Task Coordinator_InboxRunsBeforeOtherFolders_SuccessResetsFailureState()
     {
         var order = new ConcurrentQueue<Guid>();
@@ -555,7 +596,6 @@ public sealed class SyncCoordinatorTests
         TaskCompletionSource gate) : ISyncExecutor
     {
         public ConcurrentBag<(Guid AccountId, Guid FolderId)> FolderCalls { get; } = [];
-        public Task SyncAccountAsync(Guid accountId, CancellationToken cancellationToken) => Task.CompletedTask;
         public async Task SyncFolderAsync(Guid accountId, Guid folderId, CancellationToken cancellationToken)
         {
             var current = entered.AddOrUpdate(accountId, 1, (_, count) => count + 1);
@@ -575,7 +615,6 @@ public sealed class SyncCoordinatorTests
     internal sealed class OrderRecordingExecutor(ConcurrentQueue<Guid> order) : ISyncExecutor
     {
         public ConcurrentBag<(Guid AccountId, Guid FolderId)> FolderCalls { get; } = [];
-        public Task SyncAccountAsync(Guid accountId, CancellationToken cancellationToken) => Task.CompletedTask;
         public Task SyncFolderAsync(Guid accountId, Guid folderId, CancellationToken cancellationToken)
         {
             FolderCalls.Add((accountId, folderId));
@@ -587,7 +626,6 @@ public sealed class SyncCoordinatorTests
     internal sealed class FailingExecutor(Exception? failure) : ISyncExecutor
     {
         public Exception? Failure { get; set; } = failure;
-        public Task SyncAccountAsync(Guid accountId, CancellationToken cancellationToken) => Task.CompletedTask;
         public Task SyncFolderAsync(Guid accountId, Guid folderId, CancellationToken cancellationToken) =>
             Failure is null ? Task.CompletedTask : Task.FromException(Failure);
     }
@@ -595,7 +633,6 @@ public sealed class SyncCoordinatorTests
     private sealed class ScopeCapturingExecutor(ConcurrentBag<Guid> scopes, TaskCompletionSource gate) : ISyncExecutor
     {
         private readonly Guid _scopeId = Guid.NewGuid();
-        public Task SyncAccountAsync(Guid accountId, CancellationToken cancellationToken) => Task.CompletedTask;
         public async Task SyncFolderAsync(Guid accountId, Guid folderId, CancellationToken cancellationToken)
         {
             scopes.Add(_scopeId);

@@ -43,7 +43,7 @@ public static class WhitelistManagementEndpoints
                 if (string.IsNullOrWhiteSpace(raw) || !raw.Contains('@', StringComparison.Ordinal))
                     continue;
                 var email = raw.Trim();
-                var normalized = EmailAllowlistService.Normalize(email);
+                var normalized = MailAccount.NormalizeEmailAddress(email);
                 if (await db.AllowlistedEmails.AnyAsync(item => item.NormalizedEmail == normalized, ct))
                     continue;
                 db.AllowlistedEmails.Add(new AllowlistedEmail { Id = Guid.NewGuid(), Email = email, NormalizedEmail = normalized, AddedAt = DateTime.UtcNow });
@@ -72,7 +72,7 @@ public static class WhitelistManagementEndpoints
 
         whitelist.MapDelete("/emails/{email}", async (string email, AppDbContext db, IEmailAllowlistService allowlist, AuditLogger audit, CorrelationContext correlation, CancellationToken ct) =>
         {
-            var normalized = EmailAllowlistService.Normalize(email);
+            var normalized = MailAccount.NormalizeEmailAddress(email);
             var entry = await db.AllowlistedEmails.SingleOrDefaultAsync(item => item.NormalizedEmail == normalized, ct);
             if (entry is null)
                 return Results.NotFound();

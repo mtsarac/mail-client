@@ -120,11 +120,20 @@ public sealed class ConversationService(AppDbContext db)
             .ToListAsync(cancellationToken);
     }
 
-    /// <summary>Subject fallback requires the same normalized subject AND a shared normalized participant address.</summary>
+    /// <summary>
+    /// Subject fallback requires a non-empty normalized subject AND a shared participant other than the mailbox owner,
+    /// who appears on nearly every message and would otherwise make any two mails with equal subjects "related".
+    /// </summary>
     private async Task<Conversation?> FindBySubjectFallbackAsync(MailEntity mail, string normalizedSubject, CancellationToken cancellationToken)
     {
+        if (normalizedSubject.Length == 0)
+            return null;
+        var ownAddress = (await db.MailAccounts
+            .Where(account => account.Id == mail.MailAccountId)
+            .Select(account => account.EmailAddress)
+            .SingleOrDefaultAsync(cancellationToken))?.Trim().ToLowerInvariant() ?? "";
         var mailAddresses = await db.Participants
-            .Where(participant => participant.MailId == mail.Id && participant.NormalizedAddress != "")
+            .Where(participant => participant.MailId == mail.Id && participant.NormalizedAddress != "" && participant.NormalizedAddress != ownAddress)
             .Select(participant => participant.NormalizedAddress)
             .ToListAsync(cancellationToken);
         if (mailAddresses.Count == 0)

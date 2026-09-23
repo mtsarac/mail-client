@@ -22,10 +22,16 @@ Host ports default to `5432` (Postgres), `3143`/`3025` (GreenMail IMAP/SMTP),
 `GREENMAIL_SMTP_PORT` / `API_PORT` in `.env` if those collide with something
 already running on your machine.
 
-Without Docker: start PostgreSQL, set `ConnectionStrings__Default` in `.env`,
-apply migrations, then run the API:
+Without Docker: start PostgreSQL, apply migrations, then run the API.
+`dotnet run` does not read `.env` — set configuration as real environment
+variables (e.g. `export ConnectionStrings__Default=...`) or rely on the
+`appsettings.json` defaults (local `postgres`/`postgres`, database
+`mailclient_v2`). `dotnet ef` uses `DesignTimeDbContextFactory`, which reads
+`MAILCLIENT_V2_CONNECTION` instead (fallback: the same local database with
+`GSS Encryption Mode=Disable`):
 
 ```bash
+export MAILCLIENT_V2_CONNECTION="Host=localhost;Port=5432;Database=mailclient_v2;Username=postgres;Password=postgres"
 dotnet ef database update --project backend/src/MailClient.Infrastructure --startup-project backend/src/MailClient.Api
 dotnet run --project backend/src/MailClient.Api
 ```
@@ -40,9 +46,12 @@ with `ASPNETCORE_ENVIRONMENT=Production` — for testing from another device on
 the LAN (e.g. a Flutter app on a phone) against production-like behavior:
 HTTPS-redirect/HSTS logic active (harmless over plain LAN HTTP — Kestrel logs
 a warning and serves the request anyway since no HTTPS port is configured),
-Swagger and dev CORS disabled, FCM enabled. It needs two files this profile's
-`environmentVariables` expect and that are gitignored (`*.pfx`), so a fresh
-clone must generate/obtain them first:
+Swagger and dev CORS disabled, FCM enabled. Production mode rejects the
+built-in development JWT key, and the profile deliberately does not commit one:
+export `Jwt__Key` (32+ random characters, e.g. `export Jwt__Key=$(openssl rand -hex 32)`)
+in the shell or in the Rider run configuration's environment before starting it.
+It also needs two gitignored files the profile's `environmentVariables` point
+at, so a fresh clone must generate/obtain them first:
 
 - `backend/src/MailClient.Api/data/lan-dataprotection.pfx` — a self-signed
   Data Protection cert, empty export password:
@@ -55,7 +64,8 @@ clone must generate/obtain them first:
 
 ## Firebase Cloud Messaging
 
-Optional; push notifications no-op unless enabled. Set in `.env`:
+Optional; push notifications no-op unless enabled. Set as environment
+variables (or in `.env` under Docker):
 `Firebase__Enabled=true`, `Firebase__ProjectId=<id>`,
 `Firebase__CredentialsPath=<path to a service-account JSON>` (get one from
 Firebase Console → Project settings → Service accounts). Under Docker,

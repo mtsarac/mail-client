@@ -27,7 +27,7 @@ cp .env.example .env
 | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | `postgres` container'ı için kullanılır ve `ConnectionStrings__Default` içine interpolate edilir. |
 | `Jwt__Key` | 32+ rastgele karakter. Açılış, Development dışında yerleşik dev anahtarını reddeder. |
 | `DATAPROTECTION_CERT_HOST_PATH` | Data Protection anahtar halkasını koruyan `.pfx` dosyasının host yolu (compose bunu `DataProtection__CertificatePath` ile sabitlenen `/run/secrets/dataprotection.pfx`'e bağlar). **Boş export şifresiyle** üretin — uygulama bunu `X509CertificateLoader.LoadPkcs12FromFile(path, password: "")` ile yükler: `openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 3650 -nodes -subj "/CN=mailclient-dataprotection"` ardından `openssl pkcs12 -export -out dataprotection.pfx -inkey key.pem -in cert.pem -passout pass:`. **Bu dosyayı yedekleyin** — kaybedilmesi tüm saklanan posta kimlik bilgilerini çözülemez hale getirir; her hesap yeniden kimlik doğrulaması gerektirir. `protection-keys` volume'ü için de aynısı geçerli. |
-| `Proxy__KnownProxies__0` / `Proxy__KnownNetworks__0` | Reverse proxy'nin adresi/adresleri; `X-Forwarded-*` başlıklarının güvenilmesini sağlar. Bir reverse proxy arkasındaysanız **zorunludur**: ayarlanmazsa `UseHttpsRedirection`/`UseHsts` her isteği düz HTTP olarak görür (proxy içeride HTTP konuşur) ve sonsuz bir HTTPS yönlendirme döngüsü oluşur. |
+| `Proxy__KnownProxies__0` / `Proxy__KnownNetworks__0` | Reverse proxy'nin adresi/adresleri; `X-Forwarded-*` başlıklarının güvenilmesini sağlar. Bir reverse proxy arkasındaysanız **zorunludur**: ayarlanmazsa her istek proxy'nin IP'sinden gelen düz HTTP gibi görünür. HTTPS yönlendirme HTTPS portunu belirleyemez ("Failed to determine the https port for redirect" loglar ve yönlendirmez), HSTS başlıkları hiç gönderilmez ve tüm anonim istemciler tek bir rate limit bölümünü paylaşır (`/api/auth/refresh`, login ve discover dahil toplam dakikada 60 istek). |
 | İhtiyacınız olan OAuth / Storage / Observability / Management değerleri | `.env.example` içindeki yorumlara bakın — tam olarak bu dağıtım için yazıldı. Tam referans: [Yapılandırma](configuration.md). |
 
 ## 3. Çalıştırma
@@ -35,6 +35,13 @@ cp .env.example .env
 ```bash
 docker compose -f docker-compose.prod.yml up --build -d
 ```
+
+Mevcut Traefik + Cloudflare Tunnel kurulumunun arkasında bunun yerine
+`docker-compose.traefik.yml` kullanın (aynı komutlar, `-f` ile bu dosya): API
+port yayınlamadan harici `traefik-net` ağına katılır, Host kuralı `MAIL_DOMAIN`
+değişkeninden gelir, Data Protection sertifikası / Firebase service account'u
+`/srv/mail/secrets/` altından bind-mount edilir. `Proxy__KnownNetworks__0`'ı
+`.env.example`'da anlatıldığı gibi `traefik-net` alt ağına ayarlayın.
 
 `migrate` bir kez çalışır, bekleyen EF Core migration'larını uygular, `0` ile
 çıkar; `api` yalnızca bu başarılı olduktan sonra başlar
@@ -61,7 +68,8 @@ Compose dosyasındaki `ASPNETCORE_ENVIRONMENT: Production` ile otomatik ayarlan�
 - `UseHttpsRedirection` ve `UseHsts` etkinleşir — yalnızca önde bir reverse
   proxy varsa ve `Proxy__KnownProxies`/`Proxy__KnownNetworks` ayarlıysa
   doğru çalışır (yukarıdaki tabloya bakın).
-- Kestrel'in `Server` yanıt başlığı bastırılır.
+- Kestrel'in `Server` yanıt başlığı bastırılır (yalnızca Production'da değil,
+  her ortamda).
 - İşlenmeyen hata yanıtları exception detayını içermez (yalnızca `code` ve
   `correlationId`).
 
