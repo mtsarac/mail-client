@@ -296,13 +296,13 @@ public sealed class MailSendService(
     {
         if (sourceMailId is not { } id)
             return new(null, null);
-        var source = await db.Mails.AsNoTracking().SingleOrDefaultAsync(x => x.Id == id && x.MailAccountId == accountId, cancellationToken)
+        var source = await db.Mails.AsNoTracking()
+            .Where(x => x.Id == id && x.MailAccountId == accountId)
+            .Select(x => new { x.MessageId, x.References })
+            .SingleOrDefaultAsync(cancellationToken)
             ?? throw new InvalidOperationException("mail_not_found");
-        var references = ConversationEngine.ParseReferences(source.References)
-            .Append(ConversationEngine.NormalizeMessageId(source.MessageId))
-            .Where(x => x.Length > 0)
-            .Distinct(StringComparer.OrdinalIgnoreCase);
-        return new(ConversationEngine.NormalizeMessageId(source.MessageId), string.Join(' ', references));
+        var (inReplyTo, references) = ConversationEngine.ReplyHeaders(source.MessageId, source.References);
+        return new(inReplyTo, references);
     }
 
     private static async Task<IReadOnlyList<(string FileName, string ContentType, long SizeBytes, string ContentHash)>> HashAttachmentsAsync(

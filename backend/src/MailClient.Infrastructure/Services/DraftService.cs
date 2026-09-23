@@ -232,13 +232,12 @@ public sealed class DraftService(
     {
         if (sourceMailId is null)
             return (null, null);
-        var source = await db.Mails.AsNoTracking().SingleOrDefaultAsync(mail => mail.Id == sourceMailId && mail.MailAccountId == accountId, cancellationToken)
+        var source = await db.Mails.AsNoTracking()
+            .Where(mail => mail.Id == sourceMailId && mail.MailAccountId == accountId)
+            .Select(mail => new { mail.MessageId, mail.References })
+            .SingleOrDefaultAsync(cancellationToken)
             ?? throw new InvalidOperationException("mail_not_found");
-        var references = MailClient.Application.Conversations.ConversationEngine.ParseReferences(source.References)
-            .Append(MailClient.Application.Conversations.ConversationEngine.NormalizeMessageId(source.MessageId))
-            .Where(value => value.Length > 0)
-            .Distinct(StringComparer.OrdinalIgnoreCase);
-        return (MailClient.Application.Conversations.ConversationEngine.NormalizeMessageId(source.MessageId), string.Join(' ', references));
+        return MailClient.Application.Conversations.ConversationEngine.ReplyHeaders(source.MessageId, source.References);
     }
 
     private static IReadOnlyList<string> Participants(MailClient.Domain.Entities.Mail draft, ParticipantType type) =>
