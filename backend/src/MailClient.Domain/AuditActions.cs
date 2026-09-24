@@ -29,6 +29,12 @@ public static class AuditActions
     public const string MailAccountDeletedGracePeriodExpired = "mail-account.deleted-grace-period-expired";
     public const string ScheduledSendCreated = "scheduled-send.created";
     public const string ScheduledSendCancelled = "scheduled-send.cancelled";
+    public const string LabelCreated = "label.created";
+    public const string LabelUpdated = "label.updated";
+    public const string LabelDeleted = "label.deleted";
+    public const string ContactCreated = "contact.created";
+    public const string ContactUpdated = "contact.updated";
+    public const string ContactDeleted = "contact.deleted";
     // Stored values predate the dotted naming and are kept so existing audit rows stay comparable.
     public const string RuntimeSettingsUpdated = "runtime_settings_updated";
 }

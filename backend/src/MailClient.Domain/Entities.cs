@@ -22,6 +22,8 @@ public sealed class MailAccount
     public MailAccountStatus Status { get; set; } = MailAccountStatus.Active;
     /// <summary>Set when the account is disabled because its email left the production allowlist; cleared if it is re-added. Drives grace-period deletion.</summary>
     public DateTime? AccessRevokedAt { get; set; }
+    /// <summary>User-authored text appended to outgoing mail from this account. Null/empty means no signature.</summary>
+    public string? Signature { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
     public DateTime? LastAuthenticatedAt { get; set; }
@@ -232,3 +234,42 @@ public sealed class ScheduledSendAttachment
 }
 public sealed class DeviceToken { public Guid Id { get; set; } public Guid MailAccountId { get; set; } public Guid? MailSessionId { get; set; } public string Token { get; set; } = ""; public string Platform { get; set; } = ""; public string? AppVersion { get; set; } public string? Locale { get; set; } public DateTime RegisteredAt { get; set; } public DateTime? LastSeenAt { get; set; } }
 public sealed class AuditLog { public Guid Id { get; set; } public Guid? MailAccountId { get; set; } public string Action { get; set; } = ""; public string EntityType { get; set; } = ""; public string? EntityId { get; set; } public DateTime TimestampUtc { get; set; } public string? CorrelationId { get; set; } public string? Metadata { get; set; } }
+public sealed class MailLabel
+{
+    public Guid Id { get; set; }
+    public Guid MailAccountId { get; set; }
+    public string Name { get; set; } = "";
+    public int Color { get; set; }
+    public int SortOrder { get; set; }
+    public MailAccount? MailAccount { get; set; }
+}
+public sealed class MailLabelAssignment
+{
+    public Guid Id { get; set; }
+    public Guid MailAccountId { get; set; }
+    public Guid MailId { get; set; }
+    public Guid MailLabelId { get; set; }
+}
+public sealed class MailSnooze
+{
+    public Guid Id { get; set; }
+    public Guid MailAccountId { get; set; }
+    public Guid MailId { get; set; }
+    public DateTime UntilUtc { get; set; }
+}
+public sealed class PinnedMail
+{
+    public Guid Id { get; set; }
+    public Guid MailAccountId { get; set; }
+    public Guid MailId { get; set; }
+    public DateTime PinnedAtUtc { get; set; }
+}
+public sealed class Contact
+{
+    public Guid Id { get; set; }
+    public Guid MailAccountId { get; set; }
+    public string Email { get; set; } = "";
+    public string NormalizedEmail { get; set; } = "";
+    public string? DisplayName { get; set; }
+    public DateTime CreatedAtUtc { get; set; }
+}
