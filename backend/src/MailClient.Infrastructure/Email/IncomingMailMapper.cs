@@ -73,7 +73,7 @@ public static class IncomingMailMapper
             .ToList();
 
         var headers = new List<IncomingHeader>();
-        foreach (var headerName in (string[])["Content-Language", "List-Id", "List-Unsubscribe"])
+        foreach (var headerName in (string[])["Content-Language", "List-Id", "List-Unsubscribe", "List-Unsubscribe-Post"])
         {
             var value = message.Headers[headerName];
             if (!string.IsNullOrWhiteSpace(value))

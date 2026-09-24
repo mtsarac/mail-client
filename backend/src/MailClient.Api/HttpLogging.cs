@@ -184,8 +184,30 @@ public sealed class HttpBodyLoggingMiddleware(
         _ => value,
     };
 
-    private static string? Sanitize(string? value) =>
-        value?.Replace('\r', ' ').Replace('\n', ' ');
+    // Neutralizes CWE-117 log forging: any Unicode control character (CR/LF, tabs, escape
+    // sequences, etc.) is replaced with a space so a value cannot inject fake log lines/fields.
+    private static string? Sanitize(string? value)
+    {
+        if (string.IsNullOrEmpty(value))
+            return value;
+
+        var hasControl = false;
+        foreach (var c in value)
+        {
+            if (char.IsControl(c))
+            {
+                hasControl = true;
+                break;
+            }
+        }
+        if (!hasControl)
+            return value;
+
+        var sanitized = new StringBuilder(value.Length);
+        foreach (var c in value)
+            sanitized.Append(char.IsControl(c) ? ' ' : c);
+        return sanitized.ToString();
+    }
 
     private static async Task<(byte[] Bytes, bool Truncated)> ReadCappedAsync(Stream stream, int maxBytes)
     {

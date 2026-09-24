@@ -273,6 +273,27 @@ public sealed class HttpBodyLoggingTests : IDisposable
     }
 
     [Fact]
+    public async Task CorrelationIdWithInjectedControlCharacters_IsNeutralizedInLog()
+    {
+        var middleware = Create(async context =>
+        {
+            context.Response.StatusCode = 200;
+            await Task.CompletedTask;
+        });
+        var context = JsonContext("GET", "/api/mails", "", "?folder=inbox");
+        context.Response.Headers[CorrelationMiddleware.HeaderName] = "corr-1\u001b[31mFAKE LOG LINE\u0007\u000bvalue";
+
+        await middleware.InvokeAsync(context);
+
+        var evt = SingleEvent();
+        var correlationId = evt.Properties["CorrelationId"].ToString();
+        Assert.DoesNotContain('\u001b', correlationId);
+        Assert.DoesNotContain('\u0007', correlationId);
+        Assert.DoesNotContain('\u000b', correlationId);
+        Assert.Contains("corr-1", correlationId);
+    }
+
+    [Fact]
     public async Task AnonymousRequestWithoutQuery_OmitsOptionalProperties()
     {
         var middleware = Create(async context =>
