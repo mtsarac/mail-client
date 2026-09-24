@@ -16,6 +16,8 @@ using Microsoft.EntityFrameworkCore;
 
 namespace MailClient.Api.Endpoints;
 
+public sealed record AccountSignatureRequest(string? Signature);
+
 public static class AccountEndpoints
 {
     public static void MapAccountEndpoints(this WebApplication app)
@@ -93,13 +95,13 @@ public static class AccountEndpoints
             .ProblemCodes(404, "mail_account_not_found");
 
         var api = app.MapGroup("/api").RequireAuthorization();
-        api.MapGet("/account", async (ICurrentMailAccount current, AppDbContext db, CancellationToken ct) => await db.MailAccounts.Where(x => x.Id == current.MailAccountId).Select(x => new AccountResponse(x.Id, x.EmailAddress, x.DisplayName, x.Provider, x.Status)).SingleOrDefaultAsync(ct) is { } account ? Results.Ok(account) : Results.NotFound()).WithTags("Account").WithName("GetCurrentAccount").WithSummary("Get current mailbox account").Produces<AccountResponse>().Produces(404);
+        api.MapGet("/account", async (ICurrentMailAccount current, AppDbContext db, CancellationToken ct) => await db.MailAccounts.Where(x => x.Id == current.MailAccountId).Select(x => new AccountResponse(x.Id, x.EmailAddress, x.DisplayName, x.Provider, x.Status, x.Signature)).SingleOrDefaultAsync(ct) is { } account ? Results.Ok(account) : Results.NotFound()).WithTags("Account").WithName("GetCurrentAccount").WithSummary("Get current mailbox account").Produces<AccountResponse>().Produces(404);
         api.MapPost("/account/reconnect", async (AccountReconnectRequest request, ICurrentMailAccount current, AccountConnectionService service, AuditLogger audit, CorrelationContext correlation, CancellationToken ct) =>
         {
             var account = await service.ReconnectAsync(current.MailAccountId, request, ct);
             await audit.WriteAsync(current.MailAccountId, AuditActions.MailAccountConnected, "MailAccount", current.MailAccountId.ToString(),
                 new Dictionary<string, string?> { ["provider"] = account.Provider.ToString(), ["authentication"] = account.AuthenticationMethod.ToString() }, correlation.CorrelationId, ct);
-            return Results.Ok(new AccountResponse(account.Id, account.EmailAddress, account.DisplayName, account.Provider, account.Status));
+            return Results.Ok(new AccountResponse(account.Id, account.EmailAddress, account.DisplayName, account.Provider, account.Status, account.Signature));
         }).WithTags("Account").WithName("ReconnectCurrentAccount").WithSummary("Update credentials or server settings for the signed-in mailbox")
             .WithDescription("Changes credentials and/or IMAP/SMTP settings of the authenticated mailbox only. Anonymous connect endpoints only create new accounts.")
             .Produces<AccountResponse>().ProblemCodes(401, "mail_authentication_failed")
@@ -118,6 +120,17 @@ public static class AccountEndpoints
                 ? await Audited(audit, current.MailAccountId, sessionId, correlation, ct)
                 : Results.NotFound()
         ).WithTags("Account").WithName("RevokeAccountSession").WithSummary("Sign out a device by revoking its session").Produces(204).Produces(404);
+        api.MapPut("/account/signature", async (AccountSignatureRequest request, ICurrentMailAccount current, AppDbContext db, CancellationToken ct) =>
+        {
+            var account = await db.MailAccounts.SingleOrDefaultAsync(x => x.Id == current.MailAccountId, ct);
+            if (account is null) return Results.NotFound();
+            var signature = request.Signature?.Trim();
+            account.Signature = signature is { Length: 0 } ? null : signature;
+            await db.SaveChangesAsync(ct);
+            return Results.NoContent();
+        }).WithTags("Account").WithName("UpdateAccountSignature").WithSummary("Set or clear the signature appended to outgoing mail")
+            .WithDescription("Blank/whitespace-only clears the signature. Synced across every device signed into this account.")
+            .Produces(204).Produces(404);
     }
 
     private static async Task<IResult> Audited(AuditLogger audit, Guid accountId, Guid sessionId, CorrelationContext correlation, CancellationToken ct)

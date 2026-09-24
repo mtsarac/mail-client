@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
+using MailClient.Api.Endpoints;
 using MailClient.Application.Accounts;
 using MailClient.Application.Discovery;
 using MailClient.Domain.Entities;
@@ -449,4 +450,46 @@ public sealed class AccountApiTests(AcceptingApiFactory factory) : IClassFixture
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
+    [Fact]
+    public async Task Signature_SetThenClear_RoundTrips()
+    {
+        var factory = _accepting;
+        var connect = await factory.CreateClient().PostAsJsonAsync("/api/accounts/connect-manual", ManualRequestBuilder.Build("mail.test.invalid", "mail.test.invalid", "signature@mail.test.invalid"));
+        connect.EnsureSuccessStatusCode();
+        var token = (await connect.Content.ReadFromJsonAsync<JsonDocument>())!.RootElement.GetProperty("accessToken").GetString()!;
+        var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        var set = await client.PutAsJsonAsync("/api/account/signature", new AccountSignatureRequest("Saygılarımla,\nAyşe"));
+        Assert.Equal(HttpStatusCode.NoContent, set.StatusCode);
+
+        var afterSet = (await client.GetFromJsonAsync<JsonDocument>("/api/account"))!.RootElement;
+        Assert.Equal("Saygılarımla,\nAyşe", afterSet.GetProperty("signature").GetString());
+
+        var cleared = await client.PutAsJsonAsync("/api/account/signature", new AccountSignatureRequest("   "));
+        Assert.Equal(HttpStatusCode.NoContent, cleared.StatusCode);
+        var afterClear = (await client.GetFromJsonAsync<JsonDocument>("/api/account"))!.RootElement;
+        Assert.Equal(JsonValueKind.Null, afterClear.GetProperty("signature").ValueKind);
+    }
+
+    [Fact]
+    public async Task Signature_IsScopedPerAccount()
+    {
+        var factory = _accepting;
+        var connectA = await factory.CreateClient().PostAsJsonAsync("/api/accounts/connect-manual", ManualRequestBuilder.Build("mail.test.invalid", "mail.test.invalid", "sig-a@mail.test.invalid"));
+        connectA.EnsureSuccessStatusCode();
+        var tokenA = (await connectA.Content.ReadFromJsonAsync<JsonDocument>())!.RootElement.GetProperty("accessToken").GetString()!;
+        var connectB = await factory.CreateClient().PostAsJsonAsync("/api/accounts/connect-manual", ManualRequestBuilder.Build("mail.test.invalid", "mail.test.invalid", "sig-b@mail.test.invalid"));
+        connectB.EnsureSuccessStatusCode();
+        var tokenB = (await connectB.Content.ReadFromJsonAsync<JsonDocument>())!.RootElement.GetProperty("accessToken").GetString()!;
+        var clientA = factory.CreateClient();
+        clientA.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", tokenA);
+        var clientB = factory.CreateClient();
+        clientB.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", tokenB);
+
+        await clientA.PutAsJsonAsync("/api/account/signature", new AccountSignatureRequest("A's signature"));
+
+        var accountB = (await clientB.GetFromJsonAsync<JsonDocument>("/api/account"))!.RootElement;
+        Assert.Equal(JsonValueKind.Null, accountB.GetProperty("signature").ValueKind);
+    }
 }

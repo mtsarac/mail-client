@@ -25,6 +25,11 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<AllowlistedEmail> AllowlistedEmails => Set<AllowlistedEmail>();
     public DbSet<ScheduledSend> ScheduledSends => Set<ScheduledSend>();
     public DbSet<ScheduledSendAttachment> ScheduledSendAttachments => Set<ScheduledSendAttachment>();
+    public DbSet<MailLabel> MailLabels => Set<MailLabel>();
+    public DbSet<MailLabelAssignment> MailLabelAssignments => Set<MailLabelAssignment>();
+    public DbSet<MailSnooze> MailSnoozes => Set<MailSnooze>();
+    public DbSet<PinnedMail> PinnedMails => Set<PinnedMail>();
+    public DbSet<Contact> Contacts => Set<Contact>();
 
     protected override void OnModelCreating(ModelBuilder model)
     {
@@ -109,5 +114,23 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         model.Entity<ScheduledSendAttachment>().Property(x => x.FileName).HasMaxLength(255);
         model.Entity<ScheduledSendAttachment>().Property(x => x.ContentType).HasMaxLength(150);
         model.Entity<ScheduledSendAttachment>().HasOne(x => x.ScheduledSend).WithMany(x => x.Attachments).HasForeignKey(x => x.ScheduledSendId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<MailLabel>().HasIndex(x => new { x.MailAccountId, x.Name }).IsUnique();
+        model.Entity<MailLabel>().Property(x => x.Name).HasMaxLength(100);
+        model.Entity<MailLabel>().HasOne(x => x.MailAccount).WithMany().HasForeignKey(x => x.MailAccountId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<MailLabelAssignment>().HasIndex(x => new { x.MailAccountId, x.MailId, x.MailLabelId }).IsUnique();
+        model.Entity<MailLabelAssignment>().HasOne<MailAccount>().WithMany().HasForeignKey(x => x.MailAccountId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<MailLabelAssignment>().HasOne<MailClient.Domain.Entities.Mail>().WithMany().HasForeignKey(x => x.MailId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<MailLabelAssignment>().HasOne<MailLabel>().WithMany().HasForeignKey(x => x.MailLabelId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<MailSnooze>().HasIndex(x => new { x.MailAccountId, x.MailId }).IsUnique();
+        model.Entity<MailSnooze>().HasOne<MailAccount>().WithMany().HasForeignKey(x => x.MailAccountId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<MailSnooze>().HasOne<MailClient.Domain.Entities.Mail>().WithMany().HasForeignKey(x => x.MailId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<PinnedMail>().HasIndex(x => new { x.MailAccountId, x.MailId }).IsUnique();
+        model.Entity<PinnedMail>().HasOne<MailAccount>().WithMany().HasForeignKey(x => x.MailAccountId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<PinnedMail>().HasOne<MailClient.Domain.Entities.Mail>().WithMany().HasForeignKey(x => x.MailId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<Contact>().HasIndex(x => new { x.MailAccountId, x.NormalizedEmail }).IsUnique();
+        model.Entity<Contact>().Property(x => x.Email).HasMaxLength(320);
+        model.Entity<Contact>().Property(x => x.NormalizedEmail).HasMaxLength(320);
+        model.Entity<Contact>().Property(x => x.DisplayName).HasMaxLength(250);
+        model.Entity<Contact>().HasOne<MailAccount>().WithMany().HasForeignKey(x => x.MailAccountId).OnDelete(DeleteBehavior.Cascade);
     }
 }

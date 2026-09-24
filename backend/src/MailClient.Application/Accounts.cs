@@ -13,7 +13,7 @@ public sealed record ManualConnectRequest(string Email, string Username, Authent
 public sealed record TokenResponse(string AccessToken, string RefreshToken, Guid MailAccountId, DateTime AccessTokenExpiresAt);
 public sealed record RefreshRequest(string RefreshToken);
 public sealed record LogoutRequest(string RefreshToken);
-public sealed record AccountResponse(Guid Id, string EmailAddress, string DisplayName, MailProvider Provider, MailAccountStatus Status);
+public sealed record AccountResponse(Guid Id, string EmailAddress, string DisplayName, MailProvider Provider, MailAccountStatus Status, string? Signature);
 public sealed record MailSessionResponse(Guid Id, string? DeviceIdentifier, DateTime CreatedAt, DateTime LastUsedAt, DateTime ExpiresAt);
 public sealed record OAuthStartRequest(string Email, string? DeviceIdentifier = null);
 public sealed record OAuthStartResponse(string AuthorizationUrl, string State);
