@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text.Json;
 using MailClient.Application.Mail;
 using MailClient.Application.Runtime;
@@ -88,7 +89,7 @@ public sealed class ScheduledSendService(
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            logger.LogWarning(ex, "Scheduled send message could not be constructed for account {AccountId}.", accountId);
+            logger.LogWarning(ex, "Scheduled send message could not be constructed for account {AccountIdHash}.", ShortHash(accountId));
             throw new InvalidOperationException("message_not_constructible");
         }
 
@@ -171,10 +172,16 @@ public sealed class ScheduledSendService(
             }
             catch (Exception ex)
             {
-                logger.LogWarning(ex, "Failed to delete staged attachment for cancelled scheduled send {Id}.", id);
+                logger.LogWarning(ex, "Failed to delete staged attachment for cancelled scheduled send {ScheduledSendIdHash}.", ShortHash(id));
             }
         }
     }
+
+    /// <summary>
+    /// Produces a short, non-reversible identifier for log correlation without emitting the raw
+    /// account/entity GUID in cleartext (CWE-532).
+    /// </summary>
+    private static string ShortHash(Guid value) => Convert.ToHexString(SHA256.HashData(value.ToByteArray()))[..8];
 
     internal static IReadOnlyList<string> Deserialize(string json) =>
         JsonSerializer.Deserialize<List<string>>(json) ?? [];

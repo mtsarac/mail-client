@@ -184,6 +184,23 @@ public sealed class IncomingMailMapperTests
     }
 
     [Fact]
+    public void Map_ExtractsListUnsubscribeHeaders_IncludingPost()
+    {
+        var message = SyncTestSeed.SimpleMessage("list headers");
+        message.Headers.Add("List-Id", "Ornek Liste <ornek.liste.example.test>");
+        message.Headers.Add("List-Unsubscribe", "<mailto:unsubscribe@ornek.test>, <https://ornek.test/unsubscribe>");
+        message.Headers.Add("List-Unsubscribe-Post", "List-Unsubscribe=One-Click");
+
+        var incoming = IncomingMailMapper.Map(message, 1, 7, AccountId, FolderId, Unseen);
+
+        Assert.Equal("Ornek Liste <ornek.liste.example.test>", incoming.Headers.Single(header => header.Name == "List-Id").Value);
+        Assert.Equal("<mailto:unsubscribe@ornek.test>, <https://ornek.test/unsubscribe>",
+            incoming.Headers.Single(header => header.Name == "List-Unsubscribe").Value);
+        Assert.Equal("List-Unsubscribe=One-Click",
+            incoming.Headers.Single(header => header.Name == "List-Unsubscribe-Post").Value);
+    }
+
+    [Fact]
     public void Map_MultipartAlternative_KeepsBothBodies_AndUtf8Headers()
     {
         var message = new MimeMessage();
