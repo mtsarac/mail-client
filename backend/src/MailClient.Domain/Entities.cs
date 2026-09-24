@@ -212,6 +212,8 @@ public sealed class ScheduledSend
     public DateTime CreatedAtUtc { get; set; }
     public Guid? SentMailId { get; set; }
     public string? FailureReason { get; set; }
+    public int AttemptCount { get; set; }
+    public DateTime? NextAttemptAtUtc { get; set; }
     public string IdempotencyKey { get; set; } = "";
     public string Fingerprint { get; set; } = "";
     public Guid? ReplySourceMailId { get; set; }

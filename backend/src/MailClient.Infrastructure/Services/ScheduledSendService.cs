@@ -27,7 +27,36 @@ public sealed record ScheduledSendListItem(
     ScheduledSendStatus Status,
     DateTime CreatedAtUtc,
     Guid? SentMailId,
-    string? FailureReason);
+    string? FailureReason,
+    int AttemptCount,
+    DateTime? NextAttemptAtUtc);
+
+public sealed record ScheduledSendAttachmentInfo(Guid Id, string FileName, string ContentType, long SizeBytes);
+
+public sealed record ScheduledSendDetail(
+    Guid Id,
+    IReadOnlyList<string> To,
+    IReadOnlyList<string> Cc,
+    IReadOnlyList<string> Bcc,
+    string Subject,
+    string? BodyHtml,
+    string? BodyText,
+    DateTime SendAtUtc,
+    ScheduledSendStatus Status,
+    string? FailureReason,
+    int AttemptCount,
+    DateTime? NextAttemptAtUtc,
+    IReadOnlyList<ScheduledSendAttachmentInfo> Attachments);
+
+public sealed record RescheduleFailedSend(
+    DateTimeOffset SendAtUtc,
+    IReadOnlyList<string> To,
+    IReadOnlyList<string> Cc,
+    IReadOnlyList<string> Bcc,
+    string Subject,
+    string? BodyHtml,
+    string? BodyText,
+    IReadOnlyList<Guid>? AttachmentIds);
 
 /// <summary>
 /// Creates, lists and cancels scheduled sends. The actual delivery at <see cref="ScheduledSend.SendAtUtc"/> is
@@ -146,8 +175,59 @@ public sealed class ScheduledSendService(
             .ToListAsync(cancellationToken);
         return rows.Select(x => new ScheduledSendListItem(
             x.Id, Deserialize(x.ToAddressesJson), Deserialize(x.CcAddressesJson), Deserialize(x.BccAddressesJson),
-            x.Subject, x.SendAtUtc, x.Status, x.CreatedAtUtc, x.SentMailId, x.FailureReason))
+            x.Subject, x.SendAtUtc, x.Status, x.CreatedAtUtc, x.SentMailId, x.FailureReason,
+            x.AttemptCount, x.NextAttemptAtUtc))
             .ToList();
+    }
+
+    public async Task<ScheduledSendDetail> GetAsync(Guid accountId, Guid id, CancellationToken cancellationToken)
+    {
+        var entity = await db.ScheduledSends.AsNoTracking().Include(x => x.Attachments)
+            .SingleOrDefaultAsync(x => x.Id == id && x.MailAccountId == accountId, cancellationToken)
+            ?? throw new InvalidOperationException("scheduled_send_not_found");
+        return new ScheduledSendDetail(entity.Id,
+            Deserialize(entity.ToAddressesJson), Deserialize(entity.CcAddressesJson), Deserialize(entity.BccAddressesJson),
+            entity.Subject, entity.BodyHtml, entity.BodyText, entity.SendAtUtc, entity.Status, entity.FailureReason,
+            entity.AttemptCount, entity.NextAttemptAtUtc,
+            entity.Attachments.Select(x => new ScheduledSendAttachmentInfo(x.Id, x.FileName, x.ContentType, x.SizeBytes)).ToList());
+    }
+
+    public async Task<ScheduledSendCreateResult> RescheduleFailedAsync(
+        Guid accountId, Guid id, RescheduleFailedSend request, string newKey, string? correlationId,
+        CancellationToken cancellationToken)
+    {
+        var source = await db.ScheduledSends.AsNoTracking().Include(x => x.Attachments)
+            .SingleOrDefaultAsync(x => x.Id == id && x.MailAccountId == accountId, cancellationToken)
+            ?? throw new InvalidOperationException("scheduled_send_not_found");
+        if (source.Status != ScheduledSendStatus.Failed)
+            throw new InvalidOperationException("scheduled_send_already_sent");
+        ComposeMailValidator.ValidateIdempotencyKey(newKey);
+        if (newKey == source.IdempotencyKey)
+            throw new InvalidOperationException("idempotency_conflict");
+
+        var selected = request.AttachmentIds is null
+            ? source.Attachments.ToList()
+            : source.Attachments.Where(x => request.AttachmentIds.Contains(x.Id)).ToList();
+        if (request.AttachmentIds is not null && (request.AttachmentIds.Count != selected.Count
+            || request.AttachmentIds.Count != request.AttachmentIds.Distinct().Count()))
+            throw new InvalidOperationException("scheduled_send_attachment_not_found");
+
+        var opened = new List<SendMailAttachment>(selected.Count);
+        try
+        {
+            foreach (var attachment in selected)
+                opened.Add(new SendMailAttachment(attachment.FileName, attachment.ContentType,
+                    await storage.OpenReadAsync(attachment.StoragePath, cancellationToken)));
+            var command = new SendMailCommand(accountId, request.To, request.Cc, request.Bcc, request.Subject,
+                request.BodyHtml, request.BodyText, opened, source.ReplySourceMailId)
+            { IdempotencyKey = newKey };
+            return await CreateAsync(accountId, command, request.SendAtUtc.UtcDateTime, correlationId, cancellationToken);
+        }
+        finally
+        {
+            foreach (var attachment in opened)
+                await attachment.Content.DisposeAsync();
+        }
     }
 
     public async Task CancelAsync(Guid accountId, Guid id, CancellationToken cancellationToken)
@@ -155,10 +235,23 @@ public sealed class ScheduledSendService(
         var entity = await db.ScheduledSends.Include(x => x.Attachments)
             .SingleOrDefaultAsync(x => x.Id == id && x.MailAccountId == accountId, cancellationToken)
             ?? throw new InvalidOperationException("scheduled_send_not_found");
-        if (entity.Status != ScheduledSendStatus.Pending)
+        if (entity.Status is not (ScheduledSendStatus.Pending or ScheduledSendStatus.Failed))
             throw new InvalidOperationException("scheduled_send_already_sent");
 
-        entity.Status = ScheduledSendStatus.Cancelled;
+        if (db.Database.IsRelational())
+        {
+            if (await db.ScheduledSends.Where(x => x.Id == id && x.MailAccountId == accountId
+                    && (x.Status == ScheduledSendStatus.Pending || x.Status == ScheduledSendStatus.Failed))
+                .ExecuteUpdateAsync(setters => setters.SetProperty(x => x.Status, ScheduledSendStatus.Cancelled),
+                    cancellationToken) != 1)
+                throw new InvalidOperationException("scheduled_send_already_sent");
+        }
+        else
+        {
+            entity.Status = ScheduledSendStatus.Cancelled;
+            await db.SaveChangesAsync(cancellationToken);
+        }
+
         var attachments = entity.Attachments.ToList();
         db.ScheduledSendAttachments.RemoveRange(attachments);
         await db.SaveChangesAsync(cancellationToken);
