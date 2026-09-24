@@ -27,6 +27,8 @@ public sealed class SyncCoordinator : BackgroundService, ISyncScheduler
     private readonly Channel<SyncScheduleSignal> _signals = Channel.CreateUnbounded<SyncScheduleSignal>();
     private readonly object _runningGate = new();
     private readonly Dictionary<Guid, Task> _runningAccounts = [];
+    private readonly object _jobGate = new();
+    private readonly SyncJobRegistry _jobs;
 
     public SyncCoordinator(
         IServiceScopeFactory scopes,
@@ -44,6 +46,7 @@ public sealed class SyncCoordinator : BackgroundService, ISyncScheduler
         _logger = logger;
         _jitterSource = jitterSource ?? Random.Shared.NextDouble;
         _metrics = metrics;
+        _jobs = new SyncJobRegistry(clock);
     }
 
     internal static readonly TimeSpan LockFailureRequeueDelay = TimeSpan.FromSeconds(30);
@@ -59,7 +62,8 @@ public sealed class SyncCoordinator : BackgroundService, ISyncScheduler
         SyncEnqueueResult result;
         try
         {
-            result = _queue.Enqueue(request);
+            lock (_jobGate)
+                result = _queue.Enqueue(request);
         }
         catch (SyncQueueFullException)
         {
@@ -81,6 +85,27 @@ public sealed class SyncCoordinator : BackgroundService, ISyncScheduler
                 _metrics?.RecordSyncScheduled(request.Origin);
                 break;
         }
+    }
+
+    public ValueTask<Guid> ScheduleUserFolderJobAsync(Guid accountId, Guid folderId, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var request = SyncScheduling.ForUserFolder(accountId, folderId, _queue.NextSequence());
+        Guid jobId;
+        lock (_jobGate)
+        {
+            _jobs.EnsureCapacity();
+            Enqueue(request, newWork: true);
+            jobId = _jobs.Create(request.Request);
+        }
+        _signals.Writer.TryWrite(new SyncScheduleSignal());
+        return ValueTask.FromResult(jobId);
+    }
+
+    public SyncJobStatus? GetJobStatus(Guid accountId, Guid jobId)
+    {
+        lock (_jobGate)
+            return _jobs.Get(accountId, jobId);
     }
 
     public async ValueTask ScheduleAccountAsync(Guid accountId, SyncOrigin origin, CancellationToken cancellationToken)
@@ -123,14 +148,22 @@ public sealed class SyncCoordinator : BackgroundService, ISyncScheduler
 
     public int PendingCount => _queue.Count;
 
-    public IReadOnlyList<ScheduledSyncRequest> DrainPending() => _queue.Drain();
+    public IReadOnlyList<ScheduledSyncRequest> DrainPending()
+    {
+        lock (_jobGate)
+        {
+            var drained = _queue.Drain();
+            foreach (var item in drained)
+                _jobs.FailQueued(item.Request, "sync_interrupted");
+            return drained;
+        }
+    }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        await RecoverPendingReconciliationAsync(stoppingToken);
-
         try
         {
+            await RecoverPendingReconciliationAsync(stoppingToken);
             while (!stoppingToken.IsCancellationRequested)
             {
                 RuntimeSettings settings = await CurrentSettingsAsync(stoppingToken);
@@ -150,6 +183,8 @@ public sealed class SyncCoordinator : BackgroundService, ISyncScheduler
             lock (_runningGate)
                 running = [.. _runningAccounts.Values];
             await Task.WhenAll(running).ContinueWith(static _ => { }, TaskScheduler.Default);
+            lock (_jobGate)
+                _jobs.FailAll("sync_interrupted");
         }
     }
 
@@ -188,66 +223,103 @@ public sealed class SyncCoordinator : BackgroundService, ISyncScheduler
     /// </summary>
     private List<Task> StartReadyWork(RuntimeSettings settings, CancellationToken cancellationToken)
     {
-        var groups = new Dictionary<Guid, List<ScheduledSyncRequest>>();
-        var deferred = new List<ScheduledSyncRequest>();
-        int running;
-        lock (_runningGate)
-            running = _runningAccounts.Count;
-        while (_queue.TryDequeue(out var next))
+        lock (_jobGate)
         {
-            var accountId = next.Request.AccountId;
-            bool busy;
+            var groups = new Dictionary<Guid, List<(ScheduledSyncRequest Item, IReadOnlyList<Guid> Jobs)>>();
+            var deferred = new List<ScheduledSyncRequest>();
+            int running;
             lock (_runningGate)
-                busy = _runningAccounts.ContainsKey(accountId);
-            if (busy || (!groups.ContainsKey(accountId) && running + groups.Count >= settings.Sync.MaxConcurrentAccounts))
+                running = _runningAccounts.Count;
+            while (_queue.TryDequeue(out var next))
             {
-                deferred.Add(next);
-                continue;
-            }
-
-            if (!groups.TryGetValue(accountId, out var group))
-            {
-                group = [];
-                groups[accountId] = group;
-            }
-
-            group.Add(next);
-        }
-
-        foreach (var item in deferred)
-            Enqueue(item);
-
-        var started = new List<Task>(groups.Count);
-        foreach (var (accountId, group) in groups)
-        {
-            var task = RunAccountGroupAsync(group, settings, cancellationToken);
-            lock (_runningGate)
-                _runningAccounts[accountId] = task;
-            task.ContinueWith(completed =>
-            {
+                var accountId = next.Request.AccountId;
+                bool busy;
                 lock (_runningGate)
-                    _runningAccounts.Remove(accountId);
-                if (completed.IsFaulted)
-                    _logger.LogError(completed.Exception, "Account sync run failed unexpectedly.");
-                _signals.Writer.TryWrite(new SyncScheduleSignal());
-            }, TaskScheduler.Default);
-            started.Add(task);
-        }
+                    busy = _runningAccounts.ContainsKey(accountId);
+                if (busy || (!groups.ContainsKey(accountId) && running + groups.Count >= settings.Sync.MaxConcurrentAccounts))
+                {
+                    deferred.Add(next);
+                    continue;
+                }
 
-        return started;
+                if (!groups.TryGetValue(accountId, out var group))
+                {
+                    group = [];
+                    groups[accountId] = group;
+                }
+                group.Add((next, _jobs.Claim(next.Request)));
+            }
+
+            foreach (var item in deferred)
+            {
+                try
+                {
+                    Enqueue(item);
+                }
+                catch (SyncQueueFullException)
+                {
+                    _jobs.FailQueued(item.Request, "sync_queue_full");
+                }
+            }
+
+            var started = new List<Task>(groups.Count);
+            foreach (var (accountId, group) in groups)
+            {
+                var task = RunAccountGroupAsync(group, settings, cancellationToken);
+                lock (_runningGate)
+                    _runningAccounts[accountId] = task;
+                task.ContinueWith(completed =>
+                {
+                    lock (_runningGate)
+                        _runningAccounts.Remove(accountId);
+                    if (completed.IsFaulted)
+                        _logger.LogError(completed.Exception, "Account sync run failed unexpectedly.");
+                    _signals.Writer.TryWrite(new SyncScheduleSignal());
+                }, TaskScheduler.Default);
+                started.Add(task);
+            }
+            return started;
+        }
     }
 
-    private async Task RunAccountGroupAsync(List<ScheduledSyncRequest> group, RuntimeSettings settings, CancellationToken cancellationToken)
+    private async Task RunAccountGroupAsync(List<(ScheduledSyncRequest Item, IReadOnlyList<Guid> Jobs)> group, RuntimeSettings settings, CancellationToken cancellationToken)
     {
         var ordered = group
-            .OrderBy(item => (int)item.Priority)
-            .ThenBy(item => item.Sequence)
+            .OrderBy(entry => (int)entry.Item.Priority)
+            .ThenBy(entry => entry.Item.Sequence)
             .ToList();
-        foreach (var item in ordered)
-            await RunAccountAsync(item, settings, cancellationToken);
+        foreach (var (item, jobs) in ordered)
+        {
+            try
+            {
+                var errorCode = await RunAccountAsync(item, settings, cancellationToken);
+                lock (_jobGate)
+                {
+                    if (errorCode == "sync_deferred")
+                        _jobs.Defer(item.Request, jobs);
+                    else
+                        _jobs.Complete(jobs, errorCode);
+                }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                lock (_jobGate)
+                {
+                    foreach (var pending in ordered)
+                        _jobs.Complete(pending.Jobs, "sync_interrupted");
+                }
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Account sync run failed unexpectedly.");
+                lock (_jobGate)
+                    _jobs.Complete(jobs, "sync_failed");
+            }
+        }
     }
 
-    private async Task RunAccountAsync(ScheduledSyncRequest item, RuntimeSettings settings, CancellationToken cancellationToken)
+    private async Task<string?> RunAccountAsync(ScheduledSyncRequest item, RuntimeSettings settings, CancellationToken cancellationToken)
     {
         await using var scope = _scopes.CreateAsyncScope();
         var provider = scope.ServiceProvider;
@@ -256,7 +328,7 @@ public sealed class SyncCoordinator : BackgroundService, ISyncScheduler
         if (accountLock.Status == SyncLockStatus.Contended)
         {
             Enqueue(item);
-            return;
+            return "sync_deferred";
         }
 
         if (accountLock.Status == SyncLockStatus.InfrastructureFailure)
@@ -265,7 +337,7 @@ public sealed class SyncCoordinator : BackgroundService, ISyncScheduler
                 "Sync lock unavailable; {Origin} sync deferred for {DelaySeconds} seconds.",
                 MailClientTelemetry.Origin(item.Origin), LockFailureRequeueDelay.TotalSeconds);
             RequeueAfter(item, LockFailureRequeueDelay, cancellationToken);
-            return;
+            return "sync_deferred";
         }
 
         using var activity = MailClientTelemetry.StartActivity("mailclient.sync.account");
@@ -276,21 +348,26 @@ public sealed class SyncCoordinator : BackgroundService, ISyncScheduler
             var db = provider.GetRequiredService<AppDbContext>();
             var account = await db.MailAccounts.AsNoTracking()
                 .SingleOrDefaultAsync(entry => entry.Id == item.Request.AccountId, cancellationToken);
-            if (account is null || account.Status is MailAccountStatus.Disabled or MailAccountStatus.NeedsReauthentication)
-                return;
+            if (account is null)
+                return "mail_account_not_found";
+            if (account.Status == MailAccountStatus.Disabled)
+                return "mail_account_disabled";
+            if (account.Status == MailAccountStatus.NeedsReauthentication)
+                return "mail_account_needs_reauthentication";
             activity?.SetTag("mail.provider", MailClientTelemetry.Provider(account.Provider));
             if (!await ProviderAllowsAsync(provider, account, cancellationToken))
-                return;
+                return "mail_provider_unavailable";
 
             var folders = await SelectFoldersAsync(db, item, cancellationToken);
             if (folders.Count == 0)
-                return;
+                return "mail_folder_unavailable";
 
             var folderBudget = Math.Max(1, settings.Sync.MaxConcurrentFoldersPerAccount);
             using var folderGate = new SemaphoreSlim(folderBudget, folderBudget);
             var host = account.ImapHost.Trim().ToLowerInvariant();
             var tasks = folders.Select(folder => RunFolderAsync(item, folder, settings, host, folderGate, cancellationToken));
-            await Task.WhenAll(tasks);
+            var results = await Task.WhenAll(tasks);
+            return results.FirstOrDefault(error => error is not null);
         }
         finally
         {
@@ -298,7 +375,7 @@ public sealed class SyncCoordinator : BackgroundService, ISyncScheduler
         }
     }
 
-    private async Task RunFolderAsync(
+    private async Task<string?> RunFolderAsync(
         ScheduledSyncRequest item,
         FolderTarget folder,
         RuntimeSettings settings,
@@ -313,11 +390,11 @@ public sealed class SyncCoordinator : BackgroundService, ISyncScheduler
             var provider = scope.ServiceProvider;
             var db = provider.GetRequiredService<AppDbContext>();
             if (!await db.MailAccounts.AnyAsync(entry => entry.Id == item.Request.AccountId, cancellationToken))
-                return;
+                return "mail_account_not_found";
 
             var state = await db.SyncStates.SingleOrDefaultAsync(entry => entry.MailFolderId == folder.FolderId, cancellationToken);
             if (state?.NextRetryAt is { } nextRetry && nextRetry > _clock.UtcNow)
-                return;
+                return "sync_retry_deferred";
             var previousFailures = state?.ConsecutiveFailures ?? 0;
 
             using var activity = MailClientTelemetry.StartActivity("mailclient.sync.folder");
@@ -332,7 +409,7 @@ public sealed class SyncCoordinator : BackgroundService, ISyncScheduler
                     settings.Sync.MaxConcurrentSyncConnectionsPerHost,
                     cancellationToken);
                 _metrics?.RecordSyncConnectionBudgetWait(Stopwatch.GetElapsedTime(started));
-                await ExecuteFolderAsync(provider, db, item, folder, previousFailures, settings, started, activity, cancellationToken);
+                return await ExecuteFolderAsync(provider, db, item, folder, previousFailures, settings, started, activity, cancellationToken);
             }
             catch (OperationCanceledException)
             {
@@ -350,7 +427,7 @@ public sealed class SyncCoordinator : BackgroundService, ISyncScheduler
         }
     }
 
-    private async Task ExecuteFolderAsync(
+    private async Task<string?> ExecuteFolderAsync(
         IServiceProvider provider,
         AppDbContext db,
         ScheduledSyncRequest item,
@@ -368,6 +445,7 @@ public sealed class SyncCoordinator : BackgroundService, ISyncScheduler
             await RecordSuccessAsync(db, folder.FolderId, cancellationToken);
             activity?.SetTag("sync.result", "success");
             _metrics?.RecordSyncFolderCompleted(item.Origin, folder.FolderType, Stopwatch.GetElapsedTime(started), previousFailures > 0);
+            return null;
         }
         catch (OperationCanceledException)
         {
@@ -401,6 +479,13 @@ public sealed class SyncCoordinator : BackgroundService, ISyncScheduler
                     _metrics?.RecordSyncRetriesExhausted(item.Origin);
                 }
             }
+            return category switch
+            {
+                SyncFailureCategory.Authentication => "mail_authentication_failed",
+                SyncFailureCategory.Configuration => "mail_provider_unavailable",
+                SyncFailureCategory.Transient => "mail_provider_unavailable",
+                _ => "sync_failed"
+            };
         }
     }
 
@@ -417,6 +502,19 @@ public sealed class SyncCoordinator : BackgroundService, ISyncScheduler
             }
             catch (OperationCanceledException)
             {
+                lock (_jobGate)
+                    _jobs.FailQueued(item.Request, "sync_interrupted");
+            }
+            catch (SyncQueueFullException)
+            {
+                lock (_jobGate)
+                    _jobs.FailQueued(item.Request, "sync_queue_full");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Deferred sync could not be requeued.");
+                lock (_jobGate)
+                    _jobs.FailQueued(item.Request, "sync_failed");
             }
         }, cancellationToken);
     }

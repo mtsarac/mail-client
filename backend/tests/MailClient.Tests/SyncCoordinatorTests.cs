@@ -423,6 +423,73 @@ public sealed class SyncCoordinatorTests
         Assert.Equal(new[] { SyncCoordinator.LockFailureRequeueDelay }, harness.Clock.Delays);
     }
 
+    [Fact]
+    public async Task UserSyncJobs_CompleteOnlyAfterSharedFolderExecutionFinishes()
+    {
+        var entered = new ConcurrentDictionary<Guid, int>();
+        var maxConcurrent = new ConcurrentDictionary<Guid, int>();
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var executor = new BlockingExecutor(entered, maxConcurrent, gate);
+        var harness = CreateHarness(executor, maxAccounts: 1, maxFolders: 1);
+        var accountId = await harness.SeedAccountAsync(0);
+        var folderId = await harness.AddFolderAsync(accountId, MailFolderType.Inbox);
+        var first = await harness.Scheduler.ScheduleUserFolderJobAsync(accountId, folderId, CancellationToken.None);
+        var second = await harness.Scheduler.ScheduleUserFolderJobAsync(accountId, folderId, CancellationToken.None);
+        Assert.NotEqual(first, second);
+        Assert.Equal(1, harness.Scheduler.PendingCount);
+        Assert.Equal("queued", harness.Scheduler.GetJobStatus(accountId, first)?.Status);
+
+        var dispatch = harness.Scheduler.DispatchOnceAsync(CancellationToken.None);
+        await WaitUntilAsync(() => entered.ContainsKey(accountId));
+        Assert.Equal("running", harness.Scheduler.GetJobStatus(accountId, first)?.Status);
+        Assert.Equal("running", harness.Scheduler.GetJobStatus(accountId, second)?.Status);
+        Assert.Null(harness.Scheduler.GetJobStatus(Guid.NewGuid(), first));
+        gate.SetResult();
+        await dispatch;
+
+        Assert.Equal("succeeded", harness.Scheduler.GetJobStatus(accountId, first)?.Status);
+        Assert.Equal("succeeded", harness.Scheduler.GetJobStatus(accountId, second)?.Status);
+        Assert.Null(harness.Scheduler.GetJobStatus(accountId, first)?.ErrorCode);
+        Assert.Single(executor.FolderCalls);
+    }
+
+    [Fact]
+    public async Task UserSyncJob_ReportsExecutorFailureRatherThanSuccessfulEnqueue()
+    {
+        var executor = new FailingExecutor(new MailConnectionException(MailConnectionFailure.Authentication, "bad secret"));
+        var harness = CreateHarness(executor, maxAccounts: 1, maxFolders: 1);
+        var accountId = await harness.SeedAccountAsync(0);
+        var folderId = await harness.AddFolderAsync(accountId, MailFolderType.Inbox);
+        var jobId = await harness.Scheduler.ScheduleUserFolderJobAsync(accountId, folderId, CancellationToken.None);
+
+        await harness.Scheduler.DispatchOnceAsync(CancellationToken.None);
+
+        var status = harness.Scheduler.GetJobStatus(accountId, jobId);
+        Assert.Equal("failed", status?.Status);
+        Assert.Equal("mail_authentication_failed", status?.ErrorCode);
+    }
+
+    [Fact]
+    public async Task UserSyncJob_QueueFullAndAbandonedWorkNeverReportSuccess()
+    {
+        var harness = CreateHarness(new OrderRecordingExecutor(new ConcurrentQueue<Guid>()), maxAccounts: 1, maxFolders: 1, queueCapacity: 1);
+        var accountId = await harness.SeedAccountAsync(0);
+        var firstFolder = await harness.AddFolderAsync(accountId, MailFolderType.Inbox);
+        var secondFolder = await harness.AddFolderAsync(accountId, MailFolderType.Custom);
+        var jobId = await harness.Scheduler.ScheduleUserFolderJobAsync(accountId, firstFolder, CancellationToken.None);
+
+        await Assert.ThrowsAsync<SyncQueueFullException>(async () =>
+            await harness.Scheduler.ScheduleUserFolderJobAsync(accountId, secondFolder, CancellationToken.None));
+        Assert.Equal("queued", harness.Scheduler.GetJobStatus(accountId, jobId)?.Status);
+        harness.Scheduler.DrainPending();
+
+        var abandoned = harness.Scheduler.GetJobStatus(accountId, jobId);
+        Assert.Equal("failed", abandoned?.Status);
+        Assert.Equal("sync_interrupted", abandoned?.ErrorCode);
+        harness.Clock.Current += TimeSpan.FromHours(2);
+        Assert.Null(harness.Scheduler.GetJobStatus(accountId, jobId));
+    }
+
     private static async Task WaitUntilAsync(Func<bool> condition)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
