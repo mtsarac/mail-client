@@ -92,6 +92,36 @@ jobs:
           MAILCLIENT_TEST_GREENMAIL: "1"
         run: dotnet test backend/MailClient.slnx --configuration Release --no-build --verbosity normal
 
+  docker:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build runtime image
+        run: docker build -f backend/Dockerfile --target runtime -t mailclient-api:ci backend
+
+      - name: Start container and smoke-test /health/live
+        run: |
+          set -euo pipefail
+          # Development bypasses the production-only ConnectionStrings/DataProtection/Jwt
+          # checks in StartupConfig.Validate — this smoke test only proves the image boots
+          # and serves a request, not that it's configured for a real deployment.
+          container=$(docker run -d -p 8080:8080 -e ASPNETCORE_ENVIRONMENT=Development mailclient-api:ci)
+          trap 'docker logs "$container"; docker rm -f "$container" >/dev/null' EXIT
+          for _ in $(seq 1 30); do
+            if curl --fail --silent http://localhost:8080/health/live; then
+              echo
+              echo "Container is healthy."
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::Container never became healthy within 30s."
+          exit 1
+
   format:
     needs: changes
     if: needs.changes.outputs.backend == 'true'
