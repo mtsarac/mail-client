@@ -42,15 +42,20 @@ public static class FolderEndpoints
                 return Results.Problem(statusCode: 409, extensions: new Dictionary<string, object?> { ["code"] = "mail_folder_unavailable" });
             try
             {
-                await scheduler.ScheduleFolderAsync(current.MailAccountId, id, SyncOrigin.UserRequested, ct);
+                var jobId = await scheduler.ScheduleUserFolderJobAsync(current.MailAccountId, id, ct);
+                await audit.WriteAsync(current.MailAccountId, AuditActions.MailSyncRequested, "MailFolder", id.ToString(), null, correlation.CorrelationId, ct);
+                return Results.Accepted($"/api/folders/sync-jobs/{jobId}", new SyncJobStatus(jobId, "queued", null));
             }
             catch (SyncQueueFullException)
             {
                 return Results.Problem(statusCode: 503, extensions: new Dictionary<string, object?> { ["code"] = "sync_queue_full" });
             }
-            await audit.WriteAsync(current.MailAccountId, AuditActions.MailSyncRequested, "MailFolder", id.ToString(), null, correlation.CorrelationId, ct);
-            return Results.Accepted();
-        }).WithName("SyncFolder").WithSummary("Request folder synchronization").WithDescription("Asynchronous: returns 202 Accepted once the sync is queued, not when it finishes. Poll GET /api/mails to see new mail.")
-            .Produces(202).Produces(404).ProblemCodes(409, "mail_folder_unavailable").ProblemCodes(503, "sync_queue_full");
+        }).WithName("SyncFolder").WithSummary("Request folder synchronization").WithDescription("Returns 202 and a jobId. Poll GET /api/folders/sync-jobs/{jobId}; read cached mail only after status is succeeded.")
+            .Produces<SyncJobStatus>(202).Produces(404).ProblemCodes(409, "mail_folder_unavailable").ProblemCodes(503, "sync_queue_full");
+        api.MapGet("/folders/sync-jobs/{jobId:guid}", (Guid jobId, ICurrentMailAccount current, ISyncScheduler scheduler) =>
+            scheduler.GetJobStatus(current.MailAccountId, jobId) is { } job ? Results.Ok(job) : Results.NotFound())
+            .WithName("GetFolderSyncJob").WithSummary("Get folder synchronization status")
+            .WithDescription("Account-scoped status: queued, running, succeeded, or failed (with errorCode). Unknown or expired jobs return 404, including after server restart; clients must treat these as not completed. Terminal results remain in memory for up to one hour.")
+            .Produces<SyncJobStatus>().Produces(404);
     }
 }

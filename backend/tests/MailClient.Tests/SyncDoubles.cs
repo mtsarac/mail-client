@@ -223,6 +223,14 @@ internal sealed class FakeSyncScheduler(Action? onSchedule = null) : ISyncSchedu
         onSchedule?.Invoke();
         return ValueTask.CompletedTask;
     }
+    public ValueTask<Guid> ScheduleUserFolderJobAsync(Guid accountId, Guid folderId, CancellationToken cancellationToken)
+    {
+        Scheduled.Add((accountId, folderId, SyncOrigin.UserRequested));
+        onSchedule?.Invoke();
+        return ValueTask.FromResult(Guid.NewGuid());
+    }
+
+    public SyncJobStatus? GetJobStatus(Guid accountId, Guid jobId) => null;
 }
 
 internal sealed class FakeSyncClock(DateTime now) : ISyncClock

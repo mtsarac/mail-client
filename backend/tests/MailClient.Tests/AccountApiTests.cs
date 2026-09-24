@@ -309,6 +309,21 @@ public sealed class AccountApiTests(AcceptingApiFactory factory) : IClassFixture
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _accepting.Services.GetRequiredService<IJwtTokenIssuer>().Issue(callerId).Token);
 
         Assert.Equal(HttpStatusCode.NotFound, (await client.PostAsync($"/api/folders/{folderId}/sync", null)).StatusCode);
+
+        var ownerClient = _accepting.CreateClient();
+        ownerClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _accepting.Services.GetRequiredService<IJwtTokenIssuer>().Issue(ownerId).Token);
+        var accepted = await ownerClient.PostAsync($"/api/folders/{folderId}/sync", null);
+        Assert.Equal(HttpStatusCode.Accepted, accepted.StatusCode);
+        var job = (await accepted.Content.ReadFromJsonAsync<JsonDocument>())!.RootElement;
+        var jobId = job.GetProperty("jobId").GetGuid();
+        Assert.Equal("queued", job.GetProperty("status").GetString());
+        Assert.Equal($"/api/folders/sync-jobs/{jobId}", accepted.Headers.Location?.ToString());
+        var status = await ownerClient.GetAsync($"/api/folders/sync-jobs/{jobId}");
+        Assert.Equal(HttpStatusCode.OK, status.StatusCode);
+        Assert.Equal("queued", (await status.Content.ReadFromJsonAsync<JsonDocument>())!.RootElement.GetProperty("status").GetString());
+        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync($"/api/folders/sync-jobs/{jobId}")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await ownerClient.GetAsync($"/api/folders/sync-jobs/{Guid.NewGuid()}")).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await _accepting.CreateClient().GetAsync($"/api/folders/sync-jobs/{jobId}")).StatusCode);
     }
 
     [Fact]
