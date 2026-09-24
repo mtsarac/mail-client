@@ -17,7 +17,7 @@ using MimeKit;
 
 namespace MailClient.Infrastructure.Services;
 
-public sealed record SendMailResult(bool Sent, bool SentCopySaved, string? Warning, Guid? MailId = null, Guid? ConversationId = null);
+public sealed record SendMailResult(bool Sent, bool SentCopySaved, string? Warning, Guid? MailId = null, Guid? ConversationId = null, MailConnectionFailure? PreDeliveryFailure = null);
 
 public sealed class MailSendService(
     AppDbContext db,
@@ -159,7 +159,7 @@ public sealed class MailSendService(
             RecordSend(activity, account.Provider, "failure", started);
             logger.LogWarning(ex, "SMTP send failed before delivery for account {AccountId}.", account.Id);
             await operations.TryFailAsync(operation.Id, "The message could not be sent.", cancellationToken);
-            return new SendMailResult(false, false, "The message could not be sent.");
+            return new SendMailResult(false, false, "The message could not be sent.", PreDeliveryFailure: ex.Failure);
         }
         catch (Exception ex)
         {

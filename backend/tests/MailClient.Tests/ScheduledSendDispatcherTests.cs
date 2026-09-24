@@ -8,6 +8,7 @@ using MailClient.Infrastructure.Runtime;
 using MailClient.Infrastructure.Services;
 using MailClient.Infrastructure.Sync;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -36,19 +37,168 @@ public sealed class ScheduledSendDispatcherTests
     }
 
     [Fact]
-    public async Task ProcessDueAsync_TransportFailure_MarksRowFailedWithReason()
+    public async Task ProcessDueAsync_NetworkFailure_RetriesSameKeyAndStagedAttachmentsThenSends()
     {
         await using var db = CreateDb();
         var accountId = await SeedAccountAsync(db);
-        var due = await SeedScheduledSendAsync(db, accountId, DateTime.UtcNow.AddMinutes(-1), "Will fail");
+        var storage = new FakeFileStorage();
+        await storage.SaveAsync(accountId, Guid.NewGuid(), Guid.NewGuid(),
+            (stream, ct) => stream.WriteAsync("hi"u8.ToArray(), ct).AsTask(), 1024, CancellationToken.None);
+        var path = storage.Saved.Single();
+        var due = await SeedScheduledSendAsync(db, accountId, DateTime.UtcNow.AddMinutes(-1), "Retry",
+            attachmentPath: path);
+        var transport = new OnceUnavailableTransport();
+        await using var provider = BuildProvider(db, transport, storage);
+
+        await ScheduledSendDispatcher.ProcessDueAsync(provider, CancellationToken.None);
+        var pending = await db.ScheduledSends.SingleAsync(x => x.Id == due);
+        Assert.Equal(ScheduledSendStatus.Pending, pending.Status);
+        Assert.Equal(1, pending.AttemptCount);
+        Assert.True(pending.NextAttemptAtUtc > DateTime.UtcNow);
+        Assert.DoesNotContain(path, storage.Deleted);
+        Assert.Single(await db.ScheduledSendAttachments.ToListAsync());
+        await ScheduledSendDispatcher.ProcessDueAsync(provider, CancellationToken.None);
+        Assert.Equal(1, transport.Attempts);
+
+        pending.NextAttemptAtUtc = DateTime.UtcNow.AddSeconds(-1);
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+        await ScheduledSendDispatcher.ProcessDueAsync(provider, CancellationToken.None);
+
+        Assert.Equal(2, transport.Attempts);
+        Assert.Equal(ScheduledSendStatus.Sent, (await db.ScheduledSends.SingleAsync(x => x.Id == due)).Status);
+        Assert.Single(await db.SendOperations.ToListAsync());
+        Assert.Contains(path, storage.Deleted);
+    }
+
+    [Fact]
+    public async Task ProcessDueAsync_AuthenticationFailure_PreservesFailedContentWithoutAutomaticRetry()
+    {
+        await using var db = CreateDb();
+        var accountId = await SeedAccountAsync(db);
+        var storage = new FakeFileStorage();
+        await storage.SaveAsync(accountId, Guid.NewGuid(), Guid.NewGuid(),
+            (stream, ct) => stream.WriteAsync("hi"u8.ToArray(), ct).AsTask(), 1024, CancellationToken.None);
+        var path = storage.Saved.Single();
+        var due = await SeedScheduledSendAsync(db, accountId, DateTime.UtcNow.AddMinutes(-1), "Failed",
+            attachmentPath: path);
+        var transport = new FakeMailTransport { SendFailure = new MailConnectionException(MailConnectionFailure.Authentication, "secret") };
+        await using var provider = BuildProvider(db, transport, storage);
+
+        await ScheduledSendDispatcher.ProcessDueAsync(provider, CancellationToken.None);
+        await ScheduledSendDispatcher.ProcessDueAsync(provider, CancellationToken.None);
+
+        var row = await db.ScheduledSends.SingleAsync(x => x.Id == due);
+        Assert.Equal(ScheduledSendStatus.Failed, row.Status);
+        Assert.Equal(1, row.AttemptCount);
+        Assert.DoesNotContain("secret", row.FailureReason ?? "");
+        Assert.DoesNotContain(path, storage.Deleted);
+        Assert.Single(await db.ScheduledSendAttachments.ToListAsync());
+    }
+
+    [Fact]
+    public async Task ProcessDueAsync_FifthNetworkFailure_StopsRetrying()
+    {
+        await using var db = CreateDb();
+        var accountId = await SeedAccountAsync(db);
+        var due = await SeedScheduledSendAsync(db, accountId, DateTime.UtcNow.AddMinutes(-1), "Exhausted");
         var transport = new FakeMailTransport { SendFailure = new MailConnectionException(MailConnectionFailure.Network, "down") };
         await using var provider = BuildProvider(db, transport, new FakeFileStorage());
 
+        for (var attempt = 1; attempt <= 5; attempt++)
+        {
+            await ScheduledSendDispatcher.ProcessDueAsync(provider, CancellationToken.None);
+            var row = await db.ScheduledSends.SingleAsync(x => x.Id == due);
+            Assert.Equal(attempt, row.AttemptCount);
+            Assert.Equal(attempt == 5 ? ScheduledSendStatus.Failed : ScheduledSendStatus.Pending, row.Status);
+            if (attempt < 5)
+            {
+                row.NextAttemptAtUtc = DateTime.UtcNow.AddSeconds(-1);
+                await db.SaveChangesAsync();
+                db.ChangeTracker.Clear();
+            }
+        }
+
+        await ScheduledSendDispatcher.ProcessDueAsync(provider, CancellationToken.None);
+        Assert.Equal(5, (await db.ScheduledSends.SingleAsync(x => x.Id == due)).AttemptCount);
+    }
+
+    [Fact]
+    public async Task ProcessDueAsync_AmbiguousSmtpOutcome_NeverDispatchesAgain()
+    {
+        await using var db = CreateDb();
+        var accountId = await SeedAccountAsync(db);
+        var due = await SeedScheduledSendAsync(db, accountId, DateTime.UtcNow.AddMinutes(-1), "Unknown");
+        var transport = new FakeMailTransport { SendFailure = new SmtpDeliveryException("maybe delivered") };
+        await using var provider = BuildProvider(db, transport, new FakeFileStorage());
+
+        await ScheduledSendDispatcher.ProcessDueAsync(provider, CancellationToken.None);
         await ScheduledSendDispatcher.ProcessDueAsync(provider, CancellationToken.None);
 
-        var row = await db.ScheduledSends.AsNoTracking().SingleAsync(x => x.Id == due);
-        Assert.Equal(ScheduledSendStatus.Failed, row.Status);
-        Assert.False(string.IsNullOrWhiteSpace(row.FailureReason));
+        var row = await db.ScheduledSends.SingleAsync(x => x.Id == due);
+        Assert.Equal(ScheduledSendStatus.DeliveryUnknown, row.Status);
+        Assert.Equal(1, row.AttemptCount);
+        Assert.DoesNotContain("maybe delivered", row.FailureReason ?? "");
+        Assert.Single(await db.SendOperations.ToListAsync());
+    }
+
+    [Fact]
+    public async Task ProcessDueAsync_ManuallyEditedFailedSend_UsesNewKeyAndDeliversEditedContent()
+    {
+        await using var db = CreateDb();
+        var accountId = await SeedAccountAsync(db);
+        var storage = new FakeFileStorage();
+        await storage.SaveAsync(accountId, Guid.NewGuid(), Guid.NewGuid(),
+            (stream, ct) => stream.WriteAsync("hi"u8.ToArray(), ct).AsTask(), 1024, CancellationToken.None);
+        var source = await SeedScheduledSendAsync(db, accountId, DateTime.UtcNow.AddMinutes(-1), "Original",
+            attachmentPath: storage.Saved.Single());
+        var failure = new FakeMailTransport { SendFailure = new MailConnectionException(MailConnectionFailure.Authentication, "bad auth") };
+        await using (var first = BuildProvider(db, failure, storage))
+            await ScheduledSendDispatcher.ProcessDueAsync(first, CancellationToken.None);
+        var service = new ScheduledSendService(db, storage, FixedRuntimeSettingsStore.Operation(),
+            new AuditLogger(db), NullLogger<ScheduledSendService>.Instance);
+        var request = new RescheduleFailedSend(DateTime.UtcNow.AddHours(1),
+            ["new@example.test"], [], [], "Edited subject", null, "new body", null);
+        var rescheduled = await service.RescheduleFailedAsync(accountId, source, request,
+            "user-confirmed-retry", null, CancellationToken.None);
+        var retry = await db.ScheduledSends.SingleAsync(x => x.Id == rescheduled.Id);
+        retry.SendAtUtc = DateTime.UtcNow.AddMinutes(-1);
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+        var success = new FakeMailTransport();
+        await using var second = BuildProvider(db, success, storage);
+
+        await ScheduledSendDispatcher.ProcessDueAsync(second, CancellationToken.None);
+
+        Assert.Equal(1, success.SentCount);
+        Assert.Equal("Edited subject", success.Message!.Subject);
+        Assert.Equal("new body", success.Message.TextBody);
+        Assert.Equal(ScheduledSendStatus.Sent, (await db.ScheduledSends.SingleAsync(x => x.Id == rescheduled.Id)).Status);
+        Assert.Equal(ScheduledSendStatus.Failed, (await db.ScheduledSends.SingleAsync(x => x.Id == source)).Status);
+        Assert.Equal(2, await db.SendOperations.CountAsync());
+    }
+
+    [Fact]
+    public async Task ProcessDueAsync_TwoDispatchers_ClaimOneDelivery()
+    {
+        var database = Guid.NewGuid().ToString();
+        var root = new InMemoryDatabaseRoot();
+        var options = new DbContextOptionsBuilder<AppDbContext>().UseInMemoryDatabase(database, root).Options;
+        await using var seed = new AppDbContext(options);
+        var accountId = await SeedAccountAsync(seed);
+        var due = await SeedScheduledSendAsync(seed, accountId, DateTime.UtcNow.AddMinutes(-1), "Once");
+        await using var first = new AppDbContext(options);
+        await using var second = new AppDbContext(options);
+        var transport = new FakeMailTransport();
+        await using var firstProvider = BuildProvider(first, transport, new FakeFileStorage());
+        await using var secondProvider = BuildProvider(second, transport, new FakeFileStorage());
+
+        await Task.WhenAll(
+            ScheduledSendDispatcher.ProcessDueAsync(firstProvider, CancellationToken.None),
+            ScheduledSendDispatcher.ProcessDueAsync(secondProvider, CancellationToken.None));
+
+        Assert.Equal(1, transport.SentCount);
+        Assert.Equal(ScheduledSendStatus.Sent, (await seed.ScheduledSends.SingleAsync(x => x.Id == due)).Status);
     }
 
     [Fact]
@@ -86,7 +236,7 @@ public sealed class ScheduledSendDispatcherTests
         Assert.Equal(ScheduledSendStatus.Cancelled, row.Status);
     }
 
-    private static ServiceProvider BuildProvider(AppDbContext db, FakeMailTransport transport, FakeFileStorage storage)
+    private static ServiceProvider BuildProvider(AppDbContext db, MailClient.Infrastructure.Mail.IMailTransport transport, FakeFileStorage storage)
     {
         var services = new ServiceCollection();
         services.AddSingleton(db);
@@ -161,4 +311,20 @@ public sealed class ScheduledSendDispatcherTests
 
     private static AppDbContext CreateDb() => new(new DbContextOptionsBuilder<AppDbContext>()
         .UseInMemoryDatabase(Guid.NewGuid().ToString()).Options);
+
+    private sealed class OnceUnavailableTransport : MailClient.Infrastructure.Mail.IMailTransport
+    {
+        public int Attempts { get; private set; }
+
+        public Task SendAsync(MailAccount account, MimeKit.MimeMessage message, CancellationToken cancellationToken)
+        {
+            Attempts++;
+            if (Attempts == 1)
+                throw new MailConnectionException(MailConnectionFailure.Network, "temporary");
+            return Task.CompletedTask;
+        }
+
+        public Task AppendToSentAsync(MailAccount account, string sentFullName, MimeKit.MimeMessage message,
+            CancellationToken cancellationToken) => Task.CompletedTask;
+    }
 }

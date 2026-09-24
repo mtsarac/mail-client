@@ -11,17 +11,17 @@ using Microsoft.Extensions.Logging;
 namespace MailClient.Infrastructure.Services;
 
 /// <summary>
-/// Polls for due <see cref="ScheduledSend"/> rows and dispatches them through the same
-/// <see cref="MailSendService"/> pipeline used by an immediate send. A <see cref="PostgresSyncLockProvider"/>
-/// lock held per account for <see cref="SyncLockPurpose.ScheduledSend"/> keeps two running instances from
-/// dispatching the same row twice; the row's status is re-checked after the lock is acquired as a
-/// defense against a row that was already claimed by another poll pass.
+/// Claims due sends in the database before SMTP. A claimed row is delivery-unknown until
+/// delivery is proven or a positively pre-delivery failure is recorded. Abandoned claims
+/// are never sent again automatically.
 /// </summary>
 public sealed class ScheduledSendDispatcher(
     IServiceScopeFactory scopes,
     ILogger<ScheduledSendDispatcher> logger) : BackgroundService
 {
     private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(30);
+    private const int MaxAttempts = 5;
+    private static readonly TimeSpan InitialRetryDelay = TimeSpan.FromMinutes(1);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -51,8 +51,8 @@ public sealed class ScheduledSendDispatcher(
         var db = provider.GetRequiredService<AppDbContext>();
         var now = DateTime.UtcNow;
         var due = await db.ScheduledSends.AsNoTracking()
-            .Where(x => x.Status == ScheduledSendStatus.Pending && x.SendAtUtc <= now)
-            .OrderBy(x => x.SendAtUtc)
+            .Where(x => x.Status == ScheduledSendStatus.Pending && (x.NextAttemptAtUtc ?? x.SendAtUtc) <= now)
+            .OrderBy(x => x.NextAttemptAtUtc ?? x.SendAtUtc)
             .Select(x => new { x.Id, x.MailAccountId })
             .ToListAsync(cancellationToken);
 
@@ -71,19 +71,37 @@ public sealed class ScheduledSendDispatcher(
             return;
 
         var db = provider.GetRequiredService<AppDbContext>();
+        var now = DateTime.UtcNow;
+        var eligible = db.ScheduledSends.Where(x => x.Id == id && x.MailAccountId == accountId
+            && x.Status == ScheduledSendStatus.Pending && (x.NextAttemptAtUtc ?? x.SendAtUtc) <= now);
+        if (db.Database.IsRelational())
+        {
+            if (await eligible.ExecuteUpdateAsync(setters => setters
+                    .SetProperty(x => x.Status, ScheduledSendStatus.DeliveryUnknown)
+                    .SetProperty(x => x.AttemptCount, x => x.AttemptCount + 1)
+                    .SetProperty(x => x.NextAttemptAtUtc, (DateTime?)null), cancellationToken) != 1)
+                return;
+        }
+        else
+        {
+            var pending = await eligible.SingleOrDefaultAsync(cancellationToken);
+            if (pending is null)
+                return;
+            pending.Status = ScheduledSendStatus.DeliveryUnknown;
+            pending.AttemptCount++;
+            pending.NextAttemptAtUtc = null;
+            await db.SaveChangesAsync(cancellationToken);
+        }
+
+        var entity = await db.ScheduledSends.Include(x => x.Attachments)
+            .SingleAsync(x => x.Id == id && x.MailAccountId == accountId, cancellationToken);
         var storage = provider.GetRequiredService<IFileStorage>();
         var sender = provider.GetRequiredService<MailSendService>();
         var logger = provider.GetRequiredService<ILogger<ScheduledSendDispatcher>>();
-
-        var entity = await db.ScheduledSends.Include(x => x.Attachments)
-            .SingleOrDefaultAsync(x => x.Id == id, cancellationToken);
-        if (entity is null || entity.Status != ScheduledSendStatus.Pending || entity.SendAtUtc > DateTime.UtcNow)
-            return;
-
+        var attachments = new List<SendMailAttachment>(entity.Attachments.Count);
+        var sendStarted = false;
         try
         {
-            // MailSendService.SendAsync disposes every attachment stream once the send completes.
-            var attachments = new List<SendMailAttachment>(entity.Attachments.Count);
             foreach (var attachment in entity.Attachments)
                 attachments.Add(new SendMailAttachment(
                     attachment.FileName, attachment.ContentType,
@@ -94,28 +112,55 @@ public sealed class ScheduledSendDispatcher(
                 ScheduledSendService.Deserialize(entity.ToAddressesJson),
                 ScheduledSendService.Deserialize(entity.CcAddressesJson),
                 ScheduledSendService.Deserialize(entity.BccAddressesJson),
-                entity.Subject,
-                entity.BodyHtml,
-                entity.BodyText,
-                attachments,
-                entity.ReplySourceMailId)
+                entity.Subject, entity.BodyHtml, entity.BodyText, attachments, entity.ReplySourceMailId)
             {
                 IdempotencyKey = entity.IdempotencyKey
             };
 
+            sendStarted = true;
             var result = await sender.SendAsync(entity.MailAccountId, command, null, cancellationToken);
-            entity.Status = result.Sent ? ScheduledSendStatus.Sent : ScheduledSendStatus.Failed;
-            entity.SentMailId = result.MailId;
-            entity.FailureReason = result.Sent ? null : (result.Warning ?? "The message could not be sent.");
+            if (result.Sent)
+            {
+                entity.Status = ScheduledSendStatus.Sent;
+                entity.SentMailId = result.MailId;
+                entity.FailureReason = null;
+            }
+            else
+            {
+                entity.FailureReason = result.Warning ?? "The message could not be sent.";
+                ScheduleRetryOrFail(entity, result.PreDeliveryFailure == MailConnectionFailure.Network);
+            }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             logger.LogWarning(ex, "Scheduled send {Id} could not be dispatched.", id);
-            entity.Status = ScheduledSendStatus.Failed;
-            entity.FailureReason = ex is InvalidOperationException ? ex.Message : "The message could not be sent.";
+            var operationStatus = sendStarted
+                ? await db.SendOperations.AsNoTracking()
+                    .Where(x => x.MailAccountId == accountId && x.IdempotencyKey == entity.IdempotencyKey)
+                    .Select(x => (SendOperationStatus?)x.Status).SingleOrDefaultAsync(CancellationToken.None)
+                : null;
+            entity.Status = operationStatus switch
+            {
+                SendOperationStatus.Sent or SendOperationStatus.SentWithCopy => ScheduledSendStatus.Sent,
+                SendOperationStatus.FailedBeforeSend => ScheduledSendStatus.Failed,
+                _ => sendStarted ? ScheduledSendStatus.DeliveryUnknown : ScheduledSendStatus.Failed
+            };
+            entity.FailureReason = entity.Status switch
+            {
+                ScheduledSendStatus.Sent => null,
+                ScheduledSendStatus.DeliveryUnknown => "Delivery status is uncertain; the message may have been sent.",
+                _ => "The message could not be sent."
+            };
+        }
+        finally
+        {
+            foreach (var attachment in attachments)
+                await attachment.Content.DisposeAsync();
         }
 
         await db.SaveChangesAsync(cancellationToken);
+        if (entity.Status != ScheduledSendStatus.Sent)
+            return;
 
         foreach (var attachment in entity.Attachments)
         {
@@ -128,5 +173,17 @@ public sealed class ScheduledSendDispatcher(
                 logger.LogWarning(ex, "Failed to delete staged attachment for dispatched scheduled send {Id}.", id);
             }
         }
+    }
+
+    private static void ScheduleRetryOrFail(ScheduledSend entity, bool transient)
+    {
+        if (!transient || entity.AttemptCount >= MaxAttempts)
+        {
+            entity.Status = ScheduledSendStatus.Failed;
+            return;
+        }
+
+        entity.Status = ScheduledSendStatus.Pending;
+        entity.NextAttemptAtUtc = DateTime.UtcNow + InitialRetryDelay * (1 << (entity.AttemptCount - 1));
     }
 }
