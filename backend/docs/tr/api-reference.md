@@ -32,6 +32,14 @@ arayüzüne bakın (`/swagger`, yalnızca Development). Mobil istemci için örn
 | GET | `/api/account/sessions` | bearer | Oturum açmış cihazları/oturumları listeler |
 | DELETE | `/api/account/sessions/{sessionId}` | bearer | Bir oturumu uzaktan kapatır |
 | GET | `/api/account/sync-status` | bearer | Klasör başına sync/backfill durumu (son başarılı sync, son hata, backfill ilerlemesi) |
+| GET / PUT | `/api/account/sync-scope` | bearer | Hesabın arka planda senkronize edilen klasör kapsamını okur veya günceller (InboxAndSent, AllFolders, SelectedFolders) |
+
+`/api/account/sync-scope` yanıtı `{scope, syncedFolderIds}`. PUT
+`{scope:"SelectedFolders",folderIds:[...]}` bu hesaba ait kullanılabilir
+klasörlerden en az birini seçer; diğer kapsamlarda `folderIds` verilmez.
+Başka hesaba ait veya geçersiz klasör id'si ayarı değiştirmeden doğrulama
+hatası döner. Yeni klasörler `AllFolders` kapsamına (varsayılan modda
+Gelen/Gönderilen'e) dahil edilir; elle klasör sync'i kapsamdan bağımsızdır.
 
 ### OAuth
 
@@ -62,6 +70,7 @@ arayüzüne bakın (`/swagger`, yalnızca Development). Mobil istemci için örn
 | GET | `/api/mails` | bearer | Posta listesi (`folderId`, `isRead`, `hasAttachments`, `search`, `page`, `pageSize` ≤ 100) |
 | GET | `/api/mails/{id}` | bearer | Posta detayı (`isFromMe`: Sent/Drafts postası ya da gönderen hesabın adresiyle büyük/küçük harf duyarsız aynıysa, klasörden bağımsız) |
 | GET | `/api/search` | bearer | Önbellekteki postada arama (tüm filtreler opsiyonel, AND; aşağıya bakın) |
+| GET | `/api/search/remote` | bearer | Kullanıcının başlattığı genel IMAP araması; eksik eşleşmeleri içeri alır, ardından `/api/search` tekrar çağrılır |
 | GET | `/api/mails/{mailId}/attachments/{attachmentId}` | bearer | Eki indirir |
 | POST | `/api/mails/send` | bearer + `Idempotency-Key` | Posta gönderir (multipart/form-data) |
 | GET | `/api/mails/{id}/compose/reply · reply-all · forward` | bearer | Hazır doldurulmuş yazma bağlamı |
@@ -73,6 +82,14 @@ adresi veya adında büyük/küçük harf duyarsız "içerir"; `fromDate`/`toDat
 alınma zamanına göre filtreler, `fromDate` dahil, `toDate` hariç; UTC ofseti
 olmayan değerler UTC kabul edilir. `labelId` yalnızca oturum açan hesabın
 sahip olduğu etiketlerle eşleşir.
+
+`/api/search/remote` sayfalama hariç aynı arama filtrelerini kabul eder;
+`q`, `from`, `to` alanlarından en az biri dolu olmalıdır. Yanıt
+`{matched, imported, remaining, complete}` henüz indekslenmemiş eşleşmeleri
+ve kapsamın tamamen taranıp taranmadığını bildirir. İstek başına en fazla
+25 mail, 20 saniyelik süre sınırı; `complete: false` için tekrar deneyin.
+`hasAttachment` IMAP yerine sonraki önbellek aramasında uygulanır.
+Başka hesaba ait klasör id'si 404 döner.
 
 ### Drafts
 

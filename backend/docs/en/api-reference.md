@@ -32,6 +32,14 @@ mobile client: [Flutter guide](../flutter-api-integration.md) (Turkish).
 | GET | `/api/account/sessions` | bearer | List signed-in devices/sessions |
 | DELETE | `/api/account/sessions/{sessionId}` | bearer | Revoke a session remotely |
 | GET | `/api/account/sync-status` | bearer | Per-folder sync/backfill state (last successful sync, last failure, backfill progress) |
+| GET / PUT | `/api/account/sync-scope` | bearer | Read or update account-scoped background folder coverage (InboxAndSent, AllFolders, SelectedFolders) |
+
+`/api/account/sync-scope` returns `{scope, syncedFolderIds}`. PUT
+`{scope:"SelectedFolders",folderIds:[...]}` selects one or more available folders
+owned by the account; other modes omit `folderIds`. Invalid or foreign folder
+IDs fail validation without changing the current setting. New folders are
+included automatically only in `AllFolders` (or Inbox/Sent in the default
+mode). Manual folder sync remains available regardless of scope.
 
 ### OAuth
 
@@ -62,6 +70,7 @@ mobile client: [Flutter guide](../flutter-api-integration.md) (Turkish).
 | GET | `/api/mails` | bearer | List mail (`folderId`, `isRead`, `hasAttachments`, `search`, `page`, `pageSize` ≤ 100) |
 | GET | `/api/mails/{id}` | bearer | Mail detail (`isFromMe`: Sent/Drafts mail, or sender equals the account address case-insensitively, in any folder) |
 | GET | `/api/search` | bearer | Search cached mail (all filters optional, AND-combined; see below) |
+| GET | `/api/search/remote` | bearer | User-triggered generic IMAP search; imports missing matches before a follow-up `/api/search` |
 | GET | `/api/mails/{mailId}/attachments/{attachmentId}` | bearer | Download an attachment |
 | POST | `/api/mails/send` | bearer + `Idempotency-Key` | Send mail (multipart/form-data) |
 | GET | `/api/mails/{id}/compose/reply · reply-all · forward` | bearer | Prefilled compose context |
@@ -73,6 +82,14 @@ To/Cc/Bcc address or name; `fromDate`/`toDate` filter on received time,
 `fromDate` inclusive, `toDate` exclusive; values without a UTC offset are
 treated as UTC. `labelId` only matches labels owned by the authenticated
 account.
+
+`/api/search/remote` accepts the same search filters except pagination; at
+least one of `q`, `from`, `to` must be non-blank. The response
+`{matched, imported, remaining, complete}` reports not-yet-indexed matches
+and whether the request covered the entire scope. Each call imports at most
+25 messages with a 20-second deadline; retry if `complete` is false.
+`hasAttachment` is applied by the subsequent cached search, not by IMAP.
+Foreign folder IDs return 404.
 
 ### Drafts
 

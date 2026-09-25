@@ -190,7 +190,7 @@ public sealed class OAuthConnectionService(
                         FullName = folder.FullName,
                         FolderType = folder.FolderType,
                         UidValidity = folder.UidValidity,
-                        IsSyncEnabled = folder.IsSyncEnabled,
+                        IsSyncEnabled = MailFolder.SyncedByDefault(account.FolderSyncScope, folder.FolderType),
                         IsAvailable = true
                     });
                 }

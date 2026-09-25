@@ -48,7 +48,7 @@ public sealed class OpenApiDocumentTests(MailClientApiFactory factory) : IClassF
     {
         var document = Document();
 
-        foreach (var path in new[] { "/api/accounts/discover", "/api/accounts/connect", "/api/accounts/connect-manual", "/api/accounts/login", "/api/account/reconnect", "/api/auth/refresh", "/api/folders/{id}/sync", "/api/mails/send", "/api/drafts", "/api/search", "/api/mails/bulk/{action}", "/api/devices", "/api/management/whitelist/emails" })
+        foreach (var path in new[] { "/api/accounts/discover", "/api/accounts/connect", "/api/accounts/connect-manual", "/api/accounts/login", "/api/account/reconnect", "/api/auth/refresh", "/api/folders/{id}/sync", "/api/mails/send", "/api/drafts", "/api/search", "/api/search/remote", "/api/mails/bulk/{action}", "/api/devices", "/api/management/whitelist/emails" })
             Assert.True(document.Paths.ContainsKey(path), path);
         var ids = document.Paths.Values.SelectMany(item => item.Operations!.Values).Select(operation => operation.OperationId).ToList();
         Assert.DoesNotContain(ids, string.IsNullOrEmpty);

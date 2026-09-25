@@ -32,6 +32,19 @@ public static class MailEndpoints
             var result = await search.SearchAsync(current.MailAccountId, new MailSearchRequest(q, folderId, conversationId, from, to, fromDate, toDate, isRead, flagged, hasAttachment, page ?? 1, pageSize ?? 0, labelId), ct);
             return Results.Ok(result);
         }).WithTags(SearchTag).WithName("SearchMails").WithSummary("Search account mailbox").WithDescription("Searches cached mail of the current mailbox. All filters are optional and combined with AND.").Produces<MailListResponse>();
+        api.MapGet("/search/remote", async (string? q, Guid? folderId, Guid? conversationId, string? from, string? to, DateTime? fromDate, DateTime? toDate, bool? isRead, bool? flagged, bool? hasAttachment, Guid? labelId, ICurrentMailAccount current, MailRemoteSearchService search, CancellationToken ct) =>
+        {
+            if (string.IsNullOrWhiteSpace(q) && string.IsNullOrWhiteSpace(from) && string.IsNullOrWhiteSpace(to))
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["q"] = ["At least one of q, from or to is required."] });
+            var request = new MailSearchRequest(q, folderId, conversationId, from, to, fromDate, toDate, isRead, flagged, hasAttachment, 1, 0, labelId);
+            var result = await search.SearchAsync(current.MailAccountId, request, ct);
+            return result is null ? Results.NotFound() : Results.Ok(result);
+        }).WithTags(SearchTag).WithName("SearchMailOnServer").WithSummary("Search mailbox on the mail server")
+            .WithDescription("Runs generic IMAP SEARCH and imports matching messages into the local index. Re-run GET /api/search afterwards to retrieve the imported messages.")
+            .Produces<RemoteSearchResponse>().ProducesValidationProblem().Produces(404)
+            .ProblemCodes(401, "mail_authentication_failed").ProblemCodes(403, "mail_account_disabled", "provider_existing_accounts_disabled")
+            .ProblemCodes(409, "credential_missing", "mail_account_needs_reauthentication")
+            .ProblemCodes(502, "mail_provider_unavailable", "mail_server_unreachable", "mail_tls_failed");
         api.MapGet("/mails", async (Guid? folderId, bool? isRead, bool? hasAttachments, string? search, int? page, int? pageSize, ICurrentMailAccount current, MailSearchService searcher, CancellationToken ct) =>
             Results.Ok(await searcher.SearchAsync(
                 current.MailAccountId,

@@ -126,16 +126,7 @@ public sealed class MailFolderSyncService(
         var state = localFolder.SyncState;
         if (state is null)
         {
-            state = new SyncState
-            {
-                Id = Guid.NewGuid(),
-                MailAccountId = accountId,
-                MailFolderId = folderId,
-                UidValidity = remote.UidValidity
-            };
-            StartNewestFirst(state, remote);
-            db.SyncStates.Add(state);
-            await db.SaveChangesAsync(cancellationToken);
+            state = await CreateSyncStateAsync(accountId, folderId, remote, cancellationToken);
         }
         else if (SyncStateDecision.RequiresReset(state.UidValidity, remote.UidValidity))
         {
@@ -188,6 +179,45 @@ public sealed class MailFolderSyncService(
 
         if (newMail.Count > 0 && localFolder.FolderType == MailFolderType.Inbox)
             await NotifyNewMailAsync(accountId, folderId, newMail, cancellationToken);
+    }
+
+    internal async Task<int> ImportRemoteMatchesAsync(
+        Guid accountId,
+        Guid folderId,
+        IRemoteMailFolder remote,
+        IReadOnlyList<UniqueId> uids,
+        CancellationToken cancellationToken)
+    {
+        await operationSettings.GetAsync(cancellationToken);
+        var localFolder = await db.MailFolders
+            .Include(folder => folder.SyncState)
+            .SingleAsync(folder => folder.Id == folderId && folder.MailAccountId == accountId, cancellationToken);
+        var state = localFolder.SyncState ?? await CreateSyncStateAsync(accountId, folderId, remote, cancellationToken);
+        if (state.UidValidity != remote.UidValidity)
+            return 0;
+
+        var imported = await ImportAsync(accountId, folderId, state, remote, uids, cancellationToken);
+        await db.SaveChangesAsync(cancellationToken);
+        return imported.Count;
+    }
+
+    private async Task<SyncState> CreateSyncStateAsync(
+        Guid accountId,
+        Guid folderId,
+        IRemoteMailFolder remote,
+        CancellationToken cancellationToken)
+    {
+        var state = new SyncState
+        {
+            Id = Guid.NewGuid(),
+            MailAccountId = accountId,
+            MailFolderId = folderId,
+            UidValidity = remote.UidValidity
+        };
+        StartNewestFirst(state, remote);
+        db.SyncStates.Add(state);
+        await db.SaveChangesAsync(cancellationToken);
+        return state;
     }
 
     /// <summary>

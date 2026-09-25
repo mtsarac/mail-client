@@ -17,6 +17,8 @@ using Microsoft.EntityFrameworkCore;
 namespace MailClient.Api.Endpoints;
 
 public sealed record AccountSignatureRequest(string? Signature);
+public sealed record AccountSyncScopeRequest(MailClient.Domain.Enums.FolderSyncScope Scope, IReadOnlyList<Guid>? FolderIds);
+public sealed record AccountSyncScopeResponse(MailClient.Domain.Enums.FolderSyncScope Scope, IReadOnlyList<Guid> SyncedFolderIds);
 
 public sealed record FolderSyncStatusResponse(
     Guid FolderId,
@@ -108,15 +110,30 @@ public static class AccountEndpoints
         api.MapGet("/account", async (ICurrentMailAccount current, AppDbContext db, CancellationToken ct) => await db.MailAccounts.Where(x => x.Id == current.MailAccountId).Select(x => new AccountResponse(x.Id, x.EmailAddress, x.DisplayName, x.Provider, x.Status, x.Signature)).SingleOrDefaultAsync(ct) is { } account ? Results.Ok(account) : Results.NotFound()).WithTags("Account").WithName("GetCurrentAccount").WithSummary("Get current mailbox account").Produces<AccountResponse>().Produces(404);
         api.MapGet("/account/sync-status", async (ICurrentMailAccount current, AppDbContext db, CancellationToken ct) =>
         {
-            var statuses = await db.SyncStates.AsNoTracking()
-                .Where(s => s.MailAccountId == current.MailAccountId)
-                .Join(db.MailFolders.AsNoTracking(), s => s.MailFolderId, f => f.Id, (s, f) => new FolderSyncStatusResponse(
-                    f.Id, f.Name, f.FolderType, s.BackfillNextUid == 0, s.LastSuccessfulSyncAt, s.LastFailureAt, s.LastFailureCategory, s.ConsecutiveFailures))
+            var statuses = await db.MailFolders.AsNoTracking()
+                .Where(f => f.MailAccountId == current.MailAccountId && f.IsAvailable)
+                .Select(f => new FolderSyncStatusResponse(
+                    f.Id, f.Name, f.FolderType, f.SyncState != null && f.SyncState.BackfillNextUid == 0,
+                    f.SyncState == null ? null : f.SyncState.LastSuccessfulSyncAt,
+                    f.SyncState == null ? null : f.SyncState.LastFailureAt,
+                    f.SyncState == null ? null : f.SyncState.LastFailureCategory,
+                    f.SyncState == null ? 0 : f.SyncState.ConsecutiveFailures))
                 .ToListAsync(ct);
             return Results.Ok(statuses);
         }).WithTags("Account").WithName("GetAccountSyncStatus").WithSummary("Per-folder sync and backfill status for the current mailbox")
-            .WithDescription("One entry per folder with a sync state row. `BackfillComplete` is false while older mail history is still being imported - search results may be incomplete until then.")
+            .WithDescription("One entry per available folder. `BackfillComplete` is false before the first sync and while older mail history is still being imported; search results may be incomplete.")
             .Produces<IReadOnlyList<FolderSyncStatusResponse>>();
+        api.MapGet("/account/sync-scope", async (ICurrentMailAccount current, AppDbContext db, CancellationToken ct) =>
+            await db.MailAccounts.AsNoTracking().Where(x => x.Id == current.MailAccountId).Select(x => (MailClient.Domain.Enums.FolderSyncScope?)x.FolderSyncScope).SingleOrDefaultAsync(ct) is { } scope
+                ? Results.Ok(new AccountSyncScopeResponse(scope, await SyncedFolderIdsAsync(db, current.MailAccountId, ct)))
+                : Results.NotFound()
+        ).WithTags("Account").WithName("GetAccountSyncScope").WithSummary("Which folders background sync follows for the current mailbox")
+            .WithDescription("`SyncedFolderIds` lists available folders that periodic background sync currently covers.")
+            .Produces<AccountSyncScopeResponse>().Produces(404);
+        api.MapPut("/account/sync-scope", UpdateSyncScopeAsync).WithTags("Account").WithName("UpdateAccountSyncScope")
+            .WithSummary("Choose which folders background sync follows for the current mailbox")
+            .WithDescription("scope: InboxAndSent (default), AllFolders, or SelectedFolders. folderIds is required (1+ ids of this mailbox's available folders) for SelectedFolders and must be omitted otherwise. Folders discovered later follow the scope: AllFolders includes them, SelectedFolders does not. Folders opened by the user are still synced on demand; newly included folders are picked up by the next periodic sync pass.")
+            .Produces<AccountSyncScopeResponse>().ProducesValidationProblem().Produces(404);
         api.MapPost("/account/reconnect", async (AccountReconnectRequest request, ICurrentMailAccount current, AccountConnectionService service, AuditLogger audit, CorrelationContext correlation, CancellationToken ct) =>
         {
             var account = await service.ReconnectAsync(current.MailAccountId, request, ct);
@@ -153,6 +170,33 @@ public static class AccountEndpoints
             .WithDescription("Blank/whitespace-only clears the signature. Synced across every device signed into this account.")
             .Produces(204).Produces(404);
     }
+
+    private static async Task<IResult> UpdateSyncScopeAsync(AccountSyncScopeRequest request, ICurrentMailAccount current, AppDbContext db, CancellationToken ct)
+    {
+        if (!Enum.IsDefined(request.Scope))
+            return Results.ValidationProblem(new Dictionary<string, string[]> { ["scope"] = ["Unknown sync scope."] });
+        var selected = request.FolderIds?.Distinct().ToHashSet() ?? [];
+        if (request.Scope == MailClient.Domain.Enums.FolderSyncScope.SelectedFolders && selected.Count == 0)
+            return Results.ValidationProblem(new Dictionary<string, string[]> { ["folderIds"] = ["At least one folder id is required for SelectedFolders."] });
+        if (request.Scope != MailClient.Domain.Enums.FolderSyncScope.SelectedFolders && request.FolderIds is not null)
+            return Results.ValidationProblem(new Dictionary<string, string[]> { ["folderIds"] = ["folderIds is only allowed with SelectedFolders."] });
+        var account = await db.MailAccounts.SingleOrDefaultAsync(x => x.Id == current.MailAccountId, ct);
+        if (account is null) return Results.NotFound();
+        var folders = await db.MailFolders.Where(x => x.MailAccountId == current.MailAccountId).ToListAsync(ct);
+        if (!selected.IsSubsetOf(folders.Where(x => x.IsAvailable).Select(x => x.Id)))
+            return Results.ValidationProblem(new Dictionary<string, string[]> { ["folderIds"] = ["Every folder id must belong to an available folder of this mailbox."] });
+        account.FolderSyncScope = request.Scope;
+        account.UpdatedAt = DateTime.UtcNow;
+        foreach (var folder in folders)
+            folder.IsSyncEnabled = request.Scope == MailClient.Domain.Enums.FolderSyncScope.SelectedFolders
+                ? selected.Contains(folder.Id)
+                : MailClient.Domain.Entities.MailFolder.SyncedByDefault(request.Scope, folder.FolderType);
+        await db.SaveChangesAsync(ct);
+        return Results.Ok(new AccountSyncScopeResponse(request.Scope, await SyncedFolderIdsAsync(db, current.MailAccountId, ct)));
+    }
+
+    private static async Task<IReadOnlyList<Guid>> SyncedFolderIdsAsync(AppDbContext db, Guid accountId, CancellationToken ct) =>
+        await db.MailFolders.AsNoTracking().Where(x => x.MailAccountId == accountId && x.IsSyncEnabled && x.IsAvailable).Select(x => x.Id).ToListAsync(ct);
 
     private static async Task<IResult> Audited(AuditLogger audit, Guid accountId, Guid sessionId, CorrelationContext correlation, CancellationToken ct)
     {
