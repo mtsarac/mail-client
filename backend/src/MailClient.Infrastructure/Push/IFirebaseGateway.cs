@@ -11,5 +11,6 @@ public interface IFirebaseGateway
         string? title,
         string? body,
         IReadOnlyDictionary<string, string> data,
+        bool appRendered,
         CancellationToken cancellationToken);
 }

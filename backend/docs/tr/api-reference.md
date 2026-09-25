@@ -33,6 +33,7 @@ arayüzüne bakın (`/swagger`, yalnızca Development). Mobil istemci için örn
 | DELETE | `/api/account/sessions/{sessionId}` | bearer | Bir oturumu uzaktan kapatır |
 | GET | `/api/account/sync-status` | bearer | Klasör başına sync/backfill durumu (son başarılı sync, son hata, backfill ilerlemesi) |
 | GET / PUT | `/api/account/sync-scope` | bearer | Hesabın arka planda senkronize edilen klasör kapsamını okur veya günceller (InboxAndSent, AllFolders, SelectedFolders) |
+| GET / PUT | `/api/account/notification-settings` | bearer | Hesabın posta bildirim tercihlerini okur veya günceller (açık/kapalı, yalnız Gelen Kutusu, gizlilik) |
 
 `/api/account/sync-scope` yanıtı `{scope, syncedFolderIds}`. PUT
 `{scope:"SelectedFolders",folderIds:[...]}` bu hesaba ait kullanılabilir
@@ -40,6 +41,25 @@ klasörlerden en az birini seçer; diğer kapsamlarda `folderIds` verilmez.
 Başka hesaba ait veya geçersiz klasör id'si ayarı değiştirmeden doğrulama
 hatası döner. Yeni klasörler `AllFolders` kapsamına (varsayılan modda
 Gelen/Gönderilen'e) dahil edilir; elle klasör sync'i kapsamdan bağımsızdır.
+
+`/api/account/notification-settings` yanıtı
+`{enabled, inboxOnly, privacy, previewsAllowedByServer}`; PUT gövdesi
+`{enabled, inboxOnly, privacy}`. Ayarlar posta kutusunda oturum açık tüm
+cihazlarda geçerlidir ve cihaz kaydını değiştirmez. `privacy`: `Full`
+(gönderen, konu, kısa metin önizlemesi), `Limited` (gönderen ve konu;
+varsayılan) veya `Private` (yalnız genel metin). Sunucu yöneticisi posta
+önizlemelerini kapattıysa `previewsAllowedByServer` false olur ve push'lar
+`Private` gönderilir. `inboxOnly: false` Gönderilmiş, Taslaklar, Çöp ve Spam
+dışındaki tüm senkronize klasörlerdeki yeni postayı bildirir. `enabled: false`
+yalnız yeni posta ve erteleme bitişi push'larını durdurur; hesap uyarıları
+(yeniden kimlik doğrulama) yine gönderilir.
+
+Yeni posta push'u sunucu kuralları çalıştıktan sonra gönderilir; kuralın
+bildirilen klasörlerden çıkardığı veya okundu yaptığı posta bildirilmez.
+`new_mail` ve `snooze_expired` Android'de yalnız veri olarak gelir (uygulama
+hızlı eylemlerle gösterir), iOS'ta APNs uyarısı taşır. Süresi dolan
+ertelemeler sunucuda 30 saniyede bir sonlandırılır; her biri bir kez uyanır,
+sahiplenilmeden önce iptal edilen veya ileri alınan erteleme hiç uyanmaz.
 
 ### OAuth
 

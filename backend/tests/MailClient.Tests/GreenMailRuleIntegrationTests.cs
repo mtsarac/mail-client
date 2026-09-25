@@ -113,6 +113,8 @@ public sealed class GreenMailRuleIntegrationTests(GreenMailFixture greenmail) : 
         var sync = CreateSyncService(db);
         await SyncInboxAsync(sync, accountId, inboxId);
         await AppendAsync($"new-{token}");
+        var unfiltered = $"unfiltered-{Guid.NewGuid():N}";
+        await AppendAsync(unfiltered);
         await SyncInboxAsync(sync, accountId, inboxId);
         Assert.True(await db.Mails.AnyAsync(mail => mail.Subject == $"new-{token}" && mail.RulePending));
         Assert.False(await db.Mails.AnyAsync(mail => mail.Subject == $"existing-{token}" && mail.RulePending));
@@ -134,6 +136,12 @@ public sealed class GreenMailRuleIntegrationTests(GreenMailFixture greenmail) : 
         var summary = Assert.Single(await target.FetchAsync([moved], MessageSummaryItems.Flags));
         Assert.True(summary.Flags!.Value.HasFlag(MessageFlags.Seen));
         Assert.False(await db.Mails.AsNoTracking().AnyAsync(mail => mail.MailAccountId == accountId && mail.RulePending));
+
+        var push = new FakePushNotificationService();
+        await new NewMailNotifier(db, push, NullLogger<NewMailNotifier>.Instance).NotifyPendingAsync(accountId, CancellationToken.None);
+        var notification = Assert.Single(push.Notifications);
+        Assert.Equal(unfiltered, notification.SubjectPreview);
+        Assert.False(await db.Mails.AsNoTracking().AnyAsync(mail => mail.MailAccountId == accountId && mail.NotificationPending));
     }
 
     private async Task SyncInboxAsync(MailFolderSyncService sync, Guid accountId, Guid inboxId)

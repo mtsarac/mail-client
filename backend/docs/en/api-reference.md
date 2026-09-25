@@ -33,6 +33,7 @@ mobile client: [Flutter guide](../flutter-api-integration.md) (Turkish).
 | DELETE | `/api/account/sessions/{sessionId}` | bearer | Revoke a session remotely |
 | GET | `/api/account/sync-status` | bearer | Per-folder sync/backfill state (last successful sync, last failure, backfill progress) |
 | GET / PUT | `/api/account/sync-scope` | bearer | Read or update account-scoped background folder coverage (InboxAndSent, AllFolders, SelectedFolders) |
+| GET / PUT | `/api/account/notification-settings` | bearer | Read or update account-scoped mail notification preferences (enabled, inbox only, privacy) |
 
 `/api/account/sync-scope` returns `{scope, syncedFolderIds}`. PUT
 `{scope:"SelectedFolders",folderIds:[...]}` selects one or more available folders
@@ -40,6 +41,24 @@ owned by the account; other modes omit `folderIds`. Invalid or foreign folder
 IDs fail validation without changing the current setting. New folders are
 included automatically only in `AllFolders` (or Inbox/Sent in the default
 mode). Manual folder sync remains available regardless of scope.
+
+`/api/account/notification-settings` returns
+`{enabled, inboxOnly, privacy, previewsAllowedByServer}`; PUT takes
+`{enabled, inboxOnly, privacy}`. They apply to every device signed into the
+mailbox and never change device registration. `privacy` is `Full` (sender,
+subject, short text preview), `Limited` (sender and subject; default) or
+`Private` (generic text only). When the operator disables mail previews,
+`previewsAllowedByServer` is false and pushes are sent as `Private`.
+`inboxOnly: false` notifies new mail in every synced folder except Sent,
+Drafts, Trash and Junk. `enabled: false` stops new-mail and snooze wake-up
+pushes only; account alerts (reauthentication) are still sent.
+
+New-mail pushes are sent after server rules ran, so mail a rule moved out of
+the notified folders or marked read is not announced. `new_mail` and
+`snooze_expired` are data-only on Android (the app renders them with quick
+actions) and carry an APNs alert on iOS. Due snoozes are ended on the server
+every 30 seconds; each one wakes once, and a snooze cancelled or moved to a
+later time before it is claimed never wakes.
 
 ### OAuth
 

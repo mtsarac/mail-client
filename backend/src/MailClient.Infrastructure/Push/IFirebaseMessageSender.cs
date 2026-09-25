@@ -7,7 +7,8 @@ public sealed record FirebaseOutgoingMessage(
     string PushToken,
     string? Title,
     string? Body,
-    IReadOnlyDictionary<string, string> Data);
+    IReadOnlyDictionary<string, string> Data,
+    bool AppRendered = false);
 
 public sealed record FirebaseDeliveryOutcome(
     Guid DbId,

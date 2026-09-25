@@ -400,6 +400,30 @@ public sealed class AccountApiTests(AcceptingApiFactory factory) : IClassFixture
         Assert.Equal(FolderSyncScope.InboxAndSent, await db.MailAccounts.Where(a => a.Id == foreignAccountId).Select(a => a.FolderSyncScope).SingleAsync());
     }
 
+    [Fact]
+    public async Task NotificationSettings_DefaultToLimitedInbox_PersistPerAccount_AndRejectUnknownPrivacy()
+    {
+        var (accountId, _, _, _, _, _) = await SeedScopeAccountAsync(Guid.NewGuid());
+        var (otherAccountId, _, _, _, _, _) = await SeedScopeAccountAsync(Guid.NewGuid());
+        var client = AuthorizedClient(accountId);
+
+        var initial = await ReadNotificationSettingsAsync(await client.GetAsync("/api/account/notification-settings"));
+        Assert.Equal((true, true, "Limited", true), initial);
+
+        var updated = await ReadNotificationSettingsAsync(await client.PutAsJsonAsync("/api/account/notification-settings",
+            new { enabled = false, inboxOnly = false, privacy = "Private" }));
+        Assert.Equal((false, false, "Private", true), updated);
+        Assert.Equal(updated, await ReadNotificationSettingsAsync(await client.GetAsync("/api/account/notification-settings")));
+
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PutAsJsonAsync("/api/account/notification-settings",
+            new { enabled = true, inboxOnly = true, privacy = 7 })).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PutAsJsonAsync("/api/account/notification-settings",
+            new { enabled = true, inboxOnly = true, privacy = "Loud" })).StatusCode);
+        Assert.Equal(updated, await ReadNotificationSettingsAsync(await client.GetAsync("/api/account/notification-settings")));
+        Assert.Equal((true, true, "Limited", true),
+            await ReadNotificationSettingsAsync(await AuthorizedClient(otherAccountId).GetAsync("/api/account/notification-settings")));
+    }
+
     private HttpClient AuthorizedClient(Guid accountId)
     {
         var client = _accepting.CreateClient();
@@ -412,6 +436,14 @@ public sealed class AccountApiTests(AcceptingApiFactory factory) : IClassFixture
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var body = (await response.Content.ReadFromJsonAsync<JsonDocument>())!.RootElement;
         return (body.GetProperty("scope").GetString()!, body.GetProperty("syncedFolderIds").EnumerateArray().Select(x => x.GetGuid()).ToList());
+    }
+
+    private static async Task<(bool Enabled, bool InboxOnly, string Privacy, bool PreviewsAllowed)> ReadNotificationSettingsAsync(HttpResponseMessage response)
+    {
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = (await response.Content.ReadFromJsonAsync<JsonDocument>())!.RootElement;
+        return (body.GetProperty("enabled").GetBoolean(), body.GetProperty("inboxOnly").GetBoolean(),
+            body.GetProperty("privacy").GetString()!, body.GetProperty("previewsAllowedByServer").GetBoolean());
     }
 
     private async Task<(Guid AccountId, Guid Inbox, Guid Sent, Guid Archive, Guid Custom, Guid Unavailable)> SeedScopeAccountAsync(Guid accountId)

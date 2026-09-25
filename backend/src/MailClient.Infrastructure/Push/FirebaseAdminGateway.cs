@@ -12,6 +12,7 @@ public sealed class FirebaseAdminGateway(
         string? title,
         string? body,
         IReadOnlyDictionary<string, string> data,
+        bool appRendered,
         CancellationToken cancellationToken)
     {
         IReadOnlyList<FirebaseDeliveryOutcome> outcomes;
@@ -19,7 +20,7 @@ public sealed class FirebaseAdminGateway(
         {
             outcomes = await sender.SendBatchAsync(
                 recipients.Select(recipient =>
-                    new FirebaseOutgoingMessage(recipient.DbId, recipient.PushToken, title, body, data)).ToList(),
+                    new FirebaseOutgoingMessage(recipient.DbId, recipient.PushToken, title, body, data, appRendered)).ToList(),
                 cancellationToken);
         }
         catch (OperationCanceledException)

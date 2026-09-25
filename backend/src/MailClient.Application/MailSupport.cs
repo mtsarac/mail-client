@@ -45,12 +45,14 @@ public enum PushEventType
     AccountReauthenticationRequired,
     /// <summary>Contract-reserved. Not emitted yet: nothing can reliably distinguish
     /// persistent sync failure from transient errors before Phase 9 retry classification.</summary>
-    SyncError
+    SyncError,
+    SnoozeExpired
 }
 
 /// <summary>
 /// Typed push event. Payloads stay minimal: identifiers the client uses to fetch
-/// authoritative state from the API. Never attach mail bodies, HTML, credentials,
+/// authoritative state from the API, plus sender/subject/short text preview only as the
+/// account's notification privacy allows. Never attach full mail bodies, HTML, credentials,
 /// tokens, attachment contents, or raw exception messages.
 /// </summary>
 public sealed record PushEvent(
@@ -61,7 +63,8 @@ public sealed record PushEvent(
     Guid? FolderId = null,
     string? Operation = null,
     string? SenderPreview = null,
-    string? SubjectPreview = null);
+    string? SubjectPreview = null,
+    string? BodyPreview = null);
 
 /// <summary>
 /// Best-effort push delivery. Implementations must never let a push failure fail
