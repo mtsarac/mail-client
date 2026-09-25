@@ -18,6 +18,16 @@ namespace MailClient.Api.Endpoints;
 
 public sealed record AccountSignatureRequest(string? Signature);
 
+public sealed record FolderSyncStatusResponse(
+    Guid FolderId,
+    string FolderName,
+    MailClient.Domain.Enums.MailFolderType FolderType,
+    bool BackfillComplete,
+    DateTime? LastSuccessfulSyncAt,
+    DateTime? LastFailureAt,
+    MailClient.Domain.Enums.SyncFailureCategory? LastFailureCategory,
+    int ConsecutiveFailures);
+
 public static class AccountEndpoints
 {
     public static void MapAccountEndpoints(this WebApplication app)
@@ -96,6 +106,17 @@ public static class AccountEndpoints
 
         var api = app.MapGroup("/api").RequireAuthorization();
         api.MapGet("/account", async (ICurrentMailAccount current, AppDbContext db, CancellationToken ct) => await db.MailAccounts.Where(x => x.Id == current.MailAccountId).Select(x => new AccountResponse(x.Id, x.EmailAddress, x.DisplayName, x.Provider, x.Status, x.Signature)).SingleOrDefaultAsync(ct) is { } account ? Results.Ok(account) : Results.NotFound()).WithTags("Account").WithName("GetCurrentAccount").WithSummary("Get current mailbox account").Produces<AccountResponse>().Produces(404);
+        api.MapGet("/account/sync-status", async (ICurrentMailAccount current, AppDbContext db, CancellationToken ct) =>
+        {
+            var statuses = await db.SyncStates.AsNoTracking()
+                .Where(s => s.MailAccountId == current.MailAccountId)
+                .Join(db.MailFolders.AsNoTracking(), s => s.MailFolderId, f => f.Id, (s, f) => new FolderSyncStatusResponse(
+                    f.Id, f.Name, f.FolderType, s.BackfillNextUid == 0, s.LastSuccessfulSyncAt, s.LastFailureAt, s.LastFailureCategory, s.ConsecutiveFailures))
+                .ToListAsync(ct);
+            return Results.Ok(statuses);
+        }).WithTags("Account").WithName("GetAccountSyncStatus").WithSummary("Per-folder sync and backfill status for the current mailbox")
+            .WithDescription("One entry per folder with a sync state row. `BackfillComplete` is false while older mail history is still being imported - search results may be incomplete until then.")
+            .Produces<IReadOnlyList<FolderSyncStatusResponse>>();
         api.MapPost("/account/reconnect", async (AccountReconnectRequest request, ICurrentMailAccount current, AccountConnectionService service, AuditLogger audit, CorrelationContext correlation, CancellationToken ct) =>
         {
             var account = await service.ReconnectAsync(current.MailAccountId, request, ct);

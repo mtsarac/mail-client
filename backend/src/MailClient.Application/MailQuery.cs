@@ -58,7 +58,8 @@ public sealed record MailSearchRequest(
     bool? Flagged,
     bool? HasAttachment,
     int Page,
-    int PageSize);
+    int PageSize,
+    Guid? LabelId = null);
 
 public sealed record MailDetailResponse(
     Guid Id,

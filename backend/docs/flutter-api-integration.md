@@ -280,6 +280,24 @@ Belirtilen cihazın oturumunu uzaktan kapatır (o cihazın refresh token'ı geç
 |---|---|---|
 | 404 | — | Oturum yok, zaten iptal edilmiş, ya da başka hesaba ait. |
 
+### `GET /api/account/sync-status`
+**Auth:** Bearer
+
+Bağlı hesabın her klasörü için bir `SyncState` satırı döner - "posta kutusu hâlâ senkronize ediliyor, arama sonuçları eksik olabilir" gibi UI uyarıları ve Ayarlar altındaki sync durumu ekranı için. Klasör silinip yeniden keşfedilene kadar henüz hiç sync denemesi yapılmamış klasörler dizide görünmez (satır yalnızca ilk sync denemesinde oluşur).
+
+```json
+// 200 OK
+[{
+  "folderId": "…", "folderName": "INBOX", "folderType": "Inbox",
+  "backfillComplete": false,
+  "lastSuccessfulSyncAt": "2026-09-17T01:56:58Z",
+  "lastFailureAt": null, "lastFailureCategory": null,
+  "consecutiveFailures": 0
+}]
+```
+
+`backfillComplete: false` iken o klasördeki daha eski mail geçmişi henüz arka planda içeri aktarılıyor demektir - `/api/search` şu an yalnızca içeri aktarılmış maillerde çalışır, bu durumda sonuçlar eksik olabilir. `lastFailureCategory`: `Transient` | `Authentication` | `Configuration` | `Permanent`.
+
 ### `DELETE /api/account`
 **Auth:** Bearer
 
@@ -366,11 +384,12 @@ Hesap kapsamında liste, en yeni önce (`receivedAt`). Query: `folderId`, `isRea
 ### `GET /api/search`
 **Auth:** Bearer
 
-Yalnızca sunucudaki önbellekli maillerde tam metin + filtreli arama; tüm filtreler opsiyonel ve AND'lenir. Query: `q`, `folderId`, `conversationId`, `from`, `to`, `fromDate`, `toDate` (ISO-8601), `isRead`, `flagged`, `hasAttachment` (dikkat: `/mails`'te `hasAttachments`), `page`, `pageSize`. Yanıt şekli `/mails` ile birebir aynı (`MailListResponse`).
+Yalnızca sunucudaki önbellekli maillerde tam metin + filtreli arama; tüm filtreler opsiyonel ve AND'lenir. Query: `q`, `folderId`, `conversationId`, `from`, `to`, `fromDate`, `toDate` (ISO-8601), `isRead`, `flagged`, `hasAttachment` (dikkat: `/mails`'te `hasAttachments`), `labelId`, `page`, `pageSize`. Yanıt şekli `/mails` ile birebir aynı (`MailListResponse`).
 
 - `from`: gönderen adresi ya da görünen adında büyük/küçük harf duyarsız "içerir" araması.
 - `to`: herhangi bir To/Cc/Bcc alıcısının adresi ya da adında büyük/küçük harf duyarsız "içerir" araması.
 - `fromDate` / `toDate`: alınma zamanına (`receivedAt`) göre filtreler; `fromDate` dahil, `toDate` hariç. UTC ofseti olmayan değerler UTC kabul edilir.
+- `labelId`: sunucu tarafında `MailLabelAssignment` üzerinden filtrelenir (pagination-safe) - eskiden client tarafında sayfa sonrası uygulanıyordu, artık `q`/diğer filtrelerle aynı sorguya dahil. Başka hesaba ait bir `labelId` hiçbir sonuçla eşleşmez.
 
 ### `GET /api/mails/{id}`
 **Auth:** Bearer
