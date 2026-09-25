@@ -115,7 +115,8 @@ public sealed class ScheduledSendDispatcher(
                 ScheduledSendService.Deserialize(entity.BccAddressesJson),
                 entity.Subject, entity.BodyHtml, entity.BodyText, attachments, entity.ReplySourceMailId)
             {
-                IdempotencyKey = dispatchKey
+                IdempotencyKey = dispatchKey,
+                IdentityId = entity.IdentityId
             };
 
             sendStarted = true;

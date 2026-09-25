@@ -23,11 +23,12 @@ Bir IMAP/SMTP posta istemcisi API'si. Bir hesap aynı anda birden çok cihazdan 
 5. [Mail — okuma & arama](#3-mail--okuma--arama)
 6. [Mail — durum & taşıma](#4-mail--durum--taşıma)
 7. [Yazma, taslak & gönderme](#5-yazma-taslak--gönderme)
-8. [Konuşmalar](#6-konuşmalar)
-9. [Cihaz & push bildirimleri](#7-cihaz--push-bildirimleri)
-10. [Hata kodları](#8-hata-kodları)
-11. [Enum referansı](#9-enum-referansı)
-12. [Prod erişim listesi (allowlist)](#10-prod-erişim-listesi-allowlist)
+8. [İmzalar & gönderici kimlikleri](#6-i̇mzalar--gönderici-kimlikleri)
+9. [Konuşmalar](#7-konuşmalar)
+10. [Cihaz & push bildirimleri](#8-cihaz--push-bildirimleri)
+11. [Hata kodları](#9-hata-kodları)
+12. [Enum referansı](#10-enum-referansı)
+13. [Prod erişim listesi (allowlist)](#11-prod-erişim-listesi-allowlist)
 
 ---
 
@@ -237,9 +238,21 @@ Oturum açmış hesabın özet bilgisi — uygulama açılışında "kim bağlı
   "emailAddress": "person@example.com",
   "displayName": "",
   "provider": "Custom",
-  "status": "Active"
+  "status": "Active",
+  "signature": "… | null"
 }
 ```
+
+`signature`, varsayılan yeni-posta imzasının düz metnidir (yoksa `null`). Eski
+tek-imza uyumluluğu için korunur; tam liste için aşağıdaki imza bölümüne bak.
+
+### `PUT /api/account/signature`
+**Auth:** Bearer · **Gövde:** `{ "signature": "… | null" }`
+
+Eski tek-imza uyumluluğu: boş olmayan metin varsayılan yeni-posta imzasını
+oluşturur veya günceller (yanıt/ilet varsayılanı boşsa onları da başlatır);
+boş/`null` metin ona bakan her modu temizler. `200 OK` güncel `AccountResponse`
+döner. Tam imza yönetimi için aşağıdaki imza bölümünü kullan.
 
 ### `POST /api/account/reconnect`
 **Auth:** Bearer
@@ -633,7 +646,7 @@ Bir maile yanıt/ilet ekranını önceden doldurmak için gereken alanları dön
 ### `POST /api/drafts`
 **Auth:** Bearer · **Gövde:** `multipart/form-data`
 
-Yeni taslak oluşturur (sunucu tarafında IMAP `APPEND` ile). Alanlar form-data: `To` (çoklu), `Cc`, `Bcc`, `subject`, `bodyHtml` ve/veya `bodyText`, `replySourceMailId` (opsiyonel), dosya alanları ek olarak eklenir (alan adı serbest, her dosya bir ek). Form doğrulama hataları gönderimdeki kodlarla aynıdır. `reconciliationPending: true` ise `mailId` henüz sunucuyla eşleşmemiştir; kısa süre sonra taslak listesini/`GET /drafts/{id}`'yi tazele. `warning` doluysa kullanıcıya göster.
+Yeni taslak oluşturur (sunucu tarafında IMAP `APPEND` ile). Alanlar form-data: `To` (çoklu), `Cc`, `Bcc`, `subject`, `bodyHtml` ve/veya `bodyText`, `replySourceMailId` (opsiyonel), `identityId` (opsiyonel gönderici kimliği — bilinmeyen id `404 identity_not_found` döner), dosya alanları ek olarak eklenir (alan adı serbest, her dosya bir ek). Form doğrulama hataları gönderimdeki kodlarla aynıdır. `reconciliationPending: true` ise `mailId` henüz sunucuyla eşleşmemiştir; kısa süre sonra taslak listesini/`GET /drafts/{id}`'yi tazele. `warning` doluysa kullanıcıya göster.
 
 | Durum | code | Anlamı |
 |---|---|---|
@@ -685,7 +698,7 @@ Taslağı olduğu gibi gönderir, gövde yok. `Idempotency-Key` header'ı **zoru
 ### `POST /api/mails/send`
 **Auth:** Bearer · **Gövde:** `multipart/form-data`
 
-Taslaksız doğrudan gönderim. Form alanları: `To` (çoklu, en az bir tane), `Cc`, `Bcc`, `subject`, `bodyHtml` ve/veya `bodyText`, en fazla 20 dosya eki, `replySourceMailId` (yanıtlarken). `Idempotency-Key` header'ı zorunlu.
+Taslaksız doğrudan gönderim. Form alanları: `To` (çoklu, en az bir tane), `Cc`, `Bcc`, `subject`, `bodyHtml` ve/veya `bodyText`, en fazla 20 dosya eki, `replySourceMailId` (yanıtlarken), `identityId` (opsiyonel gönderici kimliği — bilinmeyen id `404 identity_not_found` döner). `Idempotency-Key` header'ı zorunlu.
 
 ```json
 // 200 OK
@@ -719,7 +732,7 @@ Bir maili şimdi değil, belirli bir zamanda göndermek için. Sunucu arka pland
 ### `POST /api/scheduled-sends`
 **Auth:** Bearer · **Gövde:** `multipart/form-data`
 
-`POST /api/mails/send` ile aynı alanlar (`To`, `Cc`, `Bcc`, `subject`, `bodyHtml`/`bodyText`, en fazla 20 dosya eki, `replySourceMailId`) artı **`sendAtUtc`** (ISO-8601, zorunlu, gelecekte bir zaman olmalı). `Idempotency-Key` header'ı zorunlu.
+`POST /api/mails/send` ile aynı alanlar (`To`, `Cc`, `Bcc`, `subject`, `bodyHtml`/`bodyText`, en fazla 20 dosya eki, `replySourceMailId`, `identityId`) artı **`sendAtUtc`** (ISO-8601, zorunlu, gelecekte bir zaman olmalı). `Idempotency-Key` header'ı zorunlu.
 
 ```json
 // 201 Created
@@ -852,7 +865,51 @@ Yazma ekranında gövdeye tek dokunuşla eklenen kısa hazır metinler ("Teşekk
 
 ---
 
-## 6. Konuşmalar
+## 6. İmzalar & gönderici kimlikleri
+
+Sunucu imzayı giden postaya asla kendisi eklemez: uygulama yazma moduna
+(yeni, yanıt/tümünü yanıtla, ilet) ait varsayılan imzanın gövdesini
+düzenleyiciye yerleştirir, kullanıcı gönderir. Kimlik (`identity`) ise
+gönderici adresini/adını ve Reply-To'yu belirler.
+
+### `GET /api/signatures`
+**Auth:** Bearer
+
+`{ items: [{ id, name, bodyText, bodyHtml, createdAt, updatedAt }], defaults: { newMailSignatureId, replySignatureId, forwardSignatureId } }` döner. `defaults` içindeki id'ler `null` olabilir (o modda imza yok).
+
+### `POST /api/signatures`
+**Auth:** Bearer · **Gövde (JSON):** `{ "name": "…", "bodyText": "…", "bodyHtml": "…?" }`
+
+`201 Created` + imza nesnesi. `name` 1-100, `bodyText` 1-10000, `bodyHtml` opsiyonel en fazla 50000 karakter. Hatalar anahtarlı 400 validation problem döner.
+
+### `PUT /api/signatures/{id}` ve `DELETE /api/signatures/{id}`
+**Auth:** Bearer
+
+`PUT` gövdesi oluşturmayla aynıdır, `200 OK` + güncel imza döner. `DELETE` `204` döner; silinen imzaya bakan varsayılanlar temizlenir. Başka hesaba ait id `404 signature_not_found` döner.
+
+### `PUT /api/signatures/defaults`
+**Auth:** Bearer · **Gövde (JSON):** `{ "newMailSignatureId": "…?", "replySignatureId": "…?", "forwardSignatureId": "…?" }`
+
+Üç varsayılanı birden değiştirir; `null` ilgili modu temizler. `200 OK` güncel `defaults` nesnesini döner. Hesaba ait olmayan id `404 signature_not_found` döner.
+
+### `GET /api/identities`
+**Auth:** Bearer
+
+`[{ id, emailAddress, displayName, replyTo, signatureId, isDefault }]` döner (varsayılan önce).
+
+### `POST /api/identities`
+**Auth:** Bearer · **Gövde (JSON):** `{ "emailAddress": "…", "displayName": "…?", "replyTo": "…?", "signatureId": "…?", "isDefault": false }`
+
+`201 Created` + kimlik nesnesi. `emailAddress` yalın adres olmalı (görünen ad yok), en fazla 320 karakter, hesap içinde benzersiz (çakışmada 409 `identity_already_exists`). `displayName` en fazla 250 karakter; `replyTo` opsiyonel yalın adres; `signatureId` hesaba ait olmalı (değilse 404 `signature_not_found`). `isDefault: true` önceki varsayılanı temizler.
+
+### `PUT /api/identities/{id}` ve `DELETE /api/identities/{id}`
+**Auth:** Bearer
+
+`PUT` gövdesi oluşturmayla aynıdır, `200 OK` + güncel kimlik döner. `DELETE` `204` döner; bekleyen zamanlanmış gönderimin kullandığı kimlik silinemez (409 `identity_in_use`). Başka hesaba ait id `404 identity_not_found` döner.
+
+Kimlik seçimi: yazma ekranında kimlik seçici göster; seçilen kimliğin `signatureId`'si varsa o imzayı da öner. Gönderim/taslak/zamanlanmış gönderimde `identityId` form alanı ver; mesaj o kimliğin adresi, görünen adı ve Reply-To değeriyle gider.
+
+## 7. Konuşmalar
 
 Mailleri `Message-ID` / `In-Reply-To` / `References` zincirine göre gruplar; zincir yoksa normalize edilmiş subject + ortak katılımcı yedeği kullanılır (`Re:`, `Fwd:`, `Ynt:`, `İlt:`, `AW:`, `WG:` vb. önekler temizlenir).
 
@@ -894,7 +951,7 @@ Query: `includeTrash=false` Çöp ve Spam klasörlerindeki mesajları dışarıd
 
 ---
 
-## 7. Cihaz & push bildirimleri
+## 8. Cihaz & push bildirimleri
 
 Firebase Cloud Messaging üzerinden çalışır. Uygulama açılışında ve token yenilendiğinde `POST /api/devices` çağır.
 
@@ -955,7 +1012,7 @@ Aynı `token` tekrar gönderilirse güncellenir (upsert) — her uygulama açıl
 
 ---
 
-## 8. Hata kodları
+## 9. Hata kodları
 
 Her hata gövdesi `{ code, title, status, correlationId }` — bazılarında ek alanlar (`manualSetupAvailable` gibi) olur. Destek talebinde her zaman `correlationId`'yi ilet.
 
@@ -970,11 +1027,13 @@ Her hata gövdesi `{ code, title, status, correlationId }` — bazılarında ek 
 | 400 | `invalid_email` / `invalid_recipient` / `recipient_required` / `body_required` / `body_too_large` / `too_many_attachments` / `attachment_too_large` / `invalid_mail_header` / `message_not_constructible` / `manual_setup_invalid` | Form/gövde doğrulaması. |
 | 400 | `idempotency_key_required` / `idempotency_key_too_long` | Gönderim uçları. |
 | 400 | `scheduled_send_in_past` | Zamanlanmış gönderimde `sendAtUtc` şu andan ileride değil. |
-| 403 | `email_not_allowlisted` | Prod erişim listesi açık, email listede değil — bkz. [altta](#10-prod-erişim-listesi-allowlist). |
+| 403 | `email_not_allowlisted` | Prod erişim listesi açık, email listede değil — bkz. [altta](#11-prod-erişim-listesi-allowlist). |
 | 403 | `mail_account_disabled` | Hesap devre dışı bırakıldı. |
 | 403 | `provider_disabled` / `provider_new_accounts_disabled` / `provider_existing_accounts_disabled` / `authentication_method_disabled` | Sunucu tarafı politika: sağlayıcı/yöntem kapalı ("şu an desteklenmiyor"). |
-| 404 | `mail_account_not_found` / `mail_not_found` / `draft_not_found` / `scheduled_send_not_found` | Kaynak yok ya da başka hesaba ait. Kodsuz `404`: oturum/klasör/ek/konuşma/cihaz/bilinmeyen bulk eylemi. |
+| 404 | `mail_account_not_found` / `mail_not_found` / `draft_not_found` / `scheduled_send_not_found` / `signature_not_found` / `identity_not_found` | Kaynak yok ya da başka hesaba ait. Kodsuz `404`: oturum/klasör/ek/konuşma/cihaz/bilinmeyen bulk eylemi. |
 | 404 | `mail_folder_not_found` | Mail durum/taşıma uçlarında hedef klasör hesapta yok. |
+| 409 | `identity_already_exists` | Email adresi hesapta zaten kayıtlı. |
+| 409 | `identity_in_use` | Kimlik bekleyen zamanlanmış gönderimde kullanılıyor. |
 | 422 | `mail_discovery_failed` | Otomatik keşif başarısız → manuel bağlantıya geç. |
 | 422 | `mail_server_unsafe` / `unsupported_authentication_method` / `discovery_invalid` / `discovery_expired` | Sunucu/keşif/yöntem reddi. |
 | 422 | `oauth_provider_not_configured` / `oauth_redirect_uri_invalid` / `oauth_state_invalid` / `oauth_code_exchange_failed` | OAuth akışı hataları (bkz. OAuth bölümü). |
@@ -1001,7 +1060,7 @@ Her hata gövdesi `{ code, title, status, correlationId }` — bazılarında ek 
 
 ---
 
-## 9. Enum referansı
+## 10. Enum referansı
 
 Tüm enum değerleri JSON'da **string** olarak serileşir (sayısal değil).
 

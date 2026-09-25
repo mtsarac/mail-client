@@ -51,11 +51,11 @@ public static class ScheduledSendEndpoints
                     new ScheduledSendResponse(result.Id, result.SendAtUtc, result.Status));
             })
             .DisableAntiforgery().WithName("CreateScheduledSend").WithSummary("Schedule a mail to send later")
-            .WithDescription("multipart/form-data: same fields as POST /api/mails/send, plus sendAtUtc (ISO-8601, required, must be in the future). Idempotency-Key header is required; retrying with the same key never schedules twice.")
+            .WithDescription("multipart/form-data: same fields as POST /api/mails/send, including optional identityId, plus sendAtUtc (ISO-8601, required, must be in the future). Idempotency-Key header is required; retrying with the same key never schedules twice.")
             .Accepts<IFormCollection>("multipart/form-data").Produces<ScheduledSendResponse>(201).ProducesValidationProblem()
             .ProblemCodes(400, "scheduled_send_in_past", "recipient_required", "invalid_recipient", "body_required", "body_too_large",
                 "too_many_attachments", "attachment_too_large", "idempotency_key_required", "idempotency_key_too_long")
-            .ProblemCodes(404, "mail_account_not_found").ProblemCodes(409, "idempotency_conflict");
+            .ProblemCodes(404, "mail_account_not_found", "identity_not_found").ProblemCodes(409, "idempotency_conflict");
 
         api.MapGet("/scheduled-sends", async (ICurrentMailAccount current, ScheduledSendService scheduledSends, CancellationToken ct) =>
             {

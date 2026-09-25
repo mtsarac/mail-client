@@ -67,14 +67,14 @@ public static class MailEndpoints
             return Results.Ok(result);
         }).DisableAntiforgery().WithTags(DraftsTag).WithName("CreateDraft").WithSummary("Create draft")
             .WithDescription("multipart/form-data with the same fields as send (all optional). Saved to the mailbox Drafts folder.")
-            .Accepts<IFormCollection>("multipart/form-data").Produces<DraftWriteResult>().ProblemCodes(404, "mail_account_not_found").ProblemCodes(422, "drafts_folder_unavailable");
+            .Accepts<IFormCollection>("multipart/form-data").Produces<DraftWriteResult>().ProblemCodes(404, "mail_account_not_found", "identity_not_found").ProblemCodes(422, "drafts_folder_unavailable");
         api.MapPut("/drafts/{id:guid}", async (Guid id, IFormCollection form, ICurrentMailAccount current, DraftService drafts, CorrelationContext correlation, CancellationToken ct) =>
         {
             var command = ComposeForm.Read(form).ToDraft(current.MailAccountId);
             return Results.Ok(await drafts.UpdateAsync(current.MailAccountId, id, command, correlation.CorrelationId, ct));
         }).DisableAntiforgery().WithTags(DraftsTag).WithName("UpdateDraft").WithSummary("Replace draft contents")
             .WithDescription("multipart/form-data, same fields as create. Replaces the draft (the returned mailId may differ from `id`).")
-            .Accepts<IFormCollection>("multipart/form-data").Produces<DraftWriteResult>().ProblemCodes(404, "draft_not_found").ProblemCodes(422, "mail_not_draft", "drafts_folder_unavailable");
+            .Accepts<IFormCollection>("multipart/form-data").Produces<DraftWriteResult>().ProblemCodes(404, "draft_not_found", "identity_not_found").ProblemCodes(422, "mail_not_draft", "drafts_folder_unavailable");
         api.MapDelete("/drafts/{id:guid}", async (Guid id, ICurrentMailAccount current, DraftService drafts, CorrelationContext correlation, CancellationToken ct) =>
         {
             await drafts.DeleteAsync(current.MailAccountId, id, correlation.CorrelationId, ct);
@@ -147,10 +147,10 @@ public static class MailEndpoints
             var command = ComposeForm.Read(form).ToSend(current.MailAccountId, idempotencyKey ?? "");
             var result = await sender.SendAsync(current.MailAccountId, command, correlation.CorrelationId, ct);
             return Results.Ok(new SendMailResponse(result.Sent, result.SentCopySaved, result.Warning, result.MailId, result.ConversationId));
-        }).WithTags(ComposeTag).WithName("SendMail").WithSummary("Send mail idempotently").WithDescription("multipart/form-data: to, subject, bodyHtml and/or bodyText, up to 20 attachments. Idempotency-Key header is required; retrying with the same key never sends twice.")
+        }).WithTags(ComposeTag).WithName("SendMail").WithSummary("Send mail idempotently").WithDescription("multipart/form-data: to, subject, bodyHtml and/or bodyText, optional identityId, up to 20 attachments. Idempotency-Key header is required; retrying with the same key never sends twice.")
             .Accepts<IFormCollection>("multipart/form-data").Produces<SendMailResponse>()
             .ProblemCodes(400, "recipient_required", "invalid_recipient", "body_required", "body_too_large", "too_many_attachments", "attachment_too_large", "idempotency_key_required", "idempotency_key_too_long")
-            .ProblemCodes(401, "mail_smtp_authentication_failed").ProblemCodes(409, "idempotency_conflict", "send_in_progress", "delivery_unknown", "mail_account_needs_reauthentication")
+            .ProblemCodes(401, "mail_smtp_authentication_failed").ProblemCodes(404, "identity_not_found").ProblemCodes(409, "idempotency_conflict", "send_in_progress", "delivery_unknown", "mail_account_needs_reauthentication")
             .ProblemCodes(502, "mail_provider_unavailable", "mail_server_unreachable", "mail_tls_failed").DisableAntiforgery();
     }
 
@@ -163,7 +163,8 @@ public static class MailEndpoints
         string? BodyHtml,
         string? BodyText,
         IReadOnlyList<SendMailAttachment> Attachments,
-        Guid? ReplySourceMailId)
+        Guid? ReplySourceMailId,
+        Guid? IdentityId)
     {
         public static ComposeForm Read(IFormCollection form) => new(
             Values(form, "to"),
@@ -173,13 +174,14 @@ public static class MailEndpoints
             Optional(form, "bodyHtml"),
             Optional(form, "bodyText"),
             form.Files.Select(file => new SendMailAttachment(file.FileName, file.ContentType, file.OpenReadStream())).ToList(),
-            Guid.TryParse(Optional(form, "replySourceMailId"), out var sourceMailId) ? sourceMailId : null);
+            OptionalGuid(form, "replySourceMailId", "mail_not_found"),
+            OptionalGuid(form, "identityId", "identity_not_found"));
 
         public DraftCommand ToDraft(Guid accountId) =>
-            new(accountId, To, Cc, Bcc, Subject, BodyHtml, BodyText, Attachments, ReplySourceMailId);
+            new(accountId, To, Cc, Bcc, Subject, BodyHtml, BodyText, Attachments, ReplySourceMailId, IdentityId);
 
         public SendMailCommand ToSend(Guid accountId, string idempotencyKey) =>
-            new(accountId, To, Cc, Bcc, Subject, BodyHtml, BodyText, Attachments, ReplySourceMailId) { IdempotencyKey = idempotencyKey };
+            new(accountId, To, Cc, Bcc, Subject, BodyHtml, BodyText, Attachments, ReplySourceMailId) { IdempotencyKey = idempotencyKey, IdentityId = IdentityId };
 
         private static List<string> Values(IFormCollection form, string name) =>
             form[name].Where(value => !string.IsNullOrWhiteSpace(value)).Select(value => value!).ToList();
@@ -188,6 +190,13 @@ public static class MailEndpoints
         {
             var value = form[name].ToString();
             return string.IsNullOrWhiteSpace(value) ? null : value;
+        }
+
+        private static Guid? OptionalGuid(IFormCollection form, string name, string error)
+        {
+            var value = Optional(form, name);
+            if (value is null) return null;
+            return Guid.TryParse(value, out var id) ? id : throw new InvalidOperationException(error);
         }
     }
 

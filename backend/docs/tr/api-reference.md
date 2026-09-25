@@ -26,7 +26,8 @@ arayüzüne bakın (`/swagger`, yalnızca Development). Mobil istemci için örn
 | POST | `/api/accounts/connect` | anon | Keşif sonucundan posta kutusu oluşturur; token döner |
 | POST | `/api/accounts/connect-manual` | anon | Manuel sunucu ayarlarıyla posta kutusu oluşturur |
 | POST | `/api/accounts/login` | anon | Mevcut posta kutusuna başka cihazdan giriş |
-| GET | `/api/account` | bearer | Geçerli hesap |
+| GET | `/api/account` | bearer | Geçerli hesap (`signature` = varsayılan yeni-posta imzasının düz metni, yoksa null) |
+| PUT | `/api/account/signature` | bearer | Eski uyumluluk: varsayılan yeni-posta imzasını ayarlar veya temizler (boş metin temizler); gövde `{signature}` |
 | POST | `/api/account/reconnect` | bearer | Saklanan kimlik bilgilerini günceller (ör. şifre değişince) |
 | DELETE | `/api/account` | bearer | Hesabı ve verilerini siler |
 | GET | `/api/account/sessions` | bearer | Oturum açmış cihazları/oturumları listeler |
@@ -151,7 +152,7 @@ karakterdir; `sortOrder` 0-99999. Doğrulama hataları `text`, `title` veya
 | GET | `/api/search/remote` | bearer | Kullanıcının başlattığı genel IMAP araması; eksik eşleşmeleri içeri alır, ardından `/api/search` tekrar çağrılır |
 | GET | `/api/mails/{mailId}/attachments/{attachmentId}` | bearer | Eki indirir (depolama aranabilirse Range/206) |
 | GET | `/api/compose/limits` | bearer | Güncel ek boyutu ve sayı sınırları |
-| POST | `/api/mails/send` | bearer + `Idempotency-Key` | Posta gönderir (multipart/form-data) |
+| POST | `/api/mails/send` | bearer + `Idempotency-Key` | Posta gönderir (multipart/form-data; opsiyonel `identityId` bir gönderici kimliği seçer, verilmezse hesap adresi) |
 | GET | `/api/mails/{id}/compose/reply · reply-all · forward` | bearer | Hazır doldurulmuş yazma bağlamı |
 
 `/api/search` filtreleri: `folderId`, `conversationId`, `isRead`, `flagged`,
@@ -196,6 +197,53 @@ Dispatch başladıysa 409 `scheduled_send_already_sent`, Failed/Cancelled kayıt
 için `scheduled_send_not_pending`, başka düzenleme önce tamamlandıysa
 `scheduled_send_modified` döner. Bu çakışmalar içeriği değiştirmez.
 DeliveryUnknown gönderimler tekrar denenmez ve iptal edilemez.
+### Signatures
+
+| Metot | Yol | Yetki | Açıklama |
+|---|---|---|---|
+| GET | `/api/signatures` | bearer | Adlandırılmış imzaları ve mod başına varsayılanları listeler (`{items, defaults}`) |
+| POST | `/api/signatures` | bearer | İmza oluşturur (201) |
+| PUT | `/api/signatures/{id}` | bearer | İmzanın yerine yenisini yazar |
+| DELETE | `/api/signatures/{id}` | bearer | İmza siler (204); ona bakan varsayılanlar temizlenir |
+| PUT | `/api/signatures/defaults` | bearer | Üç varsayılanı birden değiştirir (`{newMailSignatureId?, replySignatureId?, forwardSignatureId?}`; null ilgili modu temizler) |
+
+Gövde: `{name, bodyText, bodyHtml?}`; yanıta `id`, `createdAt`, `updatedAt` eklenir.
+İmzalar istemcinin düzenleyiciye eklediği metindir, sunucu giden postaya asla
+kendisi eklemez: uygulama yazma moduna (yeni, yanıt/tümünü yanıtla, ilet)
+ait varsayılanı seçip gövdesini düzenleyiciye yerleştirir. `name` kırpılır,
+1-100 karakter; `bodyText` kırpılır, 1-10000 karakter; `bodyHtml` opsiyonel
+varyanttır, kırpılır ve en fazla 50000 karakterdir. Doğrulama hataları
+`name`, `bodyText` veya `bodyHtml` anahtarlı 400 validation problem döner.
+Hesaba ait olmayan bir varsayılan id'si 404 `signature_not_found` döner;
+başka hesaba ait imza id'si için de aynı kod döner. İmzalar hesapla birlikte
+silinir. `PUT /api/account/signature`, yeni-posta varsayılanının eski adıdır:
+boş olmayan metin onu oluşturur veya günceller (ve yanıt/ilet varsayılanı
+boşsa onları da başlatır); boş metin ona bakan her modu temizler.
+
+### Identities
+
+| Metot | Yol | Yetki | Açıklama |
+|---|---|---|---|
+| GET | `/api/identities` | bearer | Gönderici kimliklerini listeler (varsayılan önce) |
+| POST | `/api/identities` | bearer | Kimlik oluşturur (201) |
+| PUT | `/api/identities/{id}` | bearer | Kimliğin yerine yenisini yazar |
+| DELETE | `/api/identities/{id}` | bearer | Kimlik siler (204); bekleyen zamanlanmış gönderim kullanıyorsa engellenir |
+
+Gövde: `{emailAddress, displayName?, replyTo?, signatureId?, isDefault}`;
+yanıt aynı alanlara `id` ekler. Hesap başına en fazla bir varsayılan olur:
+`isDefault: true` ile oluşturma/güncelleme önceki varsayılanı temizler.
+`emailAddress` görünen adsız yalın adres olmalı, en fazla 320 karakter ve
+hesap içinde büyük/küçük harf duyarsız benzersizdir (aksi halde 409
+`identity_already_exists`); `displayName` en fazla 250 karakter; `replyTo`
+opsiyonel yalın adrestir; `signatureId` hesaba ait olmalı (değilse 404
+`signature_not_found`). Doğrulama hataları `emailAddress`, `displayName`
+veya `replyTo` anahtarlı 400 validation problem döner. Başka hesaba ait
+kimlik id'si 404 `identity_not_found` döner. Bekleyen zamanlanmış gönderimin
+kullandığı kimliği silmek 409 `identity_in_use` döner. Gönderim, taslak ve
+zamanlanmış gönderim opsiyonel `identityId` form alanı kabul eder: mesaj o
+kimliğin adresi, görünen adı ve Reply-To değeriyle gider (daha sonra
+gönderilen taslak, kimliği kayıtlı From adresinden çözer). Kimlikler hesapla
+birlikte silinir.
 
 ### Mail ops
 

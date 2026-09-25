@@ -101,12 +101,16 @@ public sealed class ScheduledSendService(
         var account = await db.MailAccounts.SingleOrDefaultAsync(
             item => item.Id == accountId && item.Status == MailAccountStatus.Active, cancellationToken)
             ?? throw new InvalidOperationException("mail_account_not_found");
+        var identity = command.IdentityId is { } identityId
+            ? await db.MailIdentities.AsNoTracking().SingleOrDefaultAsync(x => x.Id == identityId && x.MailAccountId == accountId, cancellationToken)
+                ?? throw new InvalidOperationException("identity_not_found")
+            : null;
 
         var hashed = await ComposeMailValidator.HashAttachmentsAsync(command.Attachments, cancellationToken);
         var fingerprintRecipients = string.Join(',', command.To.Concat(command.Cc).Concat(command.Bcc));
         var fingerprint = SendOperationStore.Fingerprint(
             account.Id,
-            $"{fingerprintRecipients}|{command.ReplySourceMailId}|{sendAtUtc:O}",
+            $"{fingerprintRecipients}|{command.ReplySourceMailId}|{command.IdentityId}|{sendAtUtc:O}",
             subject, command.BodyHtml, command.BodyText, hashed);
 
         var existing = await db.ScheduledSends.SingleOrDefaultAsync(
@@ -119,7 +123,7 @@ public sealed class ScheduledSendService(
         }
 
         // Trial-build the MIME message so a malformed request fails now, not silently at dispatch time.
-        TrialBuild(account, recipients, subject, command.BodyHtml, command.BodyText, command.Attachments);
+        TrialBuild(account, identity, recipients, subject, command.BodyHtml, command.BodyText, command.Attachments);
 
         ComposeMailValidator.RewindAttachments(command.Attachments);
         var scheduledSendId = Guid.NewGuid();
@@ -143,6 +147,7 @@ public sealed class ScheduledSendService(
             IdempotencyKey = command.IdempotencyKey,
             Fingerprint = fingerprint,
             ReplySourceMailId = command.ReplySourceMailId,
+            IdentityId = command.IdentityId,
             Attachments = attachmentRows
         };
         db.ScheduledSends.Add(entity);
@@ -205,7 +210,7 @@ public sealed class ScheduledSendService(
                     await storage.OpenReadAsync(attachment.StoragePath, cancellationToken)));
             var command = new SendMailCommand(accountId, request.To, request.Cc, request.Bcc, request.Subject,
                 request.BodyHtml, request.BodyText, opened, source.ReplySourceMailId)
-            { IdempotencyKey = newKey };
+            { IdempotencyKey = newKey, IdentityId = source.IdentityId };
             return await CreateAsync(accountId, command, request.SendAtUtc.UtcDateTime, correlationId, cancellationToken);
         }
         finally
@@ -233,10 +238,12 @@ public sealed class ScheduledSendService(
         var kept = entity.Attachments.Where(x => edit.KeepAttachmentIds.Contains(x.Id)).ToList();
         if (kept.Count != edit.KeepAttachmentIds.Count || kept.Count != edit.KeepAttachmentIds.Distinct().Count())
             throw new InvalidOperationException("scheduled_send_attachment_not_found");
-
         var account = await db.MailAccounts.AsNoTracking().SingleOrDefaultAsync(
             item => item.Id == accountId && item.Status == MailAccountStatus.Active, cancellationToken)
             ?? throw new InvalidOperationException("mail_account_not_found");
+        var identity = entity.IdentityId is { } entityIdentityId
+            ? await db.MailIdentities.AsNoTracking().SingleOrDefaultAsync(x => x.Id == entityIdentityId && x.MailAccountId == accountId, cancellationToken)
+            : null;
 
         var staged = new List<ScheduledSendAttachment>(edit.NewAttachments.Count);
         var opened = new List<SendMailAttachment>(kept.Count);
@@ -247,7 +254,7 @@ public sealed class ScheduledSendService(
                     await storage.OpenReadAsync(attachment.StoragePath, cancellationToken)));
             var combined = opened.Concat(edit.NewAttachments).ToList();
             ComposeMailValidator.ValidateAttachments(combined, limits);
-            TrialBuild(account, recipients, subject, edit.BodyHtml, edit.BodyText, combined);
+            TrialBuild(account, identity, recipients, subject, edit.BodyHtml, edit.BodyText, combined);
 
             ComposeMailValidator.RewindAttachments(edit.NewAttachments);
             foreach (var attachment in edit.NewAttachments)
@@ -351,7 +358,7 @@ public sealed class ScheduledSendService(
             ? "scheduled_send_already_sent"
             : "scheduled_send_not_pending";
 
-    private void TrialBuild(MailAccount account, ResolvedRecipients recipients, string subject,
+    private void TrialBuild(MailAccount account, MailIdentity? identity, ResolvedRecipients recipients, string subject,
         string? bodyHtml, string? bodyText, IReadOnlyList<SendMailAttachment> attachments)
     {
         ComposeMailValidator.RewindAttachments(attachments);
@@ -360,7 +367,9 @@ public sealed class ScheduledSendService(
             var to = recipients.To.Select(recipient => new MailboxAddress(recipient.DisplayName, recipient.Address)).ToList();
             var cc = recipients.Cc.Select(recipient => new MailboxAddress(recipient.DisplayName, recipient.Address)).ToList();
             var bcc = recipients.Bcc.Select(recipient => new MailboxAddress(recipient.DisplayName, recipient.Address)).ToList();
-            MimeMessageBuilder.Build(account.EmailAddress, account.DisplayName, to, cc, bcc, subject, bodyHtml, bodyText, attachments, null, null);
+            MimeMessageBuilder.Build(identity?.EmailAddress ?? account.EmailAddress,
+                string.IsNullOrWhiteSpace(identity?.DisplayName) ? account.DisplayName : identity.DisplayName,
+                to, cc, bcc, subject, bodyHtml, bodyText, attachments, null, null, replyTo: identity?.ReplyTo);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

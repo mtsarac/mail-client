@@ -9,7 +9,8 @@ public sealed record DraftCommand(
     string? BodyHtml,
     string? BodyText,
     IReadOnlyList<SendMailAttachment> Attachments,
-    Guid? ReplySourceMailId);
+    Guid? ReplySourceMailId,
+    Guid? IdentityId = null);
 
 public enum DraftLookupError
 {

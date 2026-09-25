@@ -45,6 +45,13 @@ public static class AuditActions
     public const string SnippetCreated = "snippet.created";
     public const string SnippetUpdated = "snippet.updated";
     public const string SnippetDeleted = "snippet.deleted";
+    public const string SignatureCreated = "signature.created";
+    public const string SignatureUpdated = "signature.updated";
+    public const string SignatureDeleted = "signature.deleted";
+    public const string SignatureDefaultsUpdated = "signature.defaults-updated";
+    public const string IdentityCreated = "identity.created";
+    public const string IdentityUpdated = "identity.updated";
+    public const string IdentityDeleted = "identity.deleted";
     // Stored values predate the dotted naming and are kept so existing audit rows stay comparable.
     public const string RuntimeSettingsUpdated = "runtime_settings_updated";
 }

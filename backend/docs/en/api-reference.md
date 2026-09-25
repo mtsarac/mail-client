@@ -26,7 +26,8 @@ mobile client: [Flutter guide](../flutter-api-integration.md) (Turkish).
 | POST | `/api/accounts/connect` | anon | Create a mailbox from a discovery result; returns tokens |
 | POST | `/api/accounts/connect-manual` | anon | Create a mailbox with manual server settings |
 | POST | `/api/accounts/login` | anon | Sign in to an existing mailbox from another device |
-| GET | `/api/account` | bearer | Current account |
+| GET | `/api/account` | bearer | Current account (`signature` = plain-text body of the default new-mail signature, or null) |
+| PUT | `/api/account/signature` | bearer | Legacy compat: set or clear the default new-mail signature (blank clears); body `{signature}` |
 | POST | `/api/account/reconnect` | bearer | Update stored credentials (e.g. after password change) |
 | DELETE | `/api/account` | bearer | Delete the account and its data |
 | GET | `/api/account/sessions` | bearer | List signed-in devices/sessions |
@@ -149,7 +150,7 @@ are deleted with their account.
 | GET | `/api/search/remote` | bearer | User-triggered generic IMAP search; imports missing matches before a follow-up `/api/search` |
 | GET | `/api/mails/{mailId}/attachments/{attachmentId}` | bearer | Download an attachment (Range/206 when storage is seekable) |
 | GET | `/api/compose/limits` | bearer | Current attachment size and count limits |
-| POST | `/api/mails/send` | bearer + `Idempotency-Key` | Send mail (multipart/form-data) |
+| POST | `/api/mails/send` | bearer + `Idempotency-Key` | Send mail (multipart/form-data; optional `identityId` selects a sender identity, otherwise the account address) |
 | GET | `/api/mails/{id}/compose/reply · reply-all · forward` | bearer | Prefilled compose context |
 
 `/api/search` filters: `folderId`, `conversationId`, `isRead`, `flagged`,
@@ -194,6 +195,53 @@ create. It returns 409 `scheduled_send_already_sent` after dispatch starts,
 `scheduled_send_not_pending` for Failed/Cancelled rows, or
 `scheduled_send_modified` when another edit won. None of those conflicts
 change content. DeliveryUnknown sends are never retried or cancelled.
+### Signatures
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/api/signatures` | bearer | List named signatures plus the per-mode defaults (`{items, defaults}`) |
+| POST | `/api/signatures` | bearer | Create a signature (201) |
+| PUT | `/api/signatures/{id}` | bearer | Replace a signature |
+| DELETE | `/api/signatures/{id}` | bearer | Delete a signature (204); defaults pointing at it are cleared |
+| PUT | `/api/signatures/defaults` | bearer | Replace all three defaults (`{newMailSignatureId?, replySignatureId?, forwardSignatureId?}`; null clears that mode) |
+
+Body: `{name, bodyText, bodyHtml?}`; response adds `id`, `createdAt`, `updatedAt`.
+Signatures are client-inserted text the server never appends to outgoing mail:
+the app picks the default for the compose mode (new, reply/reply-all, forward)
+and inserts its body into the editor. `name` is trimmed, 1-100 characters;
+`bodyText` is trimmed, 1-10000 characters; `bodyHtml` is an optional variant
+trimmed and at most 50000 characters. Validation failures return a 400
+validation problem keyed by `name`, `bodyText` or `bodyHtml`. A defaults id
+that is not owned by the account returns 404 `signature_not_found`, as does
+another account's signature id. Signatures are deleted with their account.
+`PUT /api/account/signature` is the legacy alias of the new-mail default:
+non-blank text creates or updates it (and initializes the reply/forward
+defaults when unset); blank text clears every mode pointing at it.
+
+### Identities
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/api/identities` | bearer | List sender identities (default first) |
+| POST | `/api/identities` | bearer | Create an identity (201) |
+| PUT | `/api/identities/{id}` | bearer | Replace an identity |
+| DELETE | `/api/identities/{id}` | bearer | Delete an identity (204); blocked while a pending scheduled send uses it |
+
+Body: `{emailAddress, displayName?, replyTo?, signatureId?, isDefault}`;
+response returns the same fields plus `id`. At most one default per account:
+creating or updating with `isDefault: true` clears the previous default.
+`emailAddress` must be a bare address (no display name) at most 320
+characters and unique per account case-insensitively (otherwise 409
+`identity_already_exists`); `displayName` is at most 250 characters;
+`replyTo` is an optional bare address; `signatureId` must be owned by the
+account (otherwise 404 `signature_not_found`). Validation failures return a
+400 validation problem keyed by `emailAddress`, `displayName` or `replyTo`.
+Another account's identity id returns 404 `identity_not_found`. Deleting an
+identity referenced by a pending scheduled send returns 409 `identity_in_use`.
+Send, draft and scheduled-send accept an optional `identityId` form field:
+the message goes out with that identity's address, display name and Reply-To
+(a draft sent later resolves the identity from its stored From address).
+Identities are deleted with their account.
 
 ### Mail ops
 

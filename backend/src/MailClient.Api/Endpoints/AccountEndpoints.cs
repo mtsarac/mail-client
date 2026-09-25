@@ -110,7 +110,15 @@ public static class AccountEndpoints
             .ProblemCodes(404, "mail_account_not_found");
 
         var api = app.MapGroup("/api").RequireAuthorization();
-        api.MapGet("/account", async (ICurrentMailAccount current, AppDbContext db, CancellationToken ct) => await db.MailAccounts.Where(x => x.Id == current.MailAccountId).Select(x => new AccountResponse(x.Id, x.EmailAddress, x.DisplayName, x.Provider, x.Status, x.Signature)).SingleOrDefaultAsync(ct) is { } account ? Results.Ok(account) : Results.NotFound()).WithTags("Account").WithName("GetCurrentAccount").WithSummary("Get current mailbox account").Produces<AccountResponse>().Produces(404);
+        api.MapGet("/account", async (ICurrentMailAccount current, AppDbContext db, CancellationToken ct) =>
+        {
+            var account = await db.MailAccounts.AsNoTracking().SingleOrDefaultAsync(x => x.Id == current.MailAccountId, ct);
+            if (account is null) return Results.NotFound();
+            var signature = await SignatureEndpoints.LegacySignatureAsync(db, account.Id, account.DefaultNewSignatureId, ct);
+            return Results.Ok(new AccountResponse(account.Id, account.EmailAddress, account.DisplayName, account.Provider, account.Status, signature));
+        }).WithTags("Account").WithName("GetCurrentAccount").WithSummary("Get current mailbox account")
+            .WithDescription("The legacy `signature` field is the plain-text body of the default new-mail signature, or null when no new-mail default is selected.")
+            .Produces<AccountResponse>().Produces(404);
         api.MapGet("/account/sync-status", async (ICurrentMailAccount current, AppDbContext db, CancellationToken ct) =>
         {
             var statuses = await db.MailFolders.AsNoTracking()
@@ -159,12 +167,13 @@ public static class AccountEndpoints
         }).WithTags("Account").WithName("UpdateAccountNotificationSettings").WithSummary("Change mail notification preferences of the current mailbox")
             .WithDescription("enabled: send new-mail and snooze wake-up pushes for this mailbox. inboxOnly: notify only for Inbox (default) or for every synced folder except Sent, Drafts, Trash and Junk. privacy: Full (sender, subject, short preview), Limited (sender, subject; default) or Private (generic text only). Device registration is unaffected.")
             .Produces<AccountNotificationSettingsResponse>().ProducesValidationProblem().Produces(404);
-        api.MapPost("/account/reconnect", async (AccountReconnectRequest request, ICurrentMailAccount current, AccountConnectionService service, AuditLogger audit, CorrelationContext correlation, CancellationToken ct) =>
+        api.MapPost("/account/reconnect", async (AccountReconnectRequest request, ICurrentMailAccount current, AccountConnectionService service, AppDbContext db, AuditLogger audit, CorrelationContext correlation, CancellationToken ct) =>
         {
             var account = await service.ReconnectAsync(current.MailAccountId, request, ct);
             await audit.WriteAsync(current.MailAccountId, AuditActions.MailAccountConnected, "MailAccount", current.MailAccountId.ToString(),
                 new Dictionary<string, string?> { ["provider"] = account.Provider.ToString(), ["authentication"] = account.AuthenticationMethod.ToString() }, correlation.CorrelationId, ct);
-            return Results.Ok(new AccountResponse(account.Id, account.EmailAddress, account.DisplayName, account.Provider, account.Status, account.Signature));
+            var signature = await SignatureEndpoints.LegacySignatureAsync(db, account.Id, account.DefaultNewSignatureId, ct);
+            return Results.Ok(new AccountResponse(account.Id, account.EmailAddress, account.DisplayName, account.Provider, account.Status, signature));
         }).WithTags("Account").WithName("ReconnectCurrentAccount").WithSummary("Update credentials or server settings for the signed-in mailbox")
             .WithDescription("Changes credentials and/or IMAP/SMTP settings of the authenticated mailbox only. Anonymous connect endpoints only create new accounts.")
             .Produces<AccountResponse>().ProblemCodes(401, "mail_authentication_failed")
@@ -188,12 +197,15 @@ public static class AccountEndpoints
             var account = await db.MailAccounts.SingleOrDefaultAsync(x => x.Id == current.MailAccountId, ct);
             if (account is null) return Results.NotFound();
             var signature = request.Signature?.Trim();
-            account.Signature = signature is { Length: 0 } ? null : signature;
+            if (signature is { Length: > SignatureEndpoints.MaxBodyTextLength })
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["signature"] = ["Signature text must be at most 10000 characters."] });
+            await SignatureEndpoints.SetLegacySignatureAsync(db, account, signature is { Length: 0 } ? null : signature, ct);
+            account.UpdatedAt = DateTime.UtcNow;
             await db.SaveChangesAsync(ct);
             return Results.NoContent();
-        }).WithTags("Account").WithName("UpdateAccountSignature").WithSummary("Set or clear the signature appended to outgoing mail")
-            .WithDescription("Blank/whitespace-only clears the signature. Synced across every device signed into this account.")
-            .Produces(204).Produces(404);
+        }).WithTags("Account").WithName("UpdateAccountSignature").WithSummary("Set or clear the default new-mail signature")
+            .WithDescription("Legacy compatibility endpoint. Non-blank text creates or updates the default new-mail signature (and initializes reply/forward defaults when unset). Blank text clears every mode that pointed at that signature. GET /api/account returns this signature's plain-text body in its legacy `signature` field.")
+            .Produces(204).ProducesValidationProblem().Produces(404);
     }
 
     private static async Task<IResult> UpdateSyncScopeAsync(AccountSyncScopeRequest request, ICurrentMailAccount current, AppDbContext db, CancellationToken ct)

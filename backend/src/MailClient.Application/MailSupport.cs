@@ -36,6 +36,7 @@ public sealed record SendMailCommand(
     public string? TrustedMessageId { get; init; }
     public string? TrustedInReplyToMessageId { get; init; }
     public string? TrustedReferences { get; init; }
+    public Guid? IdentityId { get; init; }
 }
 
 public enum PushEventType

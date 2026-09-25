@@ -33,6 +33,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<Contact> Contacts => Set<Contact>();
     public DbSet<MailTemplate> MailTemplates => Set<MailTemplate>();
     public DbSet<MailSnippet> MailSnippets => Set<MailSnippet>();
+    public DbSet<MailSignature> MailSignatures => Set<MailSignature>();
+    public DbSet<MailIdentity> MailIdentities => Set<MailIdentity>();
 
     protected override void OnModelCreating(ModelBuilder model)
     {
@@ -153,5 +155,16 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         model.Entity<MailSnippet>().Property(x => x.Title).HasMaxLength(100);
         model.Entity<MailSnippet>().Property(x => x.Text).HasMaxLength(2000);
         model.Entity<MailSnippet>().HasOne<MailAccount>().WithMany().HasForeignKey(x => x.MailAccountId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<MailSignature>().Property(x => x.Name).HasMaxLength(100);
+        model.Entity<MailSignature>().HasOne<MailAccount>().WithMany().HasForeignKey(x => x.MailAccountId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<MailAccount>().HasOne<MailSignature>().WithMany().HasForeignKey(x => x.DefaultNewSignatureId).OnDelete(DeleteBehavior.SetNull);
+        model.Entity<MailAccount>().HasOne<MailSignature>().WithMany().HasForeignKey(x => x.DefaultReplySignatureId).OnDelete(DeleteBehavior.SetNull);
+        model.Entity<MailAccount>().HasOne<MailSignature>().WithMany().HasForeignKey(x => x.DefaultForwardSignatureId).OnDelete(DeleteBehavior.SetNull);
+        model.Entity<MailIdentity>().Property(x => x.EmailAddress).HasMaxLength(320);
+        model.Entity<MailIdentity>().Property(x => x.DisplayName).HasMaxLength(250);
+        model.Entity<MailIdentity>().Property(x => x.ReplyTo).HasMaxLength(320);
+        model.Entity<MailIdentity>().HasOne<MailAccount>().WithMany().HasForeignKey(x => x.MailAccountId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<MailIdentity>().HasOne<MailSignature>().WithMany().HasForeignKey(x => x.SignatureId).OnDelete(DeleteBehavior.SetNull);
+        model.Entity<ScheduledSend>().HasOne<MailIdentity>().WithMany().HasForeignKey(x => x.IdentityId).OnDelete(DeleteBehavior.SetNull);
     }
 }
