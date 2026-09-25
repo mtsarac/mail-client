@@ -115,6 +115,7 @@ public sealed class Mail
     public bool Deleted { get; set; }
     public bool Recent { get; set; }
     public bool HasAttachments { get; set; }
+    public bool RulePending { get; set; }
     public DateTime SentAt { get; set; }
     public DateTime ReceivedAt { get; set; }
     public DateTime InternalDate { get; set; }
@@ -242,6 +243,22 @@ public sealed class ScheduledSendAttachment
 }
 public sealed class DeviceToken { public Guid Id { get; set; } public Guid MailAccountId { get; set; } public Guid? MailSessionId { get; set; } public string Token { get; set; } = ""; public string Platform { get; set; } = ""; public string? AppVersion { get; set; } public string? Locale { get; set; } public DateTime RegisteredAt { get; set; } public DateTime? LastSeenAt { get; set; } }
 public sealed class AuditLog { public Guid Id { get; set; } public Guid? MailAccountId { get; set; } public string Action { get; set; } = ""; public string EntityType { get; set; } = ""; public string? EntityId { get; set; } public DateTime TimestampUtc { get; set; } public string? CorrelationId { get; set; } public string? Metadata { get; set; } }
+public sealed class MailRule
+{
+    public Guid Id { get; set; }
+    public Guid MailAccountId { get; set; }
+    public string Name { get; set; } = "";
+    public bool Enabled { get; set; } = true;
+    public int Priority { get; set; }
+    public string Logic { get; set; } = "And";
+    public string ConditionJson { get; set; } = "[]";
+    public string ActionJson { get; set; } = "[]";
+    public string? LegacyId { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public DateTime UpdatedAt { get; set; }
+    public MailAccount? MailAccount { get; set; }
+}
+
 public sealed class MailLabel
 {
     public Guid Id { get; set; }

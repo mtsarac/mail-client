@@ -309,6 +309,31 @@ Hesabın periyodik arka plan senkronizasyon kapsamını okur veya değiştirir. 
 
 `PUT` gövdesi: `{"scope":"SelectedFolders","folderIds":["…"]}`. `SelectedFolders` için en az bir **bu hesaba ait ve kullanılabilir** klasör id'si gerekir; diğer kapsamlar için `folderIds` verilmez. Geçersiz/başka hesaba ait/erişilemeyen klasör seçimi `400` validation problem döner, mevcut ayar değişmez. Ayar backend'de kalıcıdır, hesap düzeyindedir; yeni keşfedilen klasörler `AllFolders` için dahil, `SelectedFolders` için hariç tutulur. Kullanıcının elle istediği klasör sync'i kapsamdan bağımsızdır; yeni kapsama alınan klasörler sonraki periyodik taramada senkronize edilir. `syncedFolderIds` yalnız kullanılabilir klasörleri listeler.
 
+### `GET/POST /api/rules`, `PUT/DELETE /api/rules/{id}`
+**Auth:** Bearer
+
+Hesap düzeyindeki sunucu tarafı mail kuralları; aynı hesaba bağlı tüm cihazlarda aynıdır ve uygulama kapalıyken de çalışır. Liste değerlendirme sırasıyla gelir (`priority` küçük olan önce, eşitlikte oluşturulma zamanı).
+
+```json
+{
+  "id": "…",
+  "name": "Bültenler",
+  "enabled": true,
+  "priority": 0,
+  "logic": "And",
+  "conditions": [{"type": "senderDomain", "value": "ornek.com"}, {"type": "hasAttachment", "value": null}],
+  "actions": [{"type": "addLabel", "labelId": "…"}, {"type": "move", "folderId": "…"}, {"type": "stopProcessing"}],
+  "createdAt": "…",
+  "updatedAt": "…"
+}
+```
+
+`POST`/`PUT` gövdesi `id`/tarih alanları hariç aynı şekildedir. Koşullar: `senderContains`, `senderEquals`, `senderDomain`, `subjectContains`, `recipientContains` (To/Cc/Bcc), `hasAttachment` (`value: null`), `folder` (`value`: klasör id). İşlemler: `markRead`, `markUnread`, `star`, `archive`, `move` (`folderId` zorunlu), `trash`, `spam`, `addLabel` (`labelId` zorunlu), `stopProcessing`. `logic`: `And` | `Or`. 1-16 koşul/işlem, `name` 1-100 karakter, `priority` 0-99999. Başka hesaba ait klasör/etiket veya geçersiz tanım `400` validation problem döner; başka hesabın kural id'si `404`.
+
+Eski cihaz içi kuralları taşırken `legacyId` gönderin: aynı hesap + `legacyId` tekrar gönderildiğinde yeni kayıt oluşmaz, taşınmış kural `200` ile döner. Bu nedenle taşıma yarıda kesilirse güvenle yeniden denenebilir.
+
+Değerlendirme: yalnızca yeni gelen mail (geriye dönük içe aktarılan eski mail değil), `folder` koşulu yoksa yalnız Gelen Kutusu. İşlemler sırayla, remote-first mail işlem servisiyle uygulanır; `stopProcessing` sonraki kuralları durdurur. Geçici hata maili sonraki sync'te yeniden denenmek üzere bekletir; silinmiş hedef klasör/etiket gibi kalıcı hatalarda o işlem atlanır.
+
 ### `DELETE /api/account`
 **Auth:** Bearer
 

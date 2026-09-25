@@ -166,7 +166,7 @@ public sealed class MailFolderSyncService(
             : (uint)Math.Min(state.NextUidScanStart - 1, (long)uint.MaxValue);
         var result = await remote.SearchNewAsync(afterUid, budget, cancellationToken);
         var batch = result.Uids.OrderBy(item => item.Id).Take(budget).ToList();
-        var newMail = await ImportAsync(accountId, folderId, state, remote, batch, cancellationToken);
+        var newMail = await ImportAsync(accountId, folderId, state, remote, batch, true, cancellationToken);
 
         state.UidValidity = remote.UidValidity;
         state.LastNewMailSyncAt = DateTime.UtcNow;
@@ -196,7 +196,7 @@ public sealed class MailFolderSyncService(
         if (state.UidValidity != remote.UidValidity)
             return 0;
 
-        var imported = await ImportAsync(accountId, folderId, state, remote, uids, cancellationToken);
+        var imported = await ImportAsync(accountId, folderId, state, remote, uids, false, cancellationToken);
         await db.SaveChangesAsync(cancellationToken);
         return imported.Count;
     }
@@ -245,7 +245,7 @@ public sealed class MailFolderSyncService(
         if (state.BackfillNextUid <= 1 || budget <= 0)
             return;
         var page = await remote.SearchOlderAsync(state.BackfillNextUid, budget, cancellationToken);
-        await ImportAsync(accountId, folderId, state, remote, [.. page.Uids.OrderBy(item => item.Id)], cancellationToken);
+        await ImportAsync(accountId, folderId, state, remote, [.. page.Uids.OrderBy(item => item.Id)], false, cancellationToken);
         state.BackfillNextUid = page.NextHighExclusive;
     }
 
@@ -255,6 +255,7 @@ public sealed class MailFolderSyncService(
         SyncState state,
         IRemoteMailFolder remote,
         IReadOnlyList<UniqueId> batch,
+        bool evaluateRules,
         CancellationToken cancellationToken)
     {
         var imported = new List<NewMailCandidate>();
@@ -278,7 +279,7 @@ public sealed class MailFolderSyncService(
         {
             cancellationToken.ThrowIfCancellationRequested();
             var candidate = await SyncOneAsync(accountId, folderId, state, remote, uid,
-                summaries.GetValueOrDefault(uid.Id), committedUids, skippedUids, cancellationToken);
+                summaries.GetValueOrDefault(uid.Id), committedUids, skippedUids, evaluateRules, cancellationToken);
             if (candidate is not null)
                 imported.Add(candidate);
         }
@@ -491,6 +492,7 @@ public sealed class MailFolderSyncService(
         RemoteSummary? summary,
         HashSet<uint> committedUids,
         HashSet<uint> skippedUids,
+        bool evaluateRules,
         CancellationToken cancellationToken)
     {
         if (committedUids.Contains(uid.Id) || skippedUids.Contains(uid.Id))
@@ -621,6 +623,7 @@ public sealed class MailFolderSyncService(
             }
 
             mail.HasAttachments = mail.Attachments.Count > 0;
+            mail.RulePending = evaluateRules;
 
             db.Mails.Add(mail);
             state.LastUid = Math.Max(state.LastUid, uid.Id);
