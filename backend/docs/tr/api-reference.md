@@ -79,7 +79,10 @@ sahiplenilmeden önce iptal edilen veya ileri alınan erteleme hiç uyanmaz.
 
 | Metot | Yol | Yetki | Açıklama |
 |---|---|---|---|
-| GET | `/api/folders` | bearer | Önbellekteki klasörleri listeler |
+| GET | `/api/folders` | bearer | Önbellekteki klasörleri listeler (`delimiter` ve `parentId` ile) |
+| POST | `/api/folders` | bearer | Sunucuda klasör oluşturur (`name`, isteğe bağlı `parentId`) |
+| PATCH | `/api/folders/{id}` | bearer | Özel klasörü sunucuda yeniden adlandırır; id'ler korunur |
+| DELETE | `/api/folders/{id}` | bearer | Alt klasörü olmayan boş özel klasörü siler |
 | POST | `/api/folders/refresh` | bearer | Klasör listesini sunucudan yeniden okur |
 | POST | `/api/folders/{id}/sync` | bearer | Klasör sync'ini kuyruğa alır (202) |
 
@@ -113,7 +116,8 @@ hatası diğerlerini engellemez.
 | GET | `/api/mails/{id}` | bearer | Posta detayı (`isFromMe`: Sent/Drafts postası ya da gönderen hesabın adresiyle büyük/küçük harf duyarsız aynıysa, klasörden bağımsız) |
 | GET | `/api/search` | bearer | Önbellekteki postada arama (tüm filtreler opsiyonel, AND; aşağıya bakın) |
 | GET | `/api/search/remote` | bearer | Kullanıcının başlattığı genel IMAP araması; eksik eşleşmeleri içeri alır, ardından `/api/search` tekrar çağrılır |
-| GET | `/api/mails/{mailId}/attachments/{attachmentId}` | bearer | Eki indirir |
+| GET | `/api/mails/{mailId}/attachments/{attachmentId}` | bearer | Eki indirir (depolama aranabilirse Range/206) |
+| GET | `/api/compose/limits` | bearer | Güncel ek boyutu ve sayı sınırları |
 | POST | `/api/mails/send` | bearer + `Idempotency-Key` | Posta gönderir (multipart/form-data) |
 | GET | `/api/mails/{id}/compose/reply · reply-all · forward` | bearer | Hazır doldurulmuş yazma bağlamı |
 

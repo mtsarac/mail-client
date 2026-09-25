@@ -373,13 +373,46 @@ Hesabın tüm klasörlerini döner (dizi, sayfalama yok).
   "isSyncEnabled": true,
   "isAvailable": true,
   "unreadCount": 3,
-  "totalCount": 142
+  "totalCount": 142,
+  "delimiter": "/",
+  "parentId": null
 }
 ```
 
 `unreadCount` / `totalCount` silinmiş işaretli (`deleted`) mailler hariç, sunucudaki önbellekten sayılır — drawer rozetleri için sayfalardan hesap yapma, bunları kullan.
 
 `folderType` filtrelemede kullanışlı: `Inbox · Sent · Drafts · Trash · Junk · Archive · Custom`. `isAvailable: false` olan klasörler sunucudan silinmiş demektir, UI'da gizle.
+
+`delimiter` sunucunun IMAP hiyerarşi ayracıdır (`/`, `.` veya bilinmiyorsa `null`). `parentId` bir üst klasörün id'sidir, en üstte `null`. Üst klasör `Custom` olmayabilir (her şeyi `INBOX` altında tutan sunucular); yalnızca özel klasörlerden ağaç kuruyorsan listede olmayan üstü kök say. Bu alanlar eklenmeden önce keşfedilmiş klasörlerde `delimiter`, bir sonraki `POST /api/folders/refresh`'e kadar `null` kalır.
+
+### `POST /api/folders`
+**Auth:** Bearer · **Gövde:** `{ "name": "Mobil", "parentId": "<guid>" | null }`
+
+Klasörü önce mail sunucusunda oluşturur (üst klasörün altında ya da kişisel ad alanının en üstünde), sonra önbelleğe ekler. `201 Created` + klasör nesnesi (`GET /api/folders` elemanıyla aynı şekil). Ad kırpılır; boş, 200 karakterden uzun, kontrol karakteri ya da ayraç içeren ad reddedilir.
+
+### `PATCH /api/folders/{id}`
+**Auth:** Bearer · **Gövde:** `{ "name": "Yeni ad" }`
+
+Yalnızca `Custom` klasörü aynı üst klasör içinde sunucuda yeniden adlandırır. Id'ler korunur; alt klasörlerin `fullName`'i değişir. `200 OK` + güncel klasör.
+
+### `DELETE /api/folders/{id}`
+**Auth:** Bearer
+
+Yalnızca `Custom` klasörü sunucudan siler, `204`. Alt klasörü varsa ya da sunucuda hâlâ mail içeriyorsa reddedilir; mail hiçbir zaman örtük olarak silinmez. Kullanıcıdan önce postaları taşımasını iste.
+
+| Durum | code | Anlamı |
+|---|---|---|
+| 400 | `invalid_folder_name` | Ad boş/çok uzun/ayraç içeriyor. |
+| 404 | `mail_folder_not_found` | Klasör ya da üst klasör yok / başka hesaba ait. |
+| 409 | `mail_folder_exists` | Aynı yerde aynı adda klasör var (büyük/küçük harf duyarsız). |
+| 409 | `mail_folder_has_children` | Silmeden önce alt klasörleri sil. |
+| 409 | `mail_folder_not_empty` | Klasörde mail var. |
+| 422 | `mail_folder_protected` | Standart klasör (Gelen, Gönderilen…) değiştirilemez. |
+| 422 | `mail_folder_rejected` | Sunucu işlemi reddetti. |
+| 409 | `mail_account_needs_reauthentication` | Reconnect gerekli. |
+| 502 | `mail_provider_unavailable` / `mail_server_unreachable` / `mail_tls_failed` | Sunucuya ulaşılamadı; yerel durum değişmedi. |
+
+Maili herhangi bir klasöre (özel olanlar dahil) taşımak mevcut `POST /api/mails/{id}/move` / `POST /api/mails/bulk/move` ile yapılır; hedef `folderId` mailin hesabına ait olmalıdır.
 
 ### `POST /api/folders/refresh`
 **Auth:** Bearer
@@ -484,7 +517,14 @@ Tam mail içeriği: gövde, katılımcılar, header'lar, ekler.
 ### `GET /api/mails/{mailId}/attachments/{attachmentId}`
 **Auth:** Bearer
 
-Ham dosya baytlarını döner (`Content-Type` ekin gerçek türü, `Content-Disposition` dosya adını taşır); JSON değildir, `Authorization` header'ıyla akış olarak indir (`Dio` `ResponseType.bytes`). `404` ek hesaba/mail'e ait değilse ya da yoksa.
+Ham dosya baytlarını döner (`Content-Type` ekin gerçek türü, `Content-Disposition` dosya adını taşır); JSON değildir, `Authorization` header'ıyla akış olarak indir. `404` ek hesaba/mail'e ait değilse ya da yoksa.
+
+`Range: bytes=N-` desteklenir: depolama aranabilirse (varsayılan yerel depolama) `206 Partial Content` + `Content-Range` döner, yarım kalan indirme kaldığı yerden sürer. S3 gibi depolamalarda `200` ve tam gövde gelebilir; istemci ikisini de kabul edip `200`'de baştan yazmalıdır. İlerleme için `Content-Length`, yoksa ekin `sizeBytes` değeri kullanılabilir; bütünlük kontrolü yalnızca `Content-Length` ile yapılmalıdır.
+
+### `GET /api/compose/limits`
+**Auth:** Bearer
+
+`{ "maxAttachmentBytes": 26214400, "maxMessageAttachmentBytes": 52428800, "maxAttachmentCount": 20 }` — send, taslak ve zamanlanmış gönderimin uyguladığı güncel sınırlar. Yönetici değiştirebilir; istemciye gömme, dosya seçildiğinde bununla kontrol et. Sınır aşılırsa sunucu yine `400 attachment_too_large` / `too_many_attachments` döner. Bilinmeyen/bozuk ek `Content-Type`'ı `application/octet-stream` olarak gönderilir; dosya adı ve baytlar korunur.
 
 ---
 

@@ -78,7 +78,10 @@ later time before it is claimed never wakes.
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| GET | `/api/folders` | bearer | List cached folders |
+| GET | `/api/folders` | bearer | List cached folders (with `delimiter` and `parentId`) |
+| POST | `/api/folders` | bearer | Create a folder on the server (`name`, optional `parentId`) |
+| PATCH | `/api/folders/{id}` | bearer | Rename a custom folder on the server; ids are kept |
+| DELETE | `/api/folders/{id}` | bearer | Delete an empty custom folder without children |
 | POST | `/api/folders/refresh` | bearer | Re-read the folder list from the server |
 | POST | `/api/folders/{id}/sync` | bearer | Queue a folder sync (202) |
 
@@ -111,7 +114,8 @@ leaves the mail pending for the next sync; one mail's failure never blocks the r
 | GET | `/api/mails/{id}` | bearer | Mail detail (`isFromMe`: Sent/Drafts mail, or sender equals the account address case-insensitively, in any folder) |
 | GET | `/api/search` | bearer | Search cached mail (all filters optional, AND-combined; see below) |
 | GET | `/api/search/remote` | bearer | User-triggered generic IMAP search; imports missing matches before a follow-up `/api/search` |
-| GET | `/api/mails/{mailId}/attachments/{attachmentId}` | bearer | Download an attachment |
+| GET | `/api/mails/{mailId}/attachments/{attachmentId}` | bearer | Download an attachment (Range/206 when storage is seekable) |
+| GET | `/api/compose/limits` | bearer | Current attachment size and count limits |
 | POST | `/api/mails/send` | bearer + `Idempotency-Key` | Send mail (multipart/form-data) |
 | GET | `/api/mails/{id}/compose/reply · reply-all · forward` | bearer | Prefilled compose context |
 
