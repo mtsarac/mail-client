@@ -145,6 +145,8 @@ builder.Services.AddScoped<AccountConnectionService>();
 builder.Services.AddScoped<AccountDeletionService>();
 builder.Services.AddScoped<IMailTransport, MailKitMailTransport>();
 builder.Services.AddScoped<IMailFolderClient, MailFolderClient>();
+builder.Services.AddScoped<IRemoteFolderManager, MailKitRemoteFolderManager>();
+builder.Services.AddScoped<FolderManagementService>();
 builder.Services.AddScoped<MailFolderSyncService>();
 builder.Services.AddScoped<MailRuleEvaluator>();
 builder.Services.AddScoped<NewMailNotifier>();

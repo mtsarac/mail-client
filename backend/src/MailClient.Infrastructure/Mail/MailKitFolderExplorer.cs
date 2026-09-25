@@ -7,7 +7,12 @@ using MailKit.Net.Imap;
 
 namespace MailClient.Infrastructure.Mail;
 
-public sealed record DiscoveredMailFolder(string Name, string FullName, Domain.Enums.MailFolderType FolderType, uint UidValidity);
+public sealed record DiscoveredMailFolder(string Name, string FullName, Domain.Enums.MailFolderType FolderType, uint UidValidity, string? Delimiter = null)
+{
+    public static DiscoveredMailFolder From(IMailFolder folder, uint uidValidity) => new(
+        folder.Name, folder.FullName, Services.MailFolderDiscovery.Classify(folder.Attributes, folder.FullName), uidValidity,
+        folder.DirectorySeparator == '\0' ? null : folder.DirectorySeparator.ToString());
+}
 
 public sealed class MailKitFolderExplorer(MailConnectionHelper connections)
 {
@@ -72,8 +77,7 @@ public sealed class MailKitFolderExplorer(MailConnectionHelper connections)
                 }
             }
 
-            discovered.Add(new DiscoveredMailFolder(
-                folder.Name, folder.FullName, Services.MailFolderDiscovery.Classify(folder.Attributes, folder.FullName), uidValidity));
+            discovered.Add(DiscoveredMailFolder.From(folder, uidValidity));
         }
 
         IList<IMailFolder> children;

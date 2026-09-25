@@ -32,6 +32,9 @@ public static class AuditActions
     public const string LabelCreated = "label.created";
     public const string LabelUpdated = "label.updated";
     public const string LabelDeleted = "label.deleted";
+    public const string MailFolderCreated = "mail-folder.created";
+    public const string MailFolderRenamed = "mail-folder.renamed";
+    public const string MailFolderDeleted = "mail-folder.deleted";
     public const string ContactCreated = "contact.created";
     public const string ContactUpdated = "contact.updated";
     public const string ContactDeleted = "contact.deleted";

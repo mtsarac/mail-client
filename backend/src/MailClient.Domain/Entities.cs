@@ -75,6 +75,7 @@ public sealed class MailFolder
     public Guid MailAccountId { get; set; }
     public string Name { get; set; } = "";
     public string FullName { get; set; } = "";
+    public string? Delimiter { get; set; }
     public MailFolderType FolderType { get; set; } = MailFolderType.Unknown;
     public uint UidValidity { get; set; }
     public bool IsSyncEnabled { get; set; } = true;
