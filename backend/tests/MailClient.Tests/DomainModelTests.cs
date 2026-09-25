@@ -34,6 +34,17 @@ public sealed class DomainModelTests
         Assert.Equal(["catalog", "srv"], calls);
     }
 
+    [Theory]
+    [InlineData(FolderSyncScope.InboxAndSent, MailFolderType.Inbox, true)]
+    [InlineData(FolderSyncScope.InboxAndSent, MailFolderType.Sent, true)]
+    [InlineData(FolderSyncScope.InboxAndSent, MailFolderType.Custom, false)]
+    [InlineData(FolderSyncScope.AllFolders, MailFolderType.Custom, true)]
+    [InlineData(FolderSyncScope.AllFolders, MailFolderType.Trash, true)]
+    [InlineData(FolderSyncScope.SelectedFolders, MailFolderType.Inbox, false)]
+    [InlineData(FolderSyncScope.SelectedFolders, MailFolderType.Custom, false)]
+    public void NewlyDiscoveredFolder_FollowsAccountSyncScope(FolderSyncScope scope, MailFolderType type, bool expected) =>
+        Assert.Equal(expected, MailFolder.SyncedByDefault(scope, type));
+
     private static MailServerCandidate Candidate(string host) => new(
         MailProvider.Custom,
         new MailEndpoint(host, 993, MailSecurity.SslOnConnect),

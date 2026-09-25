@@ -24,6 +24,7 @@ public sealed class MailAccount
     public DateTime? AccessRevokedAt { get; set; }
     /// <summary>User-authored text appended to outgoing mail from this account. Null/empty means no signature.</summary>
     public string? Signature { get; set; }
+    public FolderSyncScope FolderSyncScope { get; set; } = FolderSyncScope.InboxAndSent;
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
     public DateTime? LastAuthenticatedAt { get; set; }
@@ -78,6 +79,13 @@ public sealed class MailFolder
     public MailAccount? MailAccount { get; set; }
     public SyncState? SyncState { get; set; }
     public ICollection<Mail> Mails { get; set; } = [];
+
+    public static bool SyncedByDefault(FolderSyncScope scope, MailFolderType folderType) => scope switch
+    {
+        FolderSyncScope.AllFolders => true,
+        FolderSyncScope.SelectedFolders => false,
+        _ => folderType is MailFolderType.Inbox or MailFolderType.Sent
+    };
 }
 public sealed class Mail
 {

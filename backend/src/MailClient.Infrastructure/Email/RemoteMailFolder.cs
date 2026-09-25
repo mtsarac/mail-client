@@ -35,6 +35,7 @@ public interface IRemoteMailFolder
     Task OpenForUpdateAsync(CancellationToken cancellationToken);
     Task<UidSearchResult> SearchNewAsync(uint afterUid, int maxCount, CancellationToken cancellationToken);
     Task<UidBackfillResult> SearchOlderAsync(long belowUidExclusive, int maxCount, CancellationToken cancellationToken);
+    Task<IList<UniqueId>> SearchAsync(SearchQuery query, CancellationToken cancellationToken);
     Task<IReadOnlyDictionary<uint, RemoteSummary?>> GetSummariesAsync(IReadOnlyCollection<UniqueId> uids, CancellationToken cancellationToken);
     Task<IReadOnlyDictionary<uint, RemoteMessageFlags>> GetFlagsAsync(IReadOnlyCollection<UniqueId> uids, CancellationToken cancellationToken);
     Task<MimeMessage> GetMessageAsync(UniqueId uid, CancellationToken cancellationToken);
@@ -77,6 +78,9 @@ public sealed class MailKitRemoteMailFolder(IMailFolder folder, Func<string, Can
             (low, high, ct) => folder.SearchAsync(
                 SearchQuery.Uids(new UniqueIdRange(new UniqueId((uint)low), new UniqueId((uint)high))), ct),
             cancellationToken);
+
+    public Task<IList<UniqueId>> SearchAsync(SearchQuery query, CancellationToken cancellationToken) =>
+        folder.SearchAsync(query, cancellationToken);
 
     /// <summary>
     /// Walks the folder downwards from <paramref name="belowUidExclusive"/> so the newest history is imported

@@ -74,6 +74,18 @@ public sealed class MailListApiTests(AcceptingApiFactory factory) : IClassFixtur
     }
 
     [Fact]
+    public async Task RemoteSearch_WithoutTextCriterion_ReturnsValidationProblem()
+    {
+        var (client, _) = await ConnectAsync();
+
+        var response = await client.GetAsync("/api/search/remote");
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.Contains("At least one of q, from or to is required.", body);
+    }
+
+    [Fact]
     public async Task List_Paginates_WithTotal_AndCapsPageSize()
     {
         var (client, accountId) = await ConnectAsync();

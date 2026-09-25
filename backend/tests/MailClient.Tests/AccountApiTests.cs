@@ -328,6 +328,129 @@ public sealed class AccountApiTests(AcceptingApiFactory factory) : IClassFixture
     }
 
     [Fact]
+    public async Task SyncStatus_IncludesAvailableFoldersBeforeTheirFirstSync()
+    {
+        var (accountId, inbox, _, _, custom, unavailable) = await SeedScopeAccountAsync(Guid.NewGuid());
+        var response = await AuthorizedClient(accountId).GetAsync("/api/account/sync-status");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var rows = (await response.Content.ReadFromJsonAsync<JsonDocument>())!.RootElement;
+        var ids = rows.EnumerateArray().Select(row => row.GetProperty("folderId").GetGuid()).ToList();
+        Assert.Contains(inbox, ids);
+        Assert.Contains(custom, ids);
+        Assert.DoesNotContain(unavailable, ids);
+        Assert.All(rows.EnumerateArray(), row => Assert.False(row.GetProperty("backfillComplete").GetBoolean()));
+    }
+
+    [Fact]
+    public async Task SyncScope_MaterializesOntoFolders_AndPersists()
+    {
+        var (accountId, inbox, sent, archive, custom, unavailable) = await SeedScopeAccountAsync(Guid.NewGuid());
+        var client = AuthorizedClient(accountId);
+
+        var initial = await ReadScopeAsync(await client.GetAsync("/api/account/sync-scope"));
+        Assert.Equal("InboxAndSent", initial.Scope);
+        Assert.Equal(new[] { inbox, sent }.Order(), initial.Ids.Order());
+
+        var all = await ReadScopeAsync(await client.PutAsJsonAsync("/api/account/sync-scope", new { scope = "AllFolders" }));
+        Assert.Equal("AllFolders", all.Scope);
+        Assert.Equal(new[] { inbox, sent, archive, custom }.Order(), all.Ids.Order());
+
+        var selected = await ReadScopeAsync(await client.PutAsJsonAsync("/api/account/sync-scope", new { scope = "SelectedFolders", folderIds = new[] { custom } }));
+        Assert.Equal(new[] { custom }, selected.Ids);
+
+        var reread = await ReadScopeAsync(await client.GetAsync("/api/account/sync-scope"));
+        Assert.Equal("SelectedFolders", reread.Scope);
+        Assert.Equal(new[] { custom }, reread.Ids);
+        using var scope = _accepting.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        Assert.Equal(new[] { custom }, await db.MailFolders.Where(f => f.MailAccountId == accountId && f.IsSyncEnabled).Select(f => f.Id).ToListAsync());
+
+        var back = await ReadScopeAsync(await client.PutAsJsonAsync("/api/account/sync-scope", new { scope = "InboxAndSent" }));
+        Assert.Equal(new[] { inbox, sent }.Order(), back.Ids.Order());
+        Assert.DoesNotContain(unavailable, back.Ids);
+    }
+
+    [Fact]
+    public async Task SyncScope_RejectsInvalidSelections_WithoutChangingState()
+    {
+        var (accountId, _, _, _, custom, unavailable) = await SeedScopeAccountAsync(Guid.NewGuid());
+        var (foreignAccountId, foreignInbox, _, _, _, _) = await SeedScopeAccountAsync(Guid.NewGuid());
+        var client = AuthorizedClient(accountId);
+
+        foreach (var body in new object[]
+        {
+            new { scope = "SelectedFolders" },
+            new { scope = "SelectedFolders", folderIds = Array.Empty<Guid>() },
+            new { scope = "SelectedFolders", folderIds = new[] { foreignInbox } },
+            new { scope = "SelectedFolders", folderIds = new[] { custom, unavailable } },
+            new { scope = "AllFolders", folderIds = new[] { custom } },
+            new { scope = "AllFolders", folderIds = Array.Empty<Guid>() },
+            new { scope = 99 }
+        })
+        {
+            var response = await client.PutAsJsonAsync("/api/account/sync-scope", body);
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        }
+
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PutAsJsonAsync("/api/account/sync-scope", new { scope = "Everything" })).StatusCode);
+        Assert.Equal("InboxAndSent", (await ReadScopeAsync(await client.GetAsync("/api/account/sync-scope"))).Scope);
+        using var scope = _accepting.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        Assert.True(await db.MailFolders.Where(f => f.Id == foreignInbox).Select(f => f.IsSyncEnabled).SingleAsync());
+        Assert.Equal(FolderSyncScope.InboxAndSent, await db.MailAccounts.Where(a => a.Id == foreignAccountId).Select(a => a.FolderSyncScope).SingleAsync());
+    }
+
+    private HttpClient AuthorizedClient(Guid accountId)
+    {
+        var client = _accepting.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _accepting.Services.GetRequiredService<IJwtTokenIssuer>().Issue(accountId).Token);
+        return client;
+    }
+
+    private static async Task<(string Scope, List<Guid> Ids)> ReadScopeAsync(HttpResponseMessage response)
+    {
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = (await response.Content.ReadFromJsonAsync<JsonDocument>())!.RootElement;
+        return (body.GetProperty("scope").GetString()!, body.GetProperty("syncedFolderIds").EnumerateArray().Select(x => x.GetGuid()).ToList());
+    }
+
+    private async Task<(Guid AccountId, Guid Inbox, Guid Sent, Guid Archive, Guid Custom, Guid Unavailable)> SeedScopeAccountAsync(Guid accountId)
+    {
+        using var scope = _accepting.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        db.MailAccounts.Add(new MailAccount
+        {
+            Id = accountId,
+            EmailAddress = $"{accountId:N}@mail.test.invalid",
+            NormalizedEmailAddress = $"{accountId:N}@MAIL.TEST.INVALID",
+            Username = accountId.ToString("N"),
+            ImapHost = "mail.test.invalid",
+            ImapPort = 993,
+            SmtpHost = "mail.test.invalid",
+            SmtpPort = 465,
+            Status = MailAccountStatus.Active
+        });
+        Guid Add(MailFolderType type, bool available = true)
+        {
+            var id = Guid.NewGuid();
+            db.MailFolders.Add(new Domain.Entities.MailFolder
+            {
+                Id = id,
+                MailAccountId = accountId,
+                Name = type.ToString(),
+                FullName = $"{type}-{id:N}",
+                FolderType = type,
+                IsSyncEnabled = type is MailFolderType.Inbox or MailFolderType.Sent,
+                IsAvailable = available
+            });
+            return id;
+        }
+        var ids = (Add(MailFolderType.Inbox), Add(MailFolderType.Sent), Add(MailFolderType.Archive), Add(MailFolderType.Custom), Add(MailFolderType.Custom, available: false));
+        await db.SaveChangesAsync();
+        return (accountId, ids.Item1, ids.Item2, ids.Item3, ids.Item4, ids.Item5);
+    }
+
+    [Fact]
     public async Task Refresh_Rotates_LogoutRevokes()
     {
         var factory = _accepting;

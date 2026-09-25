@@ -41,6 +41,8 @@ internal class FakeRemoteMailFolder(
     public long LastBackfillBelowUid { get; private set; }
     public int LastSearchMaxCount { get; private set; }
     public uint LastSearchAfterUid { get; private set; }
+
+    public IList<uint>? SearchResult { get; set; }
     public uint UidValidity { get; set; } = uidValidity;
     private readonly Dictionary<uint, uint> _sizes = sizes ?? [];
     private readonly HashSet<uint> _missingSizes = missingSizes ?? [];
@@ -91,6 +93,9 @@ internal class FakeRemoteMailFolder(
         var next = found.Count < maxCount || found[0].Id <= 1 ? 0 : found[0].Id;
         return Task.FromResult(new UidBackfillResult(found, next));
     }
+
+    public Task<IList<UniqueId>> SearchAsync(MailKit.Search.SearchQuery query, CancellationToken cancellationToken) =>
+        Task.FromResult<IList<UniqueId>>([.. (SearchResult ?? [.. Messages.Keys]).Order().Select(uid => new UniqueId(uid))]);
 
     public Task<IReadOnlyDictionary<uint, RemoteMessageFlags>> GetFlagsAsync(
         IReadOnlyCollection<UniqueId> uids, CancellationToken cancellationToken) =>

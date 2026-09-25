@@ -150,6 +150,7 @@ builder.Services.AddScoped<ISyncExecutor>(sp => sp.GetRequiredService<MailFolder
 builder.Services.AddScoped<InlineFolderSync>();
 builder.Services.AddScoped<MailReadService>();
 builder.Services.AddScoped<MailSearchService>();
+builder.Services.AddScoped<MailRemoteSearchService>();
 
 builder.Services.AddScoped<SendOperationStore>();
 builder.Services.AddScoped<MailSendService>();

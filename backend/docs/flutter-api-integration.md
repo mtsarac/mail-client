@@ -283,7 +283,7 @@ Belirtilen cihazın oturumunu uzaktan kapatır (o cihazın refresh token'ı geç
 ### `GET /api/account/sync-status`
 **Auth:** Bearer
 
-Bağlı hesabın her klasörü için bir `SyncState` satırı döner - "posta kutusu hâlâ senkronize ediliyor, arama sonuçları eksik olabilir" gibi UI uyarıları ve Ayarlar altındaki sync durumu ekranı için. Klasör silinip yeniden keşfedilene kadar henüz hiç sync denemesi yapılmamış klasörler dizide görünmez (satır yalnızca ilk sync denemesinde oluşur).
+Bağlı hesabın tüm kullanılabilir klasörleri için sync/backfill durumunu döner - "posta kutusu hâlâ senkronize ediliyor, arama sonuçları eksik olabilir" gibi UI uyarıları ve Ayarlar altındaki sync durumu ekranı için. Henüz sync denemesi yapılmamış klasörler de `backfillComplete: false` ve boş zaman/hata alanlarıyla listelenir.
 
 ```json
 // 200 OK
@@ -297,6 +297,17 @@ Bağlı hesabın her klasörü için bir `SyncState` satırı döner - "posta ku
 ```
 
 `backfillComplete: false` iken o klasördeki daha eski mail geçmişi henüz arka planda içeri aktarılıyor demektir - `/api/search` şu an yalnızca içeri aktarılmış maillerde çalışır, bu durumda sonuçlar eksik olabilir. `lastFailureCategory`: `Transient` | `Authentication` | `Configuration` | `Permanent`.
+
+### `GET /api/account/sync-scope` ve `PUT /api/account/sync-scope`
+**Auth:** Bearer
+
+Hesabın periyodik arka plan senkronizasyon kapsamını okur veya değiştirir. Varsayılan `InboxAndSent`; seçenekler `AllFolders` ve `SelectedFolders`. `GET` ve başarılı `PUT` aynı yanıtı döner:
+
+```json
+{"scope":"SelectedFolders","syncedFolderIds":["…"]}
+```
+
+`PUT` gövdesi: `{"scope":"SelectedFolders","folderIds":["…"]}`. `SelectedFolders` için en az bir **bu hesaba ait ve kullanılabilir** klasör id'si gerekir; diğer kapsamlar için `folderIds` verilmez. Geçersiz/başka hesaba ait/erişilemeyen klasör seçimi `400` validation problem döner, mevcut ayar değişmez. Ayar backend'de kalıcıdır, hesap düzeyindedir; yeni keşfedilen klasörler `AllFolders` için dahil, `SelectedFolders` için hariç tutulur. Kullanıcının elle istediği klasör sync'i kapsamdan bağımsızdır; yeni kapsama alınan klasörler sonraki periyodik taramada senkronize edilir. `syncedFolderIds` yalnız kullanılabilir klasörleri listeler.
 
 ### `DELETE /api/account`
 **Auth:** Bearer
@@ -390,6 +401,17 @@ Yalnızca sunucudaki önbellekli maillerde tam metin + filtreli arama; tüm filt
 - `to`: herhangi bir To/Cc/Bcc alıcısının adresi ya da adında büyük/küçük harf duyarsız "içerir" araması.
 - `fromDate` / `toDate`: alınma zamanına (`receivedAt`) göre filtreler; `fromDate` dahil, `toDate` hariç. UTC ofseti olmayan değerler UTC kabul edilir.
 - `labelId`: sunucu tarafında `MailLabelAssignment` üzerinden filtrelenir (pagination-safe) - eskiden client tarafında sayfa sonrası uygulanıyordu, artık `q`/diğer filtrelerle aynı sorguya dahil. Başka hesaba ait bir `labelId` hiçbir sonuçla eşleşmez.
+
+### `GET /api/search/remote`
+**Auth:** Bearer
+
+Kullanıcının başlattığı IMAP SEARCH: `q`, `folderId`, `conversationId`, `from`, `to`, `fromDate`, `toDate`, `isRead`, `flagged`, `hasAttachment`, `labelId` filtrelerini alır (`page`/`pageSize` yok). `q`, `from` veya `to` alanlarından en az biri dolu olmalıdır. Generic IMAP aramasıyla eşleşen ancak henüz backend indeksinde olmayan mailleri sınırlı sayıda içeri aktarır; çağrıdan sonra sonuçları görmek için tekrar `GET /api/search` çağırın. `hasAttachment`, `labelId` ve `conversationId` uzaktan IMAP filtresi değildir; etiket ve konuşma yalnızca indekslenmiş maillere uygulanır.
+
+```json
+{"matched": 3, "imported": 2, "remaining": 1, "complete": false}
+```
+
+`matched`: henüz indekslenmemiş eşleşmeler; `imported`: yeni içeri alınanlar; `remaining`: bu istekte alınamayanlar. `complete: false` ise süre/bütçe dolmuş veya başka bir sync işlemi sürüyordur; kullanıcı aynı sorguyla yeniden deneyebilir. Hesap ve klasör yetkileri korunur, başka hesaba ait `folderId` için `404` döner. Sonuçlar sağlayıcıya özel API kullanılmadan IMAP üzerinden alınır.
 
 ### `GET /api/mails/{id}`
 **Auth:** Bearer

@@ -61,6 +61,8 @@ public sealed record MailSearchRequest(
     int PageSize,
     Guid? LabelId = null);
 
+public sealed record RemoteSearchResponse(int Matched, int Imported, int Remaining, bool Complete);
+
 public sealed record MailDetailResponse(
     Guid Id,
     Guid FolderId,
