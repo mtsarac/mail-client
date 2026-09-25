@@ -257,6 +257,41 @@ public sealed class PostgresIntegrationTests(PostgresFixture fixture)
     }
 
     [Fact]
+    public async Task Search_LabelId_IsPaginationSafe_AndRespectsAccountOwnership()
+    {
+        if (!IntegrationEnvironment.PostgresEnabled) return;
+        var accountId = await SeedAccountAsync();
+        var otherAccountId = await SeedAccountAsync();
+        await using var db = fixture.CreateDb();
+        var folderId = await SeedFolderAsync(db, accountId);
+        var label = new MailLabel { Id = Guid.NewGuid(), MailAccountId = accountId, Name = "work", Color = 0, SortOrder = 0 };
+        db.MailLabels.Add(label);
+        var labeled = Mail(accountId, folderId, 301);
+        labeled.Subject = "labeled oldest";
+        labeled.ReceivedAt = DateTime.UtcNow.AddMinutes(-10);
+        var newerUnlabeled = Mail(accountId, folderId, 302);
+        newerUnlabeled.Subject = "newer unlabeled";
+        newerUnlabeled.ReceivedAt = DateTime.UtcNow;
+        db.Mails.AddRange(labeled, newerUnlabeled);
+        db.MailLabelAssignments.Add(new MailLabelAssignment { Id = Guid.NewGuid(), MailAccountId = accountId, MailId = labeled.Id, MailLabelId = label.Id });
+        await db.SaveChangesAsync();
+        var service = new MailSearchService(db, FixedRuntimeSettingsStore.Operation());
+
+        // Without the label filter, page 1 (size 1, newest-first) misses the older labeled mail -
+        // exactly the pagination-unsafe behavior spec §11 wants moved server-side.
+        var unfiltered = await service.SearchAsync(accountId, new MailSearchRequest(null, null, null, null, null, null, null, null, null, null, 1, 1), CancellationToken.None);
+        Assert.Equal("newer unlabeled", unfiltered.Items.Single().Subject);
+
+        // The label filter finds it directly instead of depending on where it landed in the page.
+        var filtered = await service.SearchAsync(accountId, new MailSearchRequest(null, null, null, null, null, null, null, null, null, null, 1, 20, label.Id), CancellationToken.None);
+        Assert.Equal("labeled oldest", Assert.Single(filtered.Items).Subject);
+
+        // A label id owned by a different account never matches another account's mails.
+        var crossAccount = await service.SearchAsync(otherAccountId, new MailSearchRequest(null, null, null, null, null, null, null, null, null, null, 1, 20, label.Id), CancellationToken.None);
+        Assert.Empty(crossAccount.Items);
+    }
+
+    [Fact]
     public async Task Search_ExistingData_IsSearchableAfterMigration()
     {
         if (!IntegrationEnvironment.PostgresEnabled) return;
@@ -549,6 +584,52 @@ public sealed class PostgresIntegrationTests(PostgresFixture fixture)
 
         Assert.Equal(["Alice", "Me"], list!.RootElement.GetProperty("items")[0].GetProperty("participants").EnumerateArray().Select(name => name.GetString()));
         Assert.Equal([false, false, true], detail!.RootElement.GetProperty("messages").EnumerateArray().Select(message => message.GetProperty("isFromMe").GetBoolean()));
+    }
+
+    [Fact]
+    public async Task AccountSyncStatusEndpoint_ReturnsPerFolderState_ScopedToOwnAccount()
+    {
+        if (!IntegrationEnvironment.PostgresEnabled) return;
+        var accountId = await SeedAccountAsync();
+        var otherAccountId = await SeedAccountAsync();
+        await using (var db = fixture.CreateDb())
+        {
+            var folderId = await SeedFolderAsync(db, accountId);
+            var otherFolderId = await SeedFolderAsync(db, otherAccountId);
+            db.SyncStates.Add(new SyncState
+            {
+                Id = Guid.NewGuid(),
+                MailAccountId = accountId,
+                MailFolderId = folderId,
+                BackfillNextUid = 0,
+                LastSuccessfulSyncAt = new DateTime(2026, 3, 1, 0, 0, 0, DateTimeKind.Utc),
+                ConsecutiveFailures = 0
+            });
+            db.SyncStates.Add(new SyncState
+            {
+                Id = Guid.NewGuid(),
+                MailAccountId = otherAccountId,
+                MailFolderId = otherFolderId,
+                BackfillNextUid = 500,
+                LastFailureAt = DateTime.UtcNow,
+                LastFailureCategory = SyncFailureCategory.Transient,
+                ConsecutiveFailures = 2
+            });
+            await db.SaveChangesAsync();
+        }
+
+        using var factory = new NpgsqlApiFactory(fixture.ConnectionString);
+        var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer",
+            factory.Services.GetRequiredService<MailClient.Application.Accounts.IJwtTokenIssuer>().Issue(accountId).Token);
+
+        var response = await client.GetFromJsonAsync<System.Text.Json.JsonDocument>("/api/account/sync-status");
+        var entry = Assert.Single(response!.RootElement.EnumerateArray());
+
+        // Only this account's folder comes back - the other account's failing/backfilling row is invisible.
+        Assert.True(entry.GetProperty("backfillComplete").GetBoolean());
+        Assert.Equal(0, entry.GetProperty("consecutiveFailures").GetInt32());
+        Assert.True(entry.TryGetProperty("lastSuccessfulSyncAt", out var lastSync) && lastSync.ValueKind != System.Text.Json.JsonValueKind.Null);
     }
 
     private static async Task<Guid> SeedFolderAsync(AppDbContext db, Guid accountId)

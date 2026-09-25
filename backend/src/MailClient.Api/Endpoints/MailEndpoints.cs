@@ -27,9 +27,9 @@ public static class MailEndpoints
     {
         var api = app.MapGroup("/api").RequireAuthorization();
         const string MailTag = "Mail", SearchTag = "Search", DraftsTag = "Drafts", OperationsTag = "Mail Operations", ComposeTag = "Compose";
-        api.MapGet("/search", async (string? q, Guid? folderId, Guid? conversationId, string? from, string? to, DateTime? fromDate, DateTime? toDate, bool? isRead, bool? flagged, bool? hasAttachment, int? page, int? pageSize, ICurrentMailAccount current, MailSearchService search, CancellationToken ct) =>
+        api.MapGet("/search", async (string? q, Guid? folderId, Guid? conversationId, string? from, string? to, DateTime? fromDate, DateTime? toDate, bool? isRead, bool? flagged, bool? hasAttachment, Guid? labelId, int? page, int? pageSize, ICurrentMailAccount current, MailSearchService search, CancellationToken ct) =>
         {
-            var result = await search.SearchAsync(current.MailAccountId, new MailSearchRequest(q, folderId, conversationId, from, to, fromDate, toDate, isRead, flagged, hasAttachment, page ?? 1, pageSize ?? 0), ct);
+            var result = await search.SearchAsync(current.MailAccountId, new MailSearchRequest(q, folderId, conversationId, from, to, fromDate, toDate, isRead, flagged, hasAttachment, page ?? 1, pageSize ?? 0, labelId), ct);
             return Results.Ok(result);
         }).WithTags(SearchTag).WithName("SearchMails").WithSummary("Search account mailbox").WithDescription("Searches cached mail of the current mailbox. All filters are optional and combined with AND.").Produces<MailListResponse>();
         api.MapGet("/mails", async (Guid? folderId, bool? isRead, bool? hasAttachments, string? search, int? page, int? pageSize, ICurrentMailAccount current, MailSearchService searcher, CancellationToken ct) =>

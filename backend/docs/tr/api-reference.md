@@ -31,6 +31,7 @@ arayüzüne bakın (`/swagger`, yalnızca Development). Mobil istemci için örn
 | DELETE | `/api/account` | bearer | Hesabı ve verilerini siler |
 | GET | `/api/account/sessions` | bearer | Oturum açmış cihazları/oturumları listeler |
 | DELETE | `/api/account/sessions/{sessionId}` | bearer | Bir oturumu uzaktan kapatır |
+| GET | `/api/account/sync-status` | bearer | Klasör başına sync/backfill durumu (son başarılı sync, son hata, backfill ilerlemesi) |
 
 ### OAuth
 
@@ -65,10 +66,13 @@ arayüzüne bakın (`/swagger`, yalnızca Development). Mobil istemci için örn
 | POST | `/api/mails/send` | bearer + `Idempotency-Key` | Posta gönderir (multipart/form-data) |
 | GET | `/api/mails/{id}/compose/reply · reply-all · forward` | bearer | Hazır doldurulmuş yazma bağlamı |
 
-`/api/search` filtreleri: `from` = gönderen adresi veya görünen adında büyük/küçük
-harf duyarsız "içerir"; `to` = herhangi bir To/Cc/Bcc adresi veya adında büyük/küçük
-harf duyarsız "içerir"; `fromDate`/`toDate` alınma zamanına göre filtreler,
-`fromDate` dahil, `toDate` hariç; UTC ofseti olmayan değerler UTC kabul edilir.
+`/api/search` filtreleri: `folderId`, `conversationId`, `isRead`, `flagged`,
+`hasAttachment`, `labelId` tam eşleşir; `from` = gönderen adresi veya görünen
+adında büyük/küçük harf duyarsız "içerir"; `to` = herhangi bir To/Cc/Bcc
+adresi veya adında büyük/küçük harf duyarsız "içerir"; `fromDate`/`toDate`
+alınma zamanına göre filtreler, `fromDate` dahil, `toDate` hariç; UTC ofseti
+olmayan değerler UTC kabul edilir. `labelId` yalnızca oturum açan hesabın
+sahip olduğu etiketlerle eşleşir.
 
 ### Drafts
 

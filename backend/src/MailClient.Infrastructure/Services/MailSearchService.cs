@@ -48,6 +48,7 @@ public sealed class MailSearchService(AppDbContext db, RuntimeOperationSettings 
         var query = db.Mails.AsNoTracking().Where(mail => mail.MailAccountId == accountId);
         if (request.FolderId is { } folderId) query = query.Where(mail => mail.MailFolderId == folderId);
         if (request.ConversationId is { } conversationId) query = query.Where(mail => mail.ConversationId == conversationId);
+        if (request.LabelId is { } labelId) query = query.Where(mail => db.MailLabelAssignments.Any(a => a.MailAccountId == accountId && a.MailId == mail.Id && a.MailLabelId == labelId));
         if (request.IsRead is { } isRead) query = query.Where(mail => mail.IsRead == isRead);
         if (request.Flagged is { } flagged) query = query.Where(mail => mail.Flagged == flagged);
         if (request.HasAttachment is { } hasAttachment) query = query.Where(mail => mail.HasAttachments == hasAttachment);

@@ -31,6 +31,7 @@ mobile client: [Flutter guide](../flutter-api-integration.md) (Turkish).
 | DELETE | `/api/account` | bearer | Delete the account and its data |
 | GET | `/api/account/sessions` | bearer | List signed-in devices/sessions |
 | DELETE | `/api/account/sessions/{sessionId}` | bearer | Revoke a session remotely |
+| GET | `/api/account/sync-status` | bearer | Per-folder sync/backfill state (last successful sync, last failure, backfill progress) |
 
 ### OAuth
 
@@ -65,10 +66,13 @@ mobile client: [Flutter guide](../flutter-api-integration.md) (Turkish).
 | POST | `/api/mails/send` | bearer + `Idempotency-Key` | Send mail (multipart/form-data) |
 | GET | `/api/mails/{id}/compose/reply · reply-all · forward` | bearer | Prefilled compose context |
 
-`/api/search` filters: `from` = case-insensitive contains on sender address or
-display name; `to` = case-insensitive contains on any To/Cc/Bcc address or name;
-`fromDate`/`toDate` filter on received time, `fromDate` inclusive, `toDate`
-exclusive; values without a UTC offset are treated as UTC.
+`/api/search` filters: `folderId`, `conversationId`, `isRead`, `flagged`,
+`hasAttachment`, `labelId` match exactly; `from` = case-insensitive contains
+on sender address or display name; `to` = case-insensitive contains on any
+To/Cc/Bcc address or name; `fromDate`/`toDate` filter on received time,
+`fromDate` inclusive, `toDate` exclusive; values without a UTC offset are
+treated as UTC. `labelId` only matches labels owned by the authenticated
+account.
 
 ### Drafts
 
