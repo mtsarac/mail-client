@@ -751,22 +751,61 @@ Hesabın tüm zamanlanmış gönderimlerini döner (dizi, sayfalama yok), `sendA
     "status": "Pending",
     "createdAtUtc": "2026-09-23T18:12:00Z",
     "sentMailId": null,
-    "failureReason": null
+    "failureReason": null,
+    "attemptCount": 0,
+    "nextAttemptAtUtc": null
   }]
 }
 ```
 
-`status`: `Pending · Sent · Cancelled · Failed`. `sentMailId` yalnızca `Sent` durumunda ve Gönderilmiş kopyası kaydedildiyse dolar; `failureReason` yalnızca `Failed` durumunda dolar.
+`status`: `Pending · Sent · Cancelled · Failed · DeliveryUnknown`. `attemptCount`
+SMTP deneme sayısıdır; `nextAttemptAtUtc` geçici hata sonrası otomatik retry
+zamanını verir. `failureReason`, Failed veya DeliveryUnknown durumunu açıklar.
+
+### `GET /api/scheduled-sends/{id}`
+**Auth:** Bearer
+
+Liste alanlarına ek olarak `bodyHtml`, `bodyText` ve her biri
+`{ id, fileName, contentType, sizeBytes }` olan `attachments` dizisini döner.
+Başka hesabın kaydı dahil bulunmayan id için 404 `scheduled_send_not_found`.
+
+### `PUT /api/scheduled-sends/{id}`
+**Auth:** Bearer · **Gövde:** `multipart/form-data`
+
+Pending kaydın içeriğini tek işlemde değiştirir. `To`, `Cc`, `Bcc`, `subject`,
+`bodyHtml`/`bodyText`, gelecekte `sendAtUtc`, korunacak her mevcut ek için
+tekrarlanan `keepAttachmentIds` ve yeni dosya parçaları gönderilir. Listedeki
+mevcut ek korunur; listelenmeyen mevcut ek silinir. Yeni ve korunan ekler
+birlikte oluşturmayla aynı sayı/boyut sınırlarına tabidir. Başarı: 200
+`{ id, sendAtUtc, status }`.
+
+| Durum | code | Anlamı |
+|---|---|---|
+| 400 | create ile aynı doğrulama kodları | Alıcı, gövde, konu, zaman veya ek geçersiz. |
+| 404 | `scheduled_send_not_found` / `scheduled_send_attachment_not_found` | Kayıt hesaba ait değil/yok veya korunacak ek bu kayıtta yok. |
+| 409 | `scheduled_send_already_sent` | Dispatcher kaydı aldı, gönderdi veya teslim sonucu belirsiz; içerik değişmedi. |
+| 409 | `scheduled_send_not_pending` | Kayıt Failed/Cancelled; pending düzenleme yerine reschedule kullan. |
+| 409 | `scheduled_send_modified` | Eşzamanlı düzenleme önce tamamlandı; detayı yenile. |
+
+### `POST /api/scheduled-sends/{id}/reschedule`
+**Auth:** Bearer + yeni `Idempotency-Key` · **Gövde:** JSON
+
+Yalnız Failed kaydı yeni Pending kayıt olarak tekrar zamanlar. Alanlar:
+`sendAtUtc`, `to`, `cc`, `bcc`, `subject`, `bodyHtml`, `bodyText`; opsiyonel
+`attachmentIds` verilmezse tüm bekletilen ekler, verilirse seçilenler kopyalanır.
+DeliveryUnknown otomatik/manuel retry edilmez: 409
+`scheduled_send_already_sent`.
 
 ### `DELETE /api/scheduled-sends/{id}`
 **Auth:** Bearer
 
-Henüz gönderilmemiş bir zamanlanmış gönderimi iptal eder, `204` döner.
+Pending kaydı iptal eder veya Failed içeriği ve bekletilen eklerini siler,
+`204` döner. DeliveryUnknown gönderimler iptal edilemez.
 
 | Durum | code | Anlamı |
 |---|---|---|
 | 404 | `scheduled_send_not_found` | Kayıt yok ya da başka hesaba ait. |
-| 409 | `scheduled_send_already_sent` | Kayıt artık `Pending` değil (gönderildi/iptal edildi/başarısız oldu). |
+| 409 | `scheduled_send_already_sent` | Gönderim başladı/tamamlandı veya teslim sonucu belirsiz. |
 
 ### `GET/POST /api/templates`, `PUT/DELETE /api/templates/{id}`
 **Auth:** Bearer

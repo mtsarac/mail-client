@@ -180,6 +180,23 @@ Başka hesaba ait klasör id'si 404 döner.
 | DELETE | `/api/drafts/{id}` | bearer | Taslağı siler |
 | POST | `/api/drafts/{id}/send` | bearer + `Idempotency-Key` | Taslağı gönderir ve siler; başarılı gönderim aynı key ile tekrarlanırsa `422 mail_not_draft` yerine kayıtlı sonuç döner (`sent: true`, `draftRemoved: true`) |
 
+### Zamanlanmış gönderimler
+
+| Metot | Yol | Yetki | Açıklama |
+|---|---|---|---|
+| POST | `/api/scheduled-sends` | bearer + `Idempotency-Key` | Postayı ileri bir tarihte göndermek üzere zamanlar (multipart/form-data) |
+| GET | `/api/scheduled-sends` | bearer | Hesaba ait gönderimleri deneme ve hata durumlarıyla listeler |
+| GET | `/api/scheduled-sends/{id}` | bearer | Düzenlenebilir içeriği ve bekletilen ek üstverisini getirir |
+| PUT | `/api/scheduled-sends/{id}` | bearer | Pending gönderimi atomik değiştirir (multipart/form-data; tekrarlanan `keepAttachmentIds` mevcut ekleri korur, yeni dosyalar yüklenir) |
+| POST | `/api/scheduled-sends/{id}/reschedule` | bearer + yeni `Idempotency-Key` | Failed gönderimi yeni Pending gönderime kopyalar |
+| DELETE | `/api/scheduled-sends/{id}` | bearer | Pending gönderimi iptal eder veya Failed içeriği siler |
+
+`PUT`, oluşturmayla aynı alıcı, gövde, konu, zaman ve ek sınırlarını uygular.
+Dispatch başladıysa 409 `scheduled_send_already_sent`, Failed/Cancelled kayıt
+için `scheduled_send_not_pending`, başka düzenleme önce tamamlandıysa
+`scheduled_send_modified` döner. Bu çakışmalar içeriği değiştirmez.
+DeliveryUnknown gönderimler tekrar denenmez ve iptal edilemez.
+
 ### Mail ops
 
 | Metot | Yol | Yetki | Açıklama |

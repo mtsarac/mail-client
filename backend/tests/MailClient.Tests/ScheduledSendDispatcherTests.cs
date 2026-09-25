@@ -72,6 +72,71 @@ public sealed class ScheduledSendDispatcherTests
     }
 
     [Fact]
+    public async Task ProcessDueAsync_EditAfterClaim_ReturnsConflictAndLeavesDispatchedContentUnchanged()
+    {
+        var database = Guid.NewGuid().ToString();
+        var root = new InMemoryDatabaseRoot();
+        var options = new DbContextOptionsBuilder<AppDbContext>().UseInMemoryDatabase(database, root).Options;
+        await using var seed = new AppDbContext(options);
+        var accountId = await SeedAccountAsync(seed);
+        var due = await SeedScheduledSendAsync(seed, accountId, DateTime.UtcNow.AddMinutes(-1), "Original");
+        await using var editDb = new AppDbContext(options);
+        await using var dispatchDb = new AppDbContext(options);
+        var storage = new FakeFileStorage();
+        var transport = new FakeMailTransport();
+        await using var provider = BuildProvider(dispatchDb, transport, storage);
+        var hook = new HookedFileStorage(storage, () => ScheduledSendDispatcher.ProcessDueAsync(provider, CancellationToken.None));
+        var service = new ScheduledSendService(editDb, hook, FixedRuntimeSettingsStore.Operation(),
+            new AuditLogger(editDb), NullLogger<ScheduledSendService>.Instance);
+        var edit = new ScheduledSendEdit(DateTime.UtcNow.AddHours(1), ["edited@example.test"], [], [],
+            "Edited", null, "edited body", [], [File("new.txt", "new")]);
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.UpdatePendingAsync(accountId, due, edit, null, CancellationToken.None));
+
+        Assert.Equal("scheduled_send_already_sent", error.Message);
+        var row = await seed.ScheduledSends.AsNoTracking().SingleAsync(x => x.Id == due);
+        Assert.Equal(ScheduledSendStatus.Sent, row.Status);
+        Assert.Equal("Original", row.Subject);
+        Assert.Equal(0, row.Revision);
+        Assert.Equal("Original", transport.Message!.Subject);
+        Assert.Equal(1, transport.SentCount);
+        Assert.Contains(storage.Saved.Single(), storage.Deleted);
+        Assert.Empty(await seed.ScheduledSendAttachments.ToListAsync());
+    }
+
+    [Fact]
+    public async Task ProcessDueAsync_EditAfterPreDeliveryFailure_UsesNewDispatchKey()
+    {
+        await using var db = CreateDb();
+        var accountId = await SeedAccountAsync(db);
+        var due = await SeedScheduledSendAsync(db, accountId, DateTime.UtcNow.AddMinutes(-1), "Original");
+        var storage = new FakeFileStorage();
+        var transport = new OnceUnavailableTransport();
+        await using var provider = BuildProvider(db, transport, storage);
+
+        await ScheduledSendDispatcher.ProcessDueAsync(provider, CancellationToken.None);
+        db.ChangeTracker.Clear();
+        var service = new ScheduledSendService(db, storage, FixedRuntimeSettingsStore.Operation(),
+            new AuditLogger(db), NullLogger<ScheduledSendService>.Instance);
+        var edit = new ScheduledSendEdit(DateTime.UtcNow.AddHours(1), ["edited@example.test"], [], [],
+            "Edited", null, "edited body", [], []);
+        await service.UpdatePendingAsync(accountId, due, edit, null, CancellationToken.None);
+        var row = await db.ScheduledSends.SingleAsync(x => x.Id == due);
+        row.SendAtUtc = DateTime.UtcNow.AddMinutes(-1);
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+
+        await ScheduledSendDispatcher.ProcessDueAsync(provider, CancellationToken.None);
+
+        Assert.Equal(2, transport.Attempts);
+        Assert.Equal("Edited", transport.Message!.Subject);
+        Assert.Equal("edited body", transport.Message.TextBody);
+        Assert.Equal(ScheduledSendStatus.Sent, (await db.ScheduledSends.SingleAsync(x => x.Id == due)).Status);
+        Assert.Equal(2, await db.SendOperations.CountAsync());
+    }
+
+    [Fact]
     public async Task ProcessDueAsync_AuthenticationFailure_PreservesFailedContentWithoutAutomaticRetry()
     {
         await using var db = CreateDb();
@@ -309,16 +374,49 @@ public sealed class ScheduledSendDispatcherTests
         return accountId;
     }
 
+    private static SendMailAttachment File(string name, string content) =>
+        new(name, "text/plain", new MemoryStream(System.Text.Encoding.UTF8.GetBytes(content)));
+
+    private sealed class HookedFileStorage(FakeFileStorage inner, Func<Task> beforeFirstSave) : IFileStorage
+    {
+        private bool _called;
+
+        public async Task<StoredFile> SaveAsync(Guid accountId, Guid mailId, Guid attachmentId,
+            Func<Stream, CancellationToken, Task> write, long maxBytes, CancellationToken cancellationToken)
+        {
+            if (!_called)
+            {
+                _called = true;
+                await beforeFirstSave();
+            }
+            return await inner.SaveAsync(accountId, mailId, attachmentId, write, maxBytes, cancellationToken);
+        }
+
+        public Task<Stream> OpenReadAsync(string relativePath, CancellationToken cancellationToken) =>
+            inner.OpenReadAsync(relativePath, cancellationToken);
+
+        public Task DeleteAsync(string relativePath, CancellationToken cancellationToken) =>
+            inner.DeleteAsync(relativePath, cancellationToken);
+
+        public Task DeleteAccountAsync(Guid accountId, CancellationToken cancellationToken) =>
+            inner.DeleteAccountAsync(accountId, cancellationToken);
+
+        public Task<bool> IsAvailableAsync(CancellationToken cancellationToken) =>
+            inner.IsAvailableAsync(cancellationToken);
+    }
+
     private static AppDbContext CreateDb() => new(new DbContextOptionsBuilder<AppDbContext>()
         .UseInMemoryDatabase(Guid.NewGuid().ToString()).Options);
 
     private sealed class OnceUnavailableTransport : MailClient.Infrastructure.Mail.IMailTransport
     {
         public int Attempts { get; private set; }
+        public MimeKit.MimeMessage? Message { get; private set; }
 
         public Task SendAsync(MailAccount account, MimeKit.MimeMessage message, CancellationToken cancellationToken)
         {
             Attempts++;
+            Message = message;
             if (Attempts == 1)
                 throw new MailConnectionException(MailConnectionFailure.Network, "temporary");
             return Task.CompletedTask;

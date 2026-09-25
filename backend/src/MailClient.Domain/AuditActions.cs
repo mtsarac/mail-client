@@ -28,6 +28,7 @@ public static class AuditActions
     public const string MailAccountAccessRestored = "mail-account.access-restored";
     public const string MailAccountDeletedGracePeriodExpired = "mail-account.deleted-grace-period-expired";
     public const string ScheduledSendCreated = "scheduled-send.created";
+    public const string ScheduledSendUpdated = "scheduled-send.updated";
     public const string ScheduledSendCancelled = "scheduled-send.cancelled";
     public const string LabelCreated = "label.created";
     public const string LabelUpdated = "label.updated";

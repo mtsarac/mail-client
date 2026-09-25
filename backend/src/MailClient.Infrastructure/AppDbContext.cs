@@ -114,6 +114,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         model.Entity<ScheduledSend>().HasIndex(x => new { x.Status, x.SendAtUtc });
         model.Entity<ScheduledSend>().Property(x => x.Subject).HasMaxLength(500);
         model.Entity<ScheduledSend>().Property(x => x.IdempotencyKey).HasMaxLength(200);
+        model.Entity<ScheduledSend>().Property(x => x.Status).IsConcurrencyToken();
+        model.Entity<ScheduledSend>().Property(x => x.Revision).IsConcurrencyToken();
         model.Entity<ScheduledSend>().HasOne(x => x.MailAccount).WithMany().HasForeignKey(x => x.MailAccountId).OnDelete(DeleteBehavior.Cascade);
         model.Entity<ScheduledSendAttachment>().Property(x => x.FileName).HasMaxLength(255);
         model.Entity<ScheduledSendAttachment>().Property(x => x.ContentType).HasMaxLength(150);

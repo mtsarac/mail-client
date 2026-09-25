@@ -233,6 +233,7 @@ public sealed class ScheduledSend
     public string IdempotencyKey { get; set; } = "";
     public string Fingerprint { get; set; } = "";
     public Guid? ReplySourceMailId { get; set; }
+    public int Revision { get; set; }
     public MailAccount? MailAccount { get; set; }
     public ICollection<ScheduledSendAttachment> Attachments { get; set; } = [];
 }

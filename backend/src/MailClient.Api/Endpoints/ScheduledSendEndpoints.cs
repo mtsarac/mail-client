@@ -40,16 +40,12 @@ public static class ScheduledSendEndpoints
                 CorrelationContext correlation,
                 CancellationToken ct) =>
             {
-                if (!DateTime.TryParse(form["sendAtUtc"].ToString(), CultureInfo.InvariantCulture,
-                        DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out var sendAtUtc))
-                    return Results.ValidationProblem(new Dictionary<string, string[]>
-                    {
-                        ["sendAtUtc"] = ["sendAtUtc is required and must be an ISO-8601 date-time."]
-                    });
+                if (!TryReadSendAt(form, out var sendAtUtc))
+                    return SendAtRequired();
 
                 var command = MailEndpoints.ComposeForm.Read(form).ToSend(current.MailAccountId, idempotencyKey ?? "");
                 var result = await scheduledSends.CreateAsync(
-                    current.MailAccountId, command, DateTime.SpecifyKind(sendAtUtc, DateTimeKind.Utc), correlation.CorrelationId, ct);
+                    current.MailAccountId, command, sendAtUtc, correlation.CorrelationId, ct);
                 return Results.Created(
                     $"/api/scheduled-sends/{result.Id}",
                     new ScheduledSendResponse(result.Id, result.SendAtUtc, result.Status));
@@ -80,6 +76,43 @@ public static class ScheduledSendEndpoints
             .WithName("GetScheduledSend").WithSummary("Inspect a scheduled send and its staged attachment metadata")
             .Produces<ScheduledSendDetail>().ProblemCodes(404, "scheduled_send_not_found");
 
+        api.MapPut("/scheduled-sends/{id:guid}", async (
+                Guid id,
+                IFormCollection form,
+                ICurrentMailAccount current,
+                ScheduledSendService scheduledSends,
+                CorrelationContext correlation,
+                CancellationToken ct) =>
+            {
+                if (!TryReadSendAt(form, out var sendAtUtc))
+                    return SendAtRequired();
+                var keep = new List<Guid>();
+                foreach (var value in form["keepAttachmentIds"])
+                {
+                    if (!Guid.TryParse(value, out var attachmentId))
+                        return Results.ValidationProblem(new Dictionary<string, string[]>
+                        {
+                            ["keepAttachmentIds"] = ["keepAttachmentIds must contain staged attachment ids."]
+                        });
+                    keep.Add(attachmentId);
+                }
+
+                var compose = MailEndpoints.ComposeForm.Read(form);
+                var result = await scheduledSends.UpdatePendingAsync(current.MailAccountId, id,
+                    new ScheduledSendEdit(sendAtUtc, compose.To, compose.Cc, compose.Bcc, compose.Subject,
+                        compose.BodyHtml, compose.BodyText, keep, compose.Attachments),
+                    correlation.CorrelationId, ct);
+                return Results.Ok(new ScheduledSendResponse(result.Id, result.SendAtUtc, result.Status));
+            })
+            .DisableAntiforgery().WithName("UpdateScheduledSend").WithSummary("Edit a pending scheduled send")
+            .WithDescription("multipart/form-data: to, cc, bcc, subject, bodyHtml/bodyText, sendAtUtc (required, future), keepAttachmentIds (repeated; staged attachments not listed are removed) and new files. Replaces the whole content atomically; only Pending sends can be edited and a send the dispatcher already claimed is never modified.")
+            .Accepts<IFormCollection>("multipart/form-data").Produces<ScheduledSendResponse>().ProducesValidationProblem()
+            .ProblemCodes(400, "scheduled_send_in_past", "recipient_required", "invalid_recipient", "body_required",
+                "body_too_large", "too_many_attachments", "attachment_too_large", "invalid_mail_header",
+                "message_not_constructible")
+            .ProblemCodes(404, "scheduled_send_not_found", "scheduled_send_attachment_not_found", "mail_account_not_found")
+            .ProblemCodes(409, "scheduled_send_already_sent", "scheduled_send_not_pending", "scheduled_send_modified");
+
         api.MapPost("/scheduled-sends/{id:guid}/reschedule", async (Guid id, RescheduleFailedSend request,
                 [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey,
                 ICurrentMailAccount current, ScheduledSendService scheduledSends, CorrelationContext correlation,
@@ -108,4 +141,17 @@ public static class ScheduledSendEndpoints
             .WithDescription("Cancels a pending send or discards failed content and its staged attachments. Delivery-unknown sends cannot be cancelled.")
             .Produces(204).ProblemCodes(404, "scheduled_send_not_found").ProblemCodes(409, "scheduled_send_already_sent");
     }
+
+    private static bool TryReadSendAt(IFormCollection form, out DateTime sendAtUtc)
+    {
+        var parsed = DateTime.TryParse(form["sendAtUtc"].ToString(), CultureInfo.InvariantCulture,
+            DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out sendAtUtc);
+        sendAtUtc = DateTime.SpecifyKind(sendAtUtc, DateTimeKind.Utc);
+        return parsed;
+    }
+
+    private static IResult SendAtRequired() => Results.ValidationProblem(new Dictionary<string, string[]>
+    {
+        ["sendAtUtc"] = ["sendAtUtc is required and must be an ISO-8601 date-time."]
+    });
 }

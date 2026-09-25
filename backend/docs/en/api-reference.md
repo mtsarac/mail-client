@@ -178,6 +178,23 @@ Foreign folder IDs return 404.
 | DELETE | `/api/drafts/{id}` | bearer | Delete draft |
 | POST | `/api/drafts/{id}/send` | bearer + `Idempotency-Key` | Send the draft and remove it; retrying a successful send with the same key replays the result (`sent: true`, `draftRemoved: true`) instead of `422 mail_not_draft` |
 
+### Scheduled sends
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| POST | `/api/scheduled-sends` | bearer + `Idempotency-Key` | Schedule a mail for future delivery (multipart/form-data) |
+| GET | `/api/scheduled-sends` | bearer | List account-scoped scheduled sends with attempts and failure state |
+| GET | `/api/scheduled-sends/{id}` | bearer | Get editable content and staged attachment metadata |
+| PUT | `/api/scheduled-sends/{id}` | bearer | Atomically replace a Pending send (multipart/form-data; repeated `keepAttachmentIds` retain staged files, new files are uploaded) |
+| POST | `/api/scheduled-sends/{id}/reschedule` | bearer + new `Idempotency-Key` | Copy a Failed send to a new Pending send |
+| DELETE | `/api/scheduled-sends/{id}` | bearer | Cancel Pending or discard Failed content |
+
+`PUT` uses the same recipients, body, subject, time and attachment limits as
+create. It returns 409 `scheduled_send_already_sent` after dispatch starts,
+`scheduled_send_not_pending` for Failed/Cancelled rows, or
+`scheduled_send_modified` when another edit won. None of those conflicts
+change content. DeliveryUnknown sends are never retried or cancelled.
+
 ### Mail ops
 
 | Method | Path | Auth | Description |

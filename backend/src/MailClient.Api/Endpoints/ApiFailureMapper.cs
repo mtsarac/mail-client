@@ -33,7 +33,8 @@ internal static class ApiFailureMapper
         "drafts_folder_unavailable" or "trash_folder_unavailable" or "mail_not_draft" => 422,
         "draft_delete_failed" => 502,
         "mail_account_already_exists" or "idempotency_conflict" or "send_in_progress" or "delivery_unknown"
-            or "credential_missing" or "mail_account_needs_reauthentication" or "scheduled_send_already_sent" => 409,
+            or "credential_missing" or "mail_account_needs_reauthentication" or "scheduled_send_already_sent"
+            or "scheduled_send_not_pending" or "scheduled_send_modified" => 409,
         "provider_disabled" or "provider_existing_accounts_disabled" or "provider_new_accounts_disabled" or "authentication_method_disabled" or "email_not_allowlisted" => 403,
         "runtime_settings_conflict" => 409,
         "runtime_settings_invalid" => 400,
