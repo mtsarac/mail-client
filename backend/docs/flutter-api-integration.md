@@ -790,6 +790,27 @@ Hesap düzeyindeki yazma şablonları; aynı hesaba bağlı tüm cihazlarda ayn�
 
 `POST`/`PUT` gövdesi `{ "name", "subject", "bodyText", "bodyHtml" }`; `POST` `201` + şablon, `PUT` `200` + şablon, `DELETE` `204` döner. `name` kırpılır, 1-100 karakter ve hesap içinde büyük/küçük harf duyarsız benzersizdir; çakışmada `409 template_name_taken`. `subject` opsiyonel, tek satır, en fazla 500 karakter. `bodyText`/`bodyHtml`'den en az biri dolu olmalı, her biri gönderimdeki gövde sınırını aşamaz. Doğrulama hatası `400` validation problem (`errors` anahtarları: `name`, `subject`, `body`). Başka hesabın şablon id'si `404`.
 
+### `GET/POST /api/snippets`, `PUT/DELETE /api/snippets/{id}`
+**Auth:** Bearer
+
+Yazma ekranında gövdeye tek dokunuşla eklenen kısa hazır metinler ("Teşekkürler.", "İyi çalışmalar." gibi). Konu içermez; şablondan ayrıdır. Hesap düzeyindedir: çoklu hesapta **Gönderen** hesabın oturumunu kullan. Liste `sortOrder`'a, eşitlikte oluşturulma zamanına göre sıralı gelir.
+
+```json
+// GET 200 OK
+{
+  "items": [{
+    "id": "…",
+    "title": null,
+    "text": "Teşekkürler.",
+    "sortOrder": 0,
+    "createdAt": "2026-09-25T09:00:00Z",
+    "updatedAt": "2026-09-25T09:00:00Z"
+  }]
+}
+```
+
+`POST`/`PUT` gövdesi `{ "title", "text", "sortOrder" }`; `POST` `201` + hazır metin, `PUT` `200` + hazır metin, `DELETE` `204` döner. `text` kırpılır, 1-2000 karakter; `title` opsiyonel, en fazla 100 karakter; `sortOrder` 0-99999 ve opsiyonel (`POST`'ta yoksa sona eklenir, `PUT`'ta yoksa sıra korunur). Doğrulama hatası `400` validation problem (`errors` anahtarları: `text`, `title`, `sortOrder`). Başka hesabın id'si `404`.
+
 ---
 
 ## 6. Konuşmalar

@@ -356,6 +356,7 @@ app.MapLabelEndpoints();
 app.MapRuleEndpoints();
 app.MapContactEndpoints();
 app.MapTemplateEndpoints();
+app.MapSnippetEndpoints();
 app.MapScheduledSendEndpoints();
 app.MapConversationEndpoints();
 app.MapDeviceEndpoints();

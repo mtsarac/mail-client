@@ -123,6 +123,22 @@ non-blank; each is limited like send (`MaxSendBodyChars`). Validation failures r
 a 400 validation problem keyed by `name`, `subject` or `body`. Another account's
 template id returns 404. Templates are deleted with their account.
 
+### Snippets
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/api/snippets` | bearer | List quick snippets in display order (`sortOrder`, then creation time) |
+| POST | `/api/snippets` | bearer | Create a snippet (201); without `sortOrder` it is appended last |
+| PUT | `/api/snippets/{id}` | bearer | Replace a snippet; without `sortOrder` the position is kept |
+| DELETE | `/api/snippets/{id}` | bearer | Delete a snippet (204) |
+
+Body: `{title?, text, sortOrder?}`; response adds `id`, `createdAt`, `updatedAt`.
+Snippets are short reusable body texts without a subject. `text` is trimmed and
+1-2000 characters; `title` is optional, trimmed and at most 100 characters;
+`sortOrder` is 0-99999. Validation failures return a 400 validation problem keyed by
+`text`, `title` or `sortOrder`. Another account's snippet id returns 404. Snippets
+are deleted with their account.
+
 ### Mail
 
 | Method | Path | Auth | Description |

@@ -316,3 +316,14 @@ public sealed class MailTemplate
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 }
+
+public sealed class MailSnippet
+{
+    public Guid Id { get; set; }
+    public Guid MailAccountId { get; set; }
+    public string? Title { get; set; }
+    public string Text { get; set; } = "";
+    public int SortOrder { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public DateTime UpdatedAt { get; set; }
+}

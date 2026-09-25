@@ -41,6 +41,9 @@ public static class AuditActions
     public const string TemplateCreated = "template.created";
     public const string TemplateUpdated = "template.updated";
     public const string TemplateDeleted = "template.deleted";
+    public const string SnippetCreated = "snippet.created";
+    public const string SnippetUpdated = "snippet.updated";
+    public const string SnippetDeleted = "snippet.deleted";
     // Stored values predate the dotted naming and are kept so existing audit rows stay comparable.
     public const string RuntimeSettingsUpdated = "runtime_settings_updated";
 }

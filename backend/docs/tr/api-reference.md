@@ -125,6 +125,22 @@ olmalı; her biri gönderimdeki sınırla (`MaxSendBodyChars`) sınırlıdır. D
 hataları `name`, `subject` veya `body` anahtarlı 400 validation problem döner. Başka
 hesabın şablon id'si 404 döner. Şablonlar hesapla birlikte silinir.
 
+### Snippets
+
+| Metot | Yol | Yetki | Açıklama |
+|---|---|---|---|
+| GET | `/api/snippets` | bearer | Hazır metinleri gösterim sırasıyla listeler (`sortOrder`, sonra oluşturulma zamanı) |
+| POST | `/api/snippets` | bearer | Hazır metin oluşturur (201); `sortOrder` yoksa sona eklenir |
+| PUT | `/api/snippets/{id}` | bearer | Hazır metni tümüyle günceller; `sortOrder` yoksa sırası korunur |
+| DELETE | `/api/snippets/{id}` | bearer | Hazır metni siler (204) |
+
+Gövde: `{title?, text, sortOrder?}`; yanıta `id`, `createdAt`, `updatedAt` eklenir.
+Hazır metinler konusuz, kısa ve tekrar kullanılabilir gövde metinleridir. `text`
+kırpılır ve 1-2000 karakterdir; `title` opsiyonel, kırpılır ve en fazla 100
+karakterdir; `sortOrder` 0-99999. Doğrulama hataları `text`, `title` veya
+`sortOrder` anahtarlı 400 validation problem döner. Başka hesabın hazır metin id'si
+404 döner. Hazır metinler hesapla birlikte silinir.
+
 ### Mail
 
 | Metot | Yol | Yetki | Açıklama |

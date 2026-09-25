@@ -22,6 +22,7 @@ public sealed class PersistenceModelTests
     [InlineData(typeof(Domain.Entities.Attachment), typeof(Domain.Entities.MailAccount), DeleteBehavior.Cascade)]
     [InlineData(typeof(Domain.Entities.SyncState), typeof(Domain.Entities.MailAccount), DeleteBehavior.Cascade)]
     [InlineData(typeof(Domain.Entities.MailTemplate), typeof(Domain.Entities.MailAccount), DeleteBehavior.Cascade)]
+    [InlineData(typeof(Domain.Entities.MailSnippet), typeof(Domain.Entities.MailAccount), DeleteBehavior.Cascade)]
     [InlineData(typeof(Domain.Entities.AuditLog), typeof(Domain.Entities.MailAccount), DeleteBehavior.SetNull)]
     public void AccountOwnedEntities_HaveOwnershipForeignKeys(Type dependent, Type principal, DeleteBehavior expected)
     {
