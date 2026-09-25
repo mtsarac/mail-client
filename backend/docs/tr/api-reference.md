@@ -108,6 +108,23 @@ remote-first işlem servisini kullanır; işlemler sırayla çalışır, `stopPr
 sonraki kuralları atlar. Geçici hata maili sonraki sync için bekletir; bir mailin
 hatası diğerlerini engellemez.
 
+### Templates
+
+| Metot | Yol | Yetki | Açıklama |
+|---|---|---|---|
+| GET | `/api/templates` | bearer | Yazma şablonlarını ada göre sıralı listeler |
+| POST | `/api/templates` | bearer | Şablon oluşturur (201) |
+| PUT | `/api/templates/{id}` | bearer | Şablonu tümüyle günceller |
+| DELETE | `/api/templates/{id}` | bearer | Şablonu siler (204) |
+
+Gövde: `{name, subject?, bodyText?, bodyHtml?}`; yanıta `id`, `createdAt`, `updatedAt` eklenir.
+`name` kırpılır, 1-100 karakterdir ve hesap içinde büyük/küçük harf duyarsız
+benzersizdir (aksi halde 409 `template_name_taken`). `subject` kırpılır, tek satır ve
+en fazla 500 karakterdir (boş olabilir). `bodyText`/`bodyHtml`'den en az biri dolu
+olmalı; her biri gönderimdeki sınırla (`MaxSendBodyChars`) sınırlıdır. Doğrulama
+hataları `name`, `subject` veya `body` anahtarlı 400 validation problem döner. Başka
+hesabın şablon id'si 404 döner. Şablonlar hesapla birlikte silinir.
+
 ### Mail
 
 | Metot | Yol | Yetki | Açıklama |

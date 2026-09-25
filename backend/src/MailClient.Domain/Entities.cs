@@ -303,3 +303,16 @@ public sealed class Contact
     public string? DisplayName { get; set; }
     public DateTime CreatedAtUtc { get; set; }
 }
+
+public sealed class MailTemplate
+{
+    public Guid Id { get; set; }
+    public Guid MailAccountId { get; set; }
+    public string Name { get; set; } = "";
+    public string NormalizedName { get; set; } = "";
+    public string Subject { get; set; } = "";
+    public string? BodyText { get; set; }
+    public string? BodyHtml { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public DateTime UpdatedAt { get; set; }
+}

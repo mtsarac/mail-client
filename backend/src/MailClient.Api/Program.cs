@@ -355,6 +355,7 @@ app.MapMailFlagEndpoints();
 app.MapLabelEndpoints();
 app.MapRuleEndpoints();
 app.MapContactEndpoints();
+app.MapTemplateEndpoints();
 app.MapScheduledSendEndpoints();
 app.MapConversationEndpoints();
 app.MapDeviceEndpoints();

@@ -106,6 +106,23 @@ applies only to Inbox. Mail actions reuse the remote-first mail operation servic
 actions run in order and `stopProcessing` skips later rules. A transient failure
 leaves the mail pending for the next sync; one mail's failure never blocks the rest.
 
+### Templates
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/api/templates` | bearer | List compose templates, ordered by name |
+| POST | `/api/templates` | bearer | Create a template (201) |
+| PUT | `/api/templates/{id}` | bearer | Replace a template |
+| DELETE | `/api/templates/{id}` | bearer | Delete a template (204) |
+
+Body: `{name, subject?, bodyText?, bodyHtml?}`; response adds `id`, `createdAt`, `updatedAt`.
+`name` is trimmed, 1-100 characters and unique per account case-insensitively
+(otherwise 409 `template_name_taken`). `subject` is trimmed, single-line and at most
+500 characters (empty allowed). At least one of `bodyText`/`bodyHtml` must be
+non-blank; each is limited like send (`MaxSendBodyChars`). Validation failures return
+a 400 validation problem keyed by `name`, `subject` or `body`. Another account's
+template id returns 404. Templates are deleted with their account.
+
 ### Mail
 
 | Method | Path | Auth | Description |

@@ -768,6 +768,28 @@ Henüz gönderilmemiş bir zamanlanmış gönderimi iptal eder, `204` döner.
 | 404 | `scheduled_send_not_found` | Kayıt yok ya da başka hesaba ait. |
 | 409 | `scheduled_send_already_sent` | Kayıt artık `Pending` değil (gönderildi/iptal edildi/başarısız oldu). |
 
+### `GET/POST /api/templates`, `PUT/DELETE /api/templates/{id}`
+**Auth:** Bearer
+
+Hesap düzeyindeki yazma şablonları; aynı hesaba bağlı tüm cihazlarda aynıdır. Liste ada göre sıralı gelir. Şablon hesaba aittir: çoklu hesapta şablonları **Gönderen** hesabın oturumuyla çek ve oluştur/düzenle.
+
+```json
+// GET 200 OK
+{
+  "items": [{
+    "id": "…",
+    "name": "Toplantı notu",
+    "subject": "Haftalık toplantı",
+    "bodyText": "Merhaba,\nNotlar ekte.",
+    "bodyHtml": null,
+    "createdAt": "2026-09-25T09:00:00Z",
+    "updatedAt": "2026-09-25T09:00:00Z"
+  }]
+}
+```
+
+`POST`/`PUT` gövdesi `{ "name", "subject", "bodyText", "bodyHtml" }`; `POST` `201` + şablon, `PUT` `200` + şablon, `DELETE` `204` döner. `name` kırpılır, 1-100 karakter ve hesap içinde büyük/küçük harf duyarsız benzersizdir; çakışmada `409 template_name_taken`. `subject` opsiyonel, tek satır, en fazla 500 karakter. `bodyText`/`bodyHtml`'den en az biri dolu olmalı, her biri gönderimdeki gövde sınırını aşamaz. Doğrulama hatası `400` validation problem (`errors` anahtarları: `name`, `subject`, `body`). Başka hesabın şablon id'si `404`.
+
 ---
 
 ## 6. Konuşmalar
@@ -906,6 +928,7 @@ Her hata gövdesi `{ code, title, status, correlationId }` — bazılarında ek 
 | 409 | `delivery_unknown` | Gönderim sonucu belirsiz — otomatik retry yapma. |
 | 409 | `mail_account_needs_reauthentication` / `credential_missing` | Saklı kimlik bilgisi geçersiz/yok → `reconnect` (OAuth ise OAuth'u yeniden çalıştır). |
 | 409 | `mail_folder_unavailable` | Klasör sunucudan silinmiş. |
+| 409 | `template_name_taken` | Hesapta aynı adlı (büyük/küçük harf duyarsız) bir şablon zaten var. |
 | 409 | `scheduled_send_already_sent` | Zamanlanmış gönderim artık `Pending` değil. |
 | 429 | — | Hız sınırı aşıldı (dk. başına 60 istek); gövde yok. |
 | 502 | `mail_move_failed` | Klasör değiştiren mail işlemi (trash/restore/archive/spam/not-spam/move) sunucu tarafında başarısız. |

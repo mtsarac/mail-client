@@ -38,6 +38,9 @@ public static class AuditActions
     public const string ContactCreated = "contact.created";
     public const string ContactUpdated = "contact.updated";
     public const string ContactDeleted = "contact.deleted";
+    public const string TemplateCreated = "template.created";
+    public const string TemplateUpdated = "template.updated";
+    public const string TemplateDeleted = "template.deleted";
     // Stored values predate the dotted naming and are kept so existing audit rows stay comparable.
     public const string RuntimeSettingsUpdated = "runtime_settings_updated";
 }

@@ -31,6 +31,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<MailSnooze> MailSnoozes => Set<MailSnooze>();
     public DbSet<PinnedMail> PinnedMails => Set<PinnedMail>();
     public DbSet<Contact> Contacts => Set<Contact>();
+    public DbSet<MailTemplate> MailTemplates => Set<MailTemplate>();
 
     protected override void OnModelCreating(ModelBuilder model)
     {
@@ -140,5 +141,10 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         model.Entity<Contact>().Property(x => x.NormalizedEmail).HasMaxLength(320);
         model.Entity<Contact>().Property(x => x.DisplayName).HasMaxLength(250);
         model.Entity<Contact>().HasOne<MailAccount>().WithMany().HasForeignKey(x => x.MailAccountId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<MailTemplate>().HasIndex(x => new { x.MailAccountId, x.NormalizedName }).IsUnique();
+        model.Entity<MailTemplate>().Property(x => x.Name).HasMaxLength(100);
+        model.Entity<MailTemplate>().Property(x => x.NormalizedName).HasMaxLength(100);
+        model.Entity<MailTemplate>().Property(x => x.Subject).HasMaxLength(500);
+        model.Entity<MailTemplate>().HasOne<MailAccount>().WithMany().HasForeignKey(x => x.MailAccountId).OnDelete(DeleteBehavior.Cascade);
     }
 }
