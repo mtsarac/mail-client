@@ -300,6 +300,17 @@ public sealed class MailSnooze
     public Guid MailId { get; set; }
     public DateTime UntilUtc { get; set; }
 }
+public sealed class ReplyReminder
+{
+    public Guid Id { get; set; }
+    public Guid MailAccountId { get; set; }
+    public Guid MailId { get; set; }
+    public Guid? ConversationId { get; set; }
+    public DateTime DueAtUtc { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public ReplyReminderStatus Status { get; set; } = ReplyReminderStatus.Pending;
+    public DateTime? NotifiedAt { get; set; }
+}
 public sealed class PinnedMail
 {
     public Guid Id { get; set; }

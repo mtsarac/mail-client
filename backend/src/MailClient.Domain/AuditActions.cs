@@ -30,6 +30,8 @@ public static class AuditActions
     public const string ScheduledSendCreated = "scheduled-send.created";
     public const string ScheduledSendUpdated = "scheduled-send.updated";
     public const string ScheduledSendCancelled = "scheduled-send.cancelled";
+    public const string ReplyReminderCreated = "reply-reminder.created";
+    public const string ReplyReminderCancelled = "reply-reminder.cancelled";
     public const string LabelCreated = "label.created";
     public const string LabelUpdated = "label.updated";
     public const string LabelDeleted = "label.deleted";

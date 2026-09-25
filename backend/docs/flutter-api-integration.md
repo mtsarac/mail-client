@@ -331,7 +331,7 @@ Hesabın posta bildirim tercihleri; hesaba oturum açmış tüm cihazlarda geçe
 {"enabled":true,"inboxOnly":true,"privacy":"Limited","previewsAllowedByServer":true}
 ```
 
-`PUT` gövdesi: `{"enabled":true,"inboxOnly":false,"privacy":"Full"}`. `privacy`: `Full` (gönderen + konu + kısa metin önizlemesi), `Limited` (gönderen + konu, varsayılan), `Private` (yalnız "yeni posta"). Bilinmeyen `privacy` `400` validation problem döner. `previewsAllowedByServer: false` ise sunucu yöneticisi önizlemeyi kapatmıştır ve push'lar `Private` gider. `inboxOnly: false` Gönderilmiş/Taslaklar/Çöp/Spam dışındaki tüm senkronize klasörlerdeki yeni postayı bildirir. `enabled: false` yalnız `new_mail` ve `snooze_expired` push'larını durdurur.
+`PUT` gövdesi: `{"enabled":true,"inboxOnly":false,"privacy":"Full"}`. `privacy`: `Full` (gönderen + konu + kısa metin önizlemesi), `Limited` (gönderen + konu, varsayılan), `Private` (yalnız "yeni posta"). Bilinmeyen `privacy` `400` validation problem döner. `previewsAllowedByServer: false` ise sunucu yöneticisi önizlemeyi kapatmıştır ve push'lar `Private` gider. `inboxOnly: false` Gönderilmiş/Taslaklar/Çöp/Spam dışındaki tüm senkronize klasörlerdeki yeni postayı bildirir. `enabled: false` yalnız `new_mail`, `snooze_expired` ve `reply_reminder` push'larını durdurur.
 
 ### `GET/POST /api/rules`, `PUT/DELETE /api/rules/{id}`
 **Auth:** Bearer
@@ -949,6 +949,40 @@ Query: `includeTrash=false` Çöp ve Spam klasörlerindeki mesajları dışarıd
 }
 ```
 
+### Yanıt hatırlatıcıları (reply reminders)
+**Auth:** Bearer
+
+Gönderilmiş bir postaya yanıt gelmezse belirtilen zamanda push ile hatırlatır. Hesap kapsamlıdır; posta başka hesaba aitse `404` döner.
+
+```json
+// İstek — POST /api/mails/{id}/reply-reminder
+{ "dueAtUtc": "2026-09-28T09:00:00Z" }
+```
+
+`POST` tek nesne döner (`200 OK`); `GET /api/reply-reminders` aynı nesnelerin `{ "items": [...] }` sarılmış halini döner (`dueAtUtc` artan sırada, sayfalama yok):
+
+```json
+{
+  "id": "…", "mailId": "…", "conversationId": "…",
+  "dueAtUtc": "…", "createdAt": "…", "status": "Pending", "notifiedAt": null,
+  "subject": "…", "recipient": "alici@example.com", "sentAt": "…"
+}
+```
+
+| Uç | Anlamı |
+|---|---|
+| `POST /api/mails/{id}/reply-reminder` | Hatırlatıcı kur/değiştir. Bekleyen kayıt varsa zamanı güncellenir. |
+| `GET /api/reply-reminders` | Bekleyen hatırlatıcılar. |
+| `DELETE /api/mails/{id}/reply-reminder` | İptal; kayıt yoksa/yabancıysa da `204`. |
+
+| Durum | code | Anlamı |
+|---|---|---|
+| 400 | `reply_reminder_in_past` | `dueAtUtc` gelecekte değil. |
+| 409 | `reply_reminder_already_replied` | Posta zaten yanıtlanmış. |
+| 422 | `reply_reminder_requires_sent_mail` | Yalnız Gönderilmiş klasöründeki (veya gönderen adresi hesaba ait, Taslaklar dışı) posta. |
+
+> Zamanı gelen hatırlatıcı sunucuda 30 saniyede bir taranır; yanıt gelmişse sessizce kapanır, gelmemişse posta başına bir kez `reply_reminder` push'u gönderilir. Çöp/Spam'deki posta için push gönderilmez.
+
 ---
 
 ## 8. Cihaz & push bildirimleri
@@ -986,26 +1020,28 @@ Aynı `token` tekrar gönderilirse güncellenir (upsert) — her uygulama açıl
 
 ### Push (FCM) veri şeması
 
-`firebase_messaging` ile alınan bildirimin `data` alanı. Kimliklerin yanında yalnız `new_mail`/`snooze_expired` için ve hesabın `privacy` ayarının izin verdiği ölçüde gösterim metni gelir; mail gövdesi/HTML asla eklenmez.
+`firebase_messaging` ile alınan bildirimin `data` alanı. Kimliklerin yanında yalnız `new_mail`/`snooze_expired`/`reply_reminder` için ve hesabın `privacy` ayarının izin verdiği ölçüde gösterim metni gelir; mail gövdesi/HTML asla eklenmez.
 
 ```json
 {
-  "type": "new_mail",  // | "snooze_expired" | "mail_state_changed" | "account_reauthentication_required" | "sync_error"
+  "type": "new_mail",  // | "snooze_expired" | "reply_reminder" | "mail_state_changed" | "account_reauthentication_required" | "sync_error"
   "accountId": "…",
   "mailId": "…",          // varsa
   "conversationId": "…",  // varsa
   "folderId": "…",        // varsa
   "operation": "trash",   // mail_state_changed için: read/star/trash/move/…
-  "privacy": "limited",   // new_mail/snooze_expired: full | limited | private
-  "sender": "…",          // limited/full
+  "privacy": "limited",   // new_mail/snooze_expired/reply_reminder: full | limited | private
+  "sender": "…",          // new_mail/snooze_expired, limited/full
+  "recipient": "…",       // reply_reminder, limited/full (alıcı adresi)
   "subject": "…",         // limited/full
   "preview": "…"          // yalnız full; en fazla ~140 karakter düz metin
 }
 ```
 
-- `new_mail` ve `snooze_expired` Android'de **yalnız veri** mesajıdır (`notification` bloğu yok, yüksek öncelik): uygulama bildirimi kendisi çizer ve hızlı eylemleri (`POST /api/mails/{id}/read|archive|trash`, Yanıtla) ekler. iOS'ta aynı metin APNs uyarısı olarak gelir. Diğer tipler önceki gibi davranır.
+- `new_mail`, `snooze_expired` ve `reply_reminder` Android'de **yalnız veri** mesajıdır (`notification` bloğu yok, yüksek öncelik): uygulama bildirimi kendisi çizer ve hızlı eylemleri (`POST /api/mails/{id}/read|archive|trash`, Yanıtla) ekler. iOS'ta aynı metin APNs uyarısı olarak gelir. Diğer tipler önceki gibi davranır.
 - `new_mail`, sunucu kuralları çalıştıktan sonra gönderilir; kuralın bildirilen klasörlerden çıkardığı veya okundu yaptığı posta bildirilmez.
 - `snooze_expired`: süresi dolan erteleme sunucuda sonlandırılır (`GET /api/mails/snoozed` artık içermez) ve posta başına bir kez gönderilir; iptal edilen/ileri alınan erteleme uyanmaz. Çöp/Spam'deki posta için push gönderilmez.
+- `reply_reminder`: başlık "No reply yet"; limited/full gövdede `alıcı: konu` (full ise konu + kısa metin). Posta başına bir kez; yanıt gelirse/silinirse push gönderilmez, Çöp/Spam'deki posta için gönderilmez.
 - `mail_state_changed` `operation` read/archive/trash/spam/move/delete ise o mailin cihazda gösterilen bildirimini kaldır.
 
 > Bildirim geldiğinde mail durumunu bildirimden okuma — `mailId` ile `GET /api/mails/{id}` çağırıp güncel/doğrulanmış veriyi çek.
@@ -1027,6 +1063,7 @@ Her hata gövdesi `{ code, title, status, correlationId }` — bazılarında ek 
 | 400 | `invalid_email` / `invalid_recipient` / `recipient_required` / `body_required` / `body_too_large` / `too_many_attachments` / `attachment_too_large` / `invalid_mail_header` / `message_not_constructible` / `manual_setup_invalid` | Form/gövde doğrulaması. |
 | 400 | `idempotency_key_required` / `idempotency_key_too_long` | Gönderim uçları. |
 | 400 | `scheduled_send_in_past` | Zamanlanmış gönderimde `sendAtUtc` şu andan ileride değil. |
+| 400 | `reply_reminder_in_past` | Yanıt hatırlatıcıda `dueAtUtc` şu andan ileride değil. |
 | 403 | `email_not_allowlisted` | Prod erişim listesi açık, email listede değil — bkz. [altta](#11-prod-erişim-listesi-allowlist). |
 | 403 | `mail_account_disabled` | Hesap devre dışı bırakıldı. |
 | 403 | `provider_disabled` / `provider_new_accounts_disabled` / `provider_existing_accounts_disabled` / `authentication_method_disabled` | Sunucu tarafı politika: sağlayıcı/yöntem kapalı ("şu an desteklenmiyor"). |
@@ -1040,6 +1077,7 @@ Her hata gövdesi `{ code, title, status, correlationId }` — bazılarında ek 
 | 422 | `drafts_folder_unavailable` / `trash_folder_unavailable` | Hesapta gerekli özel klasör yok. |
 | 422 | `mail_not_draft` | Taslak id'si artık geçerli değil (gönderildi/güncellendi/silindi). |
 | 422 | `mail_operation_not_supported` | Mail durum/taşıma uçlarında desteklenmeyen işlem (örn. trash'lenmemiş maile `restore`, Trash/Junk dışındaki maile `delete`). |
+| 422 | `reply_reminder_requires_sent_mail` | Yanıt hatırlatıcı yalnız gönderilmiş postaya kurulur. |
 | 409 | `mail_account_already_exists` | Email zaten bağlı. |
 | 409 | `mail_operation_conflict` | Modern `POST /api/mails/{id}/{action}` (ve `/move`, `/copy`) uçlarında klasör durumu değişti, yeniden senkronize et. |
 | 409 | `mailbox_changed` | Yalnızca eski `PATCH /api/mails/{id}/read` uçlarına özgü — aynı anlam, farklı kod. |
@@ -1049,6 +1087,7 @@ Her hata gövdesi `{ code, title, status, correlationId }` — bazılarında ek 
 | 409 | `mail_folder_unavailable` | Klasör sunucudan silinmiş. |
 | 409 | `template_name_taken` | Hesapta aynı adlı (büyük/küçük harf duyarsız) bir şablon zaten var. |
 | 409 | `scheduled_send_already_sent` | Zamanlanmış gönderim artık `Pending` değil. |
+| 409 | `reply_reminder_already_replied` | Posta zaten yanıtlanmış. |
 | 429 | — | Hız sınırı aşıldı (dk. başına 60 istek); gövde yok. |
 | 502 | `mail_move_failed` | Klasör değiştiren mail işlemi (trash/restore/archive/spam/not-spam/move) sunucu tarafında başarısız. |
 | 502 | `mail_delete_failed` | Kalıcı silme (`delete`) sunucu tarafında başarısız; yerel kayıt korunur, tekrar dene. |
@@ -1071,7 +1110,7 @@ Tüm enum değerleri JSON'da **string** olarak serileşir (sayısal değil).
 | `AuthenticationMethod` | `Password · AppSpecificPassword · OAuth2` |
 | `MailFolderType` | `Inbox · Sent · Drafts · Trash · Junk · Archive · Custom · Unknown` |
 | `MailAccountStatus` | `Active · NeedsReauthentication · ConnectionError · Disabled` |
-| `ScheduledSendStatus` | `Pending · Sent · Cancelled · Failed` |
+| `ReplyReminderStatus` | `Pending · Replied · Notified · Cancelled` |
 
 > `MailAccountStatus.NeedsReauthentication` gördüğünde kullanıcıyı `/api/account/reconnect` ekranına yönlendir; `Disabled` gördüğünde tüm istekler `401`/`403` döner, uygulama çıkışı yaptır.
 

@@ -29,6 +29,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<MailRule> MailRules => Set<MailRule>();
     public DbSet<MailLabelAssignment> MailLabelAssignments => Set<MailLabelAssignment>();
     public DbSet<MailSnooze> MailSnoozes => Set<MailSnooze>();
+    public DbSet<ReplyReminder> ReplyReminders => Set<ReplyReminder>();
     public DbSet<PinnedMail> PinnedMails => Set<PinnedMail>();
     public DbSet<Contact> Contacts => Set<Contact>();
     public DbSet<MailTemplate> MailTemplates => Set<MailTemplate>();
@@ -138,6 +139,10 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         model.Entity<MailSnooze>().HasIndex(x => new { x.MailAccountId, x.MailId }).IsUnique();
         model.Entity<MailSnooze>().HasOne<MailAccount>().WithMany().HasForeignKey(x => x.MailAccountId).OnDelete(DeleteBehavior.Cascade);
         model.Entity<MailSnooze>().HasOne<MailClient.Domain.Entities.Mail>().WithMany().HasForeignKey(x => x.MailId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<ReplyReminder>().HasIndex(x => new { x.MailAccountId, x.MailId }).IsUnique();
+        model.Entity<ReplyReminder>().HasIndex(x => new { x.Status, x.DueAtUtc });
+        model.Entity<ReplyReminder>().HasOne<MailAccount>().WithMany().HasForeignKey(x => x.MailAccountId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<ReplyReminder>().HasOne<MailClient.Domain.Entities.Mail>().WithMany().HasForeignKey(x => x.MailId).OnDelete(DeleteBehavior.Cascade);
         model.Entity<PinnedMail>().HasIndex(x => new { x.MailAccountId, x.MailId }).IsUnique();
         model.Entity<PinnedMail>().HasOne<MailAccount>().WithMany().HasForeignKey(x => x.MailAccountId).OnDelete(DeleteBehavior.Cascade);
         model.Entity<PinnedMail>().HasOne<MailClient.Domain.Entities.Mail>().WithMany().HasForeignKey(x => x.MailId).OnDelete(DeleteBehavior.Cascade);

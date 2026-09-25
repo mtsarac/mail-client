@@ -118,6 +118,7 @@ public sealed class RuntimePushSettings
     public bool ReauthenticationEnabled { get; init; } = true;
     public bool SyncErrorEnabled { get; init; } = true;
     public bool SnoozeExpiredEnabled { get; init; } = true;
+    public bool ReplyReminderEnabled { get; init; } = true;
     public bool IncludeMailPreview { get; init; } = true;
 }
 

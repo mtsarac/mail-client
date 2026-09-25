@@ -51,15 +51,24 @@ subject, short text preview), `Limited` (sender and subject; default) or
 `Private` (generic text only). When the operator disables mail previews,
 `previewsAllowedByServer` is false and pushes are sent as `Private`.
 `inboxOnly: false` notifies new mail in every synced folder except Sent,
-Drafts, Trash and Junk. `enabled: false` stops new-mail and snooze wake-up
-pushes only; account alerts (reauthentication) are still sent.
+Drafts, Trash and Junk. `enabled: false` stops new-mail, snooze wake-up and
+reply-reminder pushes only; account alerts (reauthentication) are still sent.
 
 New-mail pushes are sent after server rules ran, so mail a rule moved out of
-the notified folders or marked read is not announced. `new_mail` and
-`snooze_expired` are data-only on Android (the app renders them with quick
-actions) and carry an APNs alert on iOS. Due snoozes are ended on the server
-every 30 seconds; each one wakes once, and a snooze cancelled or moved to a
-later time before it is claimed never wakes.
+the notified folders or marked read is not announced. `new_mail`,
+`snooze_expired` and `reply_reminder` are data-only on Android (the app
+renders them with quick actions) and carry an APNs alert on iOS. Due snoozes
+are ended on the server every 30 seconds; each one wakes once, and a snooze
+cancelled or moved to a later time before it is claimed never wakes. Reply
+reminders (`POST /api/mails/{id}/reply-reminder`, `GET /api/reply-reminders`,
+`DELETE /api/mails/{id}/reply-reminder`) watch sent mail for a reply: one
+pending reminder per mail, rescheduling overwrites the due time, and the
+server checks due reminders every 30 seconds — pushing `reply_reminder` once
+(`No reply yet`, recipient + subject per privacy) unless the mail was
+answered, moved to Trash/Junk, or cancelled. Past due times are rejected
+(`reply_reminder_in_past`), non-sent mail is rejected
+(`reply_reminder_requires_sent_mail`), already-answered mail is rejected
+(`reply_reminder_already_replied`).
 
 ### OAuth
 

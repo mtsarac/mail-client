@@ -52,15 +52,24 @@ varsayılan) veya `Private` (yalnız genel metin). Sunucu yöneticisi posta
 önizlemelerini kapattıysa `previewsAllowedByServer` false olur ve push'lar
 `Private` gönderilir. `inboxOnly: false` Gönderilmiş, Taslaklar, Çöp ve Spam
 dışındaki tüm senkronize klasörlerdeki yeni postayı bildirir. `enabled: false`
-yalnız yeni posta ve erteleme bitişi push'larını durdurur; hesap uyarıları
-(yeniden kimlik doğrulama) yine gönderilir.
+yalnız yeni posta, erteleme bitişi ve yanıt hatırlatıcı push'larını durdurur;
+hesap uyarıları (yeniden kimlik doğrulama) yine gönderilir.
 
 Yeni posta push'u sunucu kuralları çalıştıktan sonra gönderilir; kuralın
 bildirilen klasörlerden çıkardığı veya okundu yaptığı posta bildirilmez.
-`new_mail` ve `snooze_expired` Android'de yalnız veri olarak gelir (uygulama
-hızlı eylemlerle gösterir), iOS'ta APNs uyarısı taşır. Süresi dolan
-ertelemeler sunucuda 30 saniyede bir sonlandırılır; her biri bir kez uyanır,
-sahiplenilmeden önce iptal edilen veya ileri alınan erteleme hiç uyanmaz.
+`new_mail`, `snooze_expired` ve `reply_reminder` Android'de yalnız veri olarak
+gelir (uygulama hızlı eylemlerle gösterir), iOS'ta APNs uyarısı taşır. Süresi
+dolan ertelemeler sunucuda 30 saniyede bir sonlandırılır; her biri bir kez
+uyanır, sahiplenilmeden önce iptal edilen veya ileri alınan erteleme hiç
+uyanmaz. Yanıt hatırlatıcılar (`POST /api/mails/{id}/reply-reminder`,
+`GET /api/reply-reminders`, `DELETE /api/mails/{id}/reply-reminder`)
+gönderilmiş postanın yanıtını izler: posta başına tek bekleyen hatırlatıcı,
+yeniden kurma zamanı günceller, sunucu zamanı gelenleri 30 saniyede bir tarar
+— yanıt gelmediyse, Çöp/Spam'e taşınmadıysa ve iptal edilmediyse posta başına
+bir kez `reply_reminder` push'u (`No reply yet`, gizliliğe göre alıcı + konu)
+gönderir. Geçmiş zaman reddedilir (`reply_reminder_in_past`), gönderilmemiş
+posta reddedilir (`reply_reminder_requires_sent_mail`), yanıtlanmış posta
+reddedilir (`reply_reminder_already_replied`).
 
 ### OAuth
 
