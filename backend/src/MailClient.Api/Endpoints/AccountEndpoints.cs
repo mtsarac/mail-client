@@ -4,6 +4,7 @@ using MailClient.Application;
 using MailClient.Application.Accounts;
 using MailClient.Application.Discovery;
 using MailClient.Application.Mail;
+using MailClient.Application.Runtime;
 using MailClient.Domain;
 using MailClient.Infrastructure.Accounts;
 using MailClient.Infrastructure.Authentication;
@@ -19,6 +20,8 @@ namespace MailClient.Api.Endpoints;
 public sealed record AccountSignatureRequest(string? Signature);
 public sealed record AccountSyncScopeRequest(MailClient.Domain.Enums.FolderSyncScope Scope, IReadOnlyList<Guid>? FolderIds);
 public sealed record AccountSyncScopeResponse(MailClient.Domain.Enums.FolderSyncScope Scope, IReadOnlyList<Guid> SyncedFolderIds);
+public sealed record AccountNotificationSettingsRequest(bool Enabled, bool InboxOnly, MailClient.Domain.Enums.NotificationPrivacy Privacy);
+public sealed record AccountNotificationSettingsResponse(bool Enabled, bool InboxOnly, MailClient.Domain.Enums.NotificationPrivacy Privacy, bool PreviewsAllowedByServer);
 
 public sealed record FolderSyncStatusResponse(
     Guid FolderId,
@@ -134,6 +137,28 @@ public static class AccountEndpoints
             .WithSummary("Choose which folders background sync follows for the current mailbox")
             .WithDescription("scope: InboxAndSent (default), AllFolders, or SelectedFolders. folderIds is required (1+ ids of this mailbox's available folders) for SelectedFolders and must be omitted otherwise. Folders discovered later follow the scope: AllFolders includes them, SelectedFolders does not. Folders opened by the user are still synced on demand; newly included folders are picked up by the next periodic sync pass.")
             .Produces<AccountSyncScopeResponse>().ProducesValidationProblem().Produces(404);
+        api.MapGet("/account/notification-settings", async (ICurrentMailAccount current, AppDbContext db, IRuntimeSettingsStore runtime, CancellationToken ct) =>
+        {
+            var account = await db.MailAccounts.AsNoTracking().SingleOrDefaultAsync(x => x.Id == current.MailAccountId, ct);
+            return account is null ? Results.NotFound() : Results.Ok(await NotificationSettingsAsync(account, runtime, ct));
+        }).WithTags("Account").WithName("GetAccountNotificationSettings").WithSummary("Mail notification preferences of the current mailbox")
+            .WithDescription("Shared by every device signed into this mailbox. `PreviewsAllowedByServer` is false when the server operator disabled mail previews; pushes are then sent as Private regardless of `Privacy`.")
+            .Produces<AccountNotificationSettingsResponse>().Produces(404);
+        api.MapPut("/account/notification-settings", async (AccountNotificationSettingsRequest request, ICurrentMailAccount current, AppDbContext db, IRuntimeSettingsStore runtime, CancellationToken ct) =>
+        {
+            if (!Enum.IsDefined(request.Privacy))
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["privacy"] = ["Unknown notification privacy."] });
+            var account = await db.MailAccounts.SingleOrDefaultAsync(x => x.Id == current.MailAccountId, ct);
+            if (account is null) return Results.NotFound();
+            account.NotificationsEnabled = request.Enabled;
+            account.NotifyInboxOnly = request.InboxOnly;
+            account.NotificationPrivacy = request.Privacy;
+            account.UpdatedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync(ct);
+            return Results.Ok(await NotificationSettingsAsync(account, runtime, ct));
+        }).WithTags("Account").WithName("UpdateAccountNotificationSettings").WithSummary("Change mail notification preferences of the current mailbox")
+            .WithDescription("enabled: send new-mail and snooze wake-up pushes for this mailbox. inboxOnly: notify only for Inbox (default) or for every synced folder except Sent, Drafts, Trash and Junk. privacy: Full (sender, subject, short preview), Limited (sender, subject; default) or Private (generic text only). Device registration is unaffected.")
+            .Produces<AccountNotificationSettingsResponse>().ProducesValidationProblem().Produces(404);
         api.MapPost("/account/reconnect", async (AccountReconnectRequest request, ICurrentMailAccount current, AccountConnectionService service, AuditLogger audit, CorrelationContext correlation, CancellationToken ct) =>
         {
             var account = await service.ReconnectAsync(current.MailAccountId, request, ct);
@@ -197,6 +222,10 @@ public static class AccountEndpoints
 
     private static async Task<IReadOnlyList<Guid>> SyncedFolderIdsAsync(AppDbContext db, Guid accountId, CancellationToken ct) =>
         await db.MailFolders.AsNoTracking().Where(x => x.MailAccountId == accountId && x.IsSyncEnabled && x.IsAvailable).Select(x => x.Id).ToListAsync(ct);
+
+    private static async Task<AccountNotificationSettingsResponse> NotificationSettingsAsync(MailClient.Domain.Entities.MailAccount account, IRuntimeSettingsStore runtime, CancellationToken ct) =>
+        new(account.NotificationsEnabled, account.NotifyInboxOnly, account.NotificationPrivacy,
+            (await runtime.GetAsync(ct)).Settings.Push.IncludeMailPreview);
 
     private static async Task<IResult> Audited(AuditLogger audit, Guid accountId, Guid sessionId, CorrelationContext correlation, CancellationToken ct)
     {

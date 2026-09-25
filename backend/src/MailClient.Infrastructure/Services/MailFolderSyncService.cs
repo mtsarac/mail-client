@@ -166,7 +166,7 @@ public sealed class MailFolderSyncService(
             : (uint)Math.Min(state.NextUidScanStart - 1, (long)uint.MaxValue);
         var result = await remote.SearchNewAsync(afterUid, budget, cancellationToken);
         var batch = result.Uids.OrderBy(item => item.Id).Take(budget).ToList();
-        var newMail = await ImportAsync(accountId, folderId, state, remote, batch, true, cancellationToken);
+        await ImportAsync(accountId, folderId, state, remote, batch, true, cancellationToken);
 
         state.UidValidity = remote.UidValidity;
         state.LastNewMailSyncAt = DateTime.UtcNow;
@@ -176,9 +176,6 @@ public sealed class MailFolderSyncService(
         await BackfillOlderAsync(accountId, folderId, state, remote, budget - batch.Count, cancellationToken);
         await ReconcileFlagsIfDueAsync(folderId, state, remote, cancellationToken);
         await db.SaveChangesAsync(cancellationToken);
-
-        if (newMail.Count > 0 && localFolder.FolderType == MailFolderType.Inbox)
-            await NotifyNewMailAsync(accountId, folderId, newMail, cancellationToken);
     }
 
     internal async Task<int> ImportRemoteMatchesAsync(
@@ -249,16 +246,16 @@ public sealed class MailFolderSyncService(
         state.BackfillNextUid = page.NextHighExclusive;
     }
 
-    private async Task<List<NewMailCandidate>> ImportAsync(
+    private async Task<List<Guid>> ImportAsync(
         Guid accountId,
         Guid folderId,
         SyncState state,
         IRemoteMailFolder remote,
         IReadOnlyList<UniqueId> batch,
-        bool evaluateRules,
+        bool isNewMail,
         CancellationToken cancellationToken)
     {
-        var imported = new List<NewMailCandidate>();
+        var imported = new List<Guid>();
         if (batch.Count == 0)
             return imported;
 
@@ -278,48 +275,14 @@ public sealed class MailFolderSyncService(
         foreach (var uid in batch)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var candidate = await SyncOneAsync(accountId, folderId, state, remote, uid,
-                summaries.GetValueOrDefault(uid.Id), committedUids, skippedUids, evaluateRules, cancellationToken);
-            if (candidate is not null)
-                imported.Add(candidate);
+            var mailId = await SyncOneAsync(accountId, folderId, state, remote, uid,
+                summaries.GetValueOrDefault(uid.Id), committedUids, skippedUids, isNewMail, cancellationToken);
+            if (mailId is { } id)
+                imported.Add(id);
         }
 
         return imported;
     }
-
-    private async Task NotifyNewMailAsync(
-        Guid accountId,
-        Guid folderId,
-        IReadOnlyList<NewMailCandidate> candidates,
-        CancellationToken cancellationToken)
-    {
-        foreach (var candidate in candidates)
-        {
-            try
-            {
-                await push.NotifyAsync(
-                    new PushEvent(
-                        PushEventType.NewMail,
-                        accountId,
-                        candidate.MailId,
-                        candidate.ConversationId,
-                        folderId,
-                        SenderPreview: string.IsNullOrWhiteSpace(candidate.FromDisplayName) ? candidate.FromAddress : candidate.FromDisplayName,
-                        SubjectPreview: candidate.Subject),
-                    cancellationToken);
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                logger.LogWarning(ex, "Push notification failed. Sync state is unaffected.");
-            }
-        }
-    }
-
-    private sealed record NewMailCandidate(Guid MailId, string FromAddress, string FromDisplayName, string Subject, Guid? ConversationId);
 
     private static long CursorAfter(uint scannedMaxUid) =>
         scannedMaxUid == uint.MaxValue ? (long)uint.MaxValue + 1 : (long)scannedMaxUid + 1;
@@ -483,7 +446,7 @@ public sealed class MailFolderSyncService(
             || Deleted != remote.Deleted;
     }
 
-    private async Task<NewMailCandidate?> SyncOneAsync(
+    private async Task<Guid?> SyncOneAsync(
         Guid accountId,
         Guid folderId,
         SyncState state,
@@ -492,7 +455,7 @@ public sealed class MailFolderSyncService(
         RemoteSummary? summary,
         HashSet<uint> committedUids,
         HashSet<uint> skippedUids,
-        bool evaluateRules,
+        bool isNewMail,
         CancellationToken cancellationToken)
     {
         if (committedUids.Contains(uid.Id) || skippedUids.Contains(uid.Id))
@@ -623,7 +586,8 @@ public sealed class MailFolderSyncService(
             }
 
             mail.HasAttachments = mail.Attachments.Count > 0;
-            mail.RulePending = evaluateRules;
+            mail.RulePending = isNewMail;
+            mail.NotificationPending = isNewMail;
 
             db.Mails.Add(mail);
             state.LastUid = Math.Max(state.LastUid, uid.Id);
@@ -640,9 +604,9 @@ public sealed class MailFolderSyncService(
             // The committed row owns its attachment files now; no later failure may delete them.
             createdPaths.Clear();
             await AssignConversationAsync(mail.Id, cancellationToken);
-            var candidate = new NewMailCandidate(mail.Id, mail.FromAddress, mail.FromDisplayName, mail.Subject, mail.ConversationId);
+            var importedId = mail.Id;
             Detach(mail);
-            return candidate;
+            return importedId;
         }
         catch (OperationCanceledException)
         {

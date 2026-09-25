@@ -147,7 +147,8 @@ builder.Services.AddScoped<IMailTransport, MailKitMailTransport>();
 builder.Services.AddScoped<IMailFolderClient, MailFolderClient>();
 builder.Services.AddScoped<MailFolderSyncService>();
 builder.Services.AddScoped<MailRuleEvaluator>();
-builder.Services.AddScoped<ISyncExecutor, RuleEvaluatingSyncExecutor>();
+builder.Services.AddScoped<NewMailNotifier>();
+builder.Services.AddScoped<ISyncExecutor, NewMailSyncExecutor>();
 builder.Services.AddScoped<InlineFolderSync>();
 builder.Services.AddScoped<MailReadService>();
 builder.Services.AddScoped<MailSearchService>();
@@ -199,6 +200,7 @@ if (!builder.Environment.IsEnvironment("Test"))
     builder.Services.AddHostedService<MailSyncService>();
     builder.Services.AddHostedService<AllowlistReconciliationService>();
     builder.Services.AddHostedService<ScheduledSendDispatcher>();
+    builder.Services.AddHostedService<SnoozeWakeupService>();
 }
 var storageOptions = builder.Configuration.GetSection("Storage").Get<StorageOptions>() ?? new StorageOptions();
 storageOptions.Validate();

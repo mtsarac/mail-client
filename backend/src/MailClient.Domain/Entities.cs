@@ -25,6 +25,9 @@ public sealed class MailAccount
     /// <summary>User-authored text appended to outgoing mail from this account. Null/empty means no signature.</summary>
     public string? Signature { get; set; }
     public FolderSyncScope FolderSyncScope { get; set; } = FolderSyncScope.InboxAndSent;
+    public bool NotificationsEnabled { get; set; } = true;
+    public bool NotifyInboxOnly { get; set; } = true;
+    public NotificationPrivacy NotificationPrivacy { get; set; } = NotificationPrivacy.Limited;
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
     public DateTime? LastAuthenticatedAt { get; set; }
@@ -116,6 +119,7 @@ public sealed class Mail
     public bool Recent { get; set; }
     public bool HasAttachments { get; set; }
     public bool RulePending { get; set; }
+    public bool NotificationPending { get; set; }
     public DateTime SentAt { get; set; }
     public DateTime ReceivedAt { get; set; }
     public DateTime InternalDate { get; set; }

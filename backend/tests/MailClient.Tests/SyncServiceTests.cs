@@ -130,7 +130,7 @@ public sealed class SyncServiceTests
     }
 
     [Fact]
-    public async Task NewInboxMail_NotifiesWithOwningAccount()
+    public async Task NewInboxMail_IsQueuedForRulesAndNotification_WithoutPushingDuringSync()
     {
         await using var db = CreateDb();
         var (accountId, folderId) = await SeedFolderAsync(db);
@@ -143,8 +143,11 @@ public sealed class SyncServiceTests
 
         await service.SyncFolderCoreAsync(accountId, folderId, remote, CancellationToken.None);
 
-        var notification = Assert.Single(push.Notifications);
-        Assert.Equal(accountId, notification.MailAccountId);
+        Assert.Empty(push.Notifications);
+        var stored = await db.Mails.SingleAsync();
+        Assert.Equal(accountId, stored.MailAccountId);
+        Assert.True(stored.RulePending);
+        Assert.True(stored.NotificationPending);
     }
 
     [Theory]

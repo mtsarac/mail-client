@@ -12,3 +12,4 @@ public enum MailReconciliationState { None, Pending }
 public enum SyncFailureCategory { Transient, Authentication, Configuration, Permanent }
 public enum ScheduledSendStatus { Pending, Sent, Cancelled, Failed, DeliveryUnknown }
 public enum FolderSyncScope { InboxAndSent, AllFolders, SelectedFolders }
+public enum NotificationPrivacy { Full, Limited, Private }

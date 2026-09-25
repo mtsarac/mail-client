@@ -2,6 +2,7 @@ using System.Diagnostics;
 using MailClient.Application.Mail;
 using MailClient.Application.Observability;
 using MailClient.Application.Runtime;
+using MailClient.Domain.Enums;
 using MailClient.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -41,6 +42,20 @@ public sealed class FirebasePushNotificationService(
         if (!push.Enabled || !IsEventEnabled(push, pushEvent.Type))
             return;
 
+        var appRendered = IsMailNotification(pushEvent.Type);
+        var privacy = NotificationPrivacy.Private;
+        if (appRendered)
+        {
+            var preferences = await db.MailAccounts
+                .AsNoTracking()
+                .Where(account => account.Id == pushEvent.MailAccountId)
+                .Select(account => new { account.NotificationsEnabled, account.NotificationPrivacy })
+                .SingleOrDefaultAsync(cancellationToken);
+            if (preferences is null || !preferences.NotificationsEnabled)
+                return;
+            privacy = push.IncludeMailPreview ? preferences.NotificationPrivacy : NotificationPrivacy.Private;
+        }
+
         var tokens = await db.DeviceTokens
             .AsNoTracking()
             .Where(token => token.MailAccountId == pushEvent.MailAccountId)
@@ -49,14 +64,15 @@ public sealed class FirebasePushNotificationService(
         if (tokens.Count == 0)
             return;
 
-        var (title, body) = NotificationText(pushEvent, push.IncludeMailPreview);
-        var data = EventData(pushEvent);
+        var (title, body) = NotificationText(pushEvent, privacy);
+        var data = EventData(pushEvent, privacy);
         var started = Stopwatch.GetTimestamp();
         var results = await gateway.SendAsync(
             tokens.Select(token => new FirebaseRecipient(token.Id, token.Token)).ToList(),
             title,
             body,
             data,
+            appRendered,
             cancellationToken);
         var elapsed = Stopwatch.GetElapsedTime(started);
 
@@ -83,22 +99,36 @@ public sealed class FirebasePushNotificationService(
         PushEventType.MailStateChanged => push.MailStateChangedEnabled,
         PushEventType.AccountReauthenticationRequired => push.ReauthenticationEnabled,
         PushEventType.SyncError => push.SyncErrorEnabled,
+        PushEventType.SnoozeExpired => push.SnoozeExpiredEnabled,
         _ => false
     };
 
-    private static (string? Title, string? Body) NotificationText(PushEvent pushEvent, bool includePreview) => pushEvent.Type switch
-    {
-        PushEventType.NewMail when includePreview => (
-            string.IsNullOrWhiteSpace(pushEvent.SenderPreview) ? "New mail" : pushEvent.SenderPreview,
-            pushEvent.SubjectPreview ?? string.Empty),
-        PushEventType.NewMail => ("New mail", "You have a new message."),
-        PushEventType.MailStateChanged => (null, null),
-        PushEventType.AccountReauthenticationRequired => ("Mail account needs attention", "Reconnect your mail account to continue syncing."),
-        PushEventType.SyncError => ("Mail sync delayed", "Mail synchronization is having trouble. Open the app for details."),
-        _ => (null, null)
-    };
+    private static bool IsMailNotification(PushEventType type) =>
+        type is PushEventType.NewMail or PushEventType.SnoozeExpired;
 
-    private static IReadOnlyDictionary<string, string> EventData(PushEvent pushEvent)
+    private static (string? Title, string? Body) NotificationText(PushEvent pushEvent, NotificationPrivacy privacy)
+    {
+        var sender = string.IsNullOrWhiteSpace(pushEvent.SenderPreview) ? null : pushEvent.SenderPreview;
+        var subject = pushEvent.SubjectPreview ?? string.Empty;
+        var details = privacy == NotificationPrivacy.Full && !string.IsNullOrWhiteSpace(pushEvent.BodyPreview)
+            ? $"{subject}\n{pushEvent.BodyPreview}"
+            : subject;
+        return pushEvent.Type switch
+        {
+            PushEventType.NewMail when privacy != NotificationPrivacy.Private => (sender ?? "New mail", details),
+            PushEventType.NewMail => ("New mail", "You have a new message."),
+            PushEventType.SnoozeExpired when privacy != NotificationPrivacy.Private => (
+                "Snoozed mail is back",
+                sender is null ? details : $"{sender}: {details}"),
+            PushEventType.SnoozeExpired => ("Snoozed mail is back", "A snoozed message is back in your inbox."),
+            PushEventType.MailStateChanged => (null, null),
+            PushEventType.AccountReauthenticationRequired => ("Mail account needs attention", "Reconnect your mail account to continue syncing."),
+            PushEventType.SyncError => ("Mail sync delayed", "Mail synchronization is having trouble. Open the app for details."),
+            _ => (null, null)
+        };
+    }
+
+    private static IReadOnlyDictionary<string, string> EventData(PushEvent pushEvent, NotificationPrivacy privacy)
     {
         var data = new Dictionary<string, string>
         {
@@ -108,6 +138,7 @@ public sealed class FirebasePushNotificationService(
                 PushEventType.MailStateChanged => "mail_state_changed",
                 PushEventType.AccountReauthenticationRequired => "account_reauthentication_required",
                 PushEventType.SyncError => "sync_error",
+                PushEventType.SnoozeExpired => "snooze_expired",
                 _ => throw new InvalidOperationException("Unknown push event type.")
             },
             ["accountId"] = pushEvent.MailAccountId.ToString()
@@ -120,6 +151,17 @@ public sealed class FirebasePushNotificationService(
             data["folderId"] = folderId.ToString();
         if (!string.IsNullOrWhiteSpace(pushEvent.Operation))
             data["operation"] = pushEvent.Operation;
+        if (!IsMailNotification(pushEvent.Type))
+            return data;
+        data["privacy"] = privacy.ToString().ToLowerInvariant();
+        if (privacy == NotificationPrivacy.Private)
+            return data;
+        if (!string.IsNullOrWhiteSpace(pushEvent.SenderPreview))
+            data["sender"] = pushEvent.SenderPreview;
+        if (!string.IsNullOrWhiteSpace(pushEvent.SubjectPreview))
+            data["subject"] = pushEvent.SubjectPreview;
+        if (privacy == NotificationPrivacy.Full && !string.IsNullOrWhiteSpace(pushEvent.BodyPreview))
+            data["preview"] = pushEvent.BodyPreview;
         return data;
     }
 }

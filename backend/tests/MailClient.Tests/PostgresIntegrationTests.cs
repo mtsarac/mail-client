@@ -632,6 +632,53 @@ public sealed class PostgresIntegrationTests(PostgresFixture fixture)
         Assert.True(entry.TryGetProperty("lastSuccessfulSyncAt", out var lastSync) && lastSync.ValueKind != System.Text.Json.JsonValueKind.Null);
     }
 
+    [Fact]
+    public async Task SnoozeWakeup_SkipsRescheduledSnooze_AndConcurrentPassesNotifyOnce()
+    {
+        if (!IntegrationEnvironment.PostgresEnabled) return;
+        var accountId = await SeedAccountAsync();
+        MailSnooze rescheduled, due;
+        await using (var db = fixture.CreateDb())
+        {
+            var folderId = await SeedFolderAsync(db, accountId);
+            var rescheduledMail = Mail(accountId, folderId, 901);
+            var dueMail = Mail(accountId, folderId, 902);
+            db.Mails.AddRange(rescheduledMail, dueMail);
+            rescheduled = new MailSnooze { Id = Guid.NewGuid(), MailAccountId = accountId, MailId = rescheduledMail.Id, UntilUtc = DateTime.UtcNow.AddMinutes(-5) };
+            due = new MailSnooze { Id = Guid.NewGuid(), MailAccountId = accountId, MailId = dueMail.Id, UntilUtc = DateTime.UtcNow.AddMinutes(-1) };
+            db.MailSnoozes.AddRange(rescheduled, due);
+            await db.SaveChangesAsync();
+        }
+
+        await using (var db = fixture.CreateDb())
+        {
+            var stale = await db.MailSnoozes.AsNoTracking().Where(x => x.Id == rescheduled.Id).Select(x => x.UntilUtc).SingleAsync();
+            await db.MailSnoozes.Where(x => x.Id == rescheduled.Id)
+                .ExecuteUpdateAsync(setters => setters.SetProperty(x => x.UntilUtc, DateTime.UtcNow.AddHours(1)));
+            Assert.False(await SnoozeWakeupService.ClaimAsync(db, rescheduled.Id, stale, CancellationToken.None));
+        }
+
+        var push = new FakePushNotificationService();
+        await Task.WhenAll(Enumerable.Range(0, 4).Select(_ => RunSnoozeWakeupAsync(push)));
+
+        var woken = Assert.Single(push.Notifications);
+        Assert.Equal(PushEventType.SnoozeExpired, woken.Type);
+        Assert.Equal(due.MailId, woken.MailId);
+        await using var check = fixture.CreateDb();
+        Assert.Equal([rescheduled.Id], await check.MailSnoozes.Where(x => x.MailAccountId == accountId).Select(x => x.Id).ToListAsync());
+    }
+
+    private async Task RunSnoozeWakeupAsync(IPushNotificationService push)
+    {
+        var services = new ServiceCollection();
+        services.AddDbContext<AppDbContext>(options => options.UseNpgsql(fixture.ConnectionString));
+        services.AddSingleton(push);
+        services.AddLogging();
+        await using var provider = services.BuildServiceProvider();
+        await using var scope = provider.CreateAsyncScope();
+        await SnoozeWakeupService.ProcessDueAsync(scope.ServiceProvider, CancellationToken.None);
+    }
+
     private static async Task<Guid> SeedFolderAsync(AppDbContext db, Guid accountId)
     {
         var folder = new MailFolder

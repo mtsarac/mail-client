@@ -25,7 +25,7 @@ public sealed class FirebaseMessageSender(ILogger<FirebaseMessageSender> logger)
     {
         var messaging = FirebaseMessaging.GetMessaging(FirebaseApp.GetInstance(FirebaseSetup.AppName));
 #pragma warning disable CS0618
-        var outgoing = chunk.Select(message => new Message
+        var outgoing = chunk.Select(message => message.AppRendered ? AppRenderedMessage(message) : new Message
         {
             Token = message.PushToken,
             Notification = message.Title is null && message.Body is null
@@ -58,4 +58,21 @@ public sealed class FirebaseMessageSender(ILogger<FirebaseMessageSender> logger)
                 : new FirebaseDeliveryOutcome(message.DbId, false, send.Exception?.MessagingErrorCode);
         }).ToList();
     }
+
+#pragma warning disable CS0618
+    internal static Message AppRenderedMessage(FirebaseOutgoingMessage message) => new()
+    {
+        Token = message.PushToken,
+        Data = new Dictionary<string, string>(message.Data),
+        Android = new AndroidConfig { Priority = Priority.High },
+        Apns = new ApnsConfig
+        {
+            Aps = new Aps
+            {
+                Alert = new ApsAlert { Title = message.Title ?? string.Empty, Body = message.Body ?? string.Empty },
+                Sound = "default"
+            }
+        }
+    };
+#pragma warning restore CS0618
 }

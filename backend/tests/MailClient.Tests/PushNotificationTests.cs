@@ -84,14 +84,81 @@ public sealed class PushNotificationTests
             CancellationToken.None);
 
         var call = Assert.Single(gateway.Calls);
-        Assert.Equal(["accountId", "conversationId", "folderId", "mailId", "type"], call.Data.Keys.Order().ToArray());
+        Assert.Equal(["accountId", "conversationId", "folderId", "mailId", "privacy", "sender", "subject", "type"], call.Data.Keys.Order().ToArray());
         Assert.Equal("new_mail", call.Data["type"]);
         Assert.Equal(accountId.ToString(), call.Data["accountId"]);
         Assert.Equal(mailId.ToString(), call.Data["mailId"]);
         Assert.Equal(conversationId.ToString(), call.Data["conversationId"]);
         Assert.Equal(folderId.ToString(), call.Data["folderId"]);
+        Assert.Equal("limited", call.Data["privacy"]);
         Assert.Equal("sender@example.test", call.Title);
         Assert.Equal("hello", call.Body);
+        Assert.True(call.AppRendered);
+    }
+
+    [Theory]
+    [InlineData(NotificationPrivacy.Full, "sender", "subject", "preview")]
+    [InlineData(NotificationPrivacy.Limited, "sender", "subject", null)]
+    [InlineData(NotificationPrivacy.Private, null, null, null)]
+    public async Task NotifyAsync_AccountPrivacy_ControlsWhatLeavesTheServer(NotificationPrivacy privacy, string? sender, string? subject, string? preview)
+    {
+        var dbName = DbName();
+        var accountId = await SeedDeviceAsync(dbName, "token-a", account => account.NotificationPrivacy = privacy);
+        var gateway = new FakeFirebaseGateway();
+        var service = CreatePushService(dbName, gateway, new RuntimeSettings());
+
+        await service.NotifyAsync(
+            new PushEvent(PushEventType.NewMail, accountId, Guid.NewGuid(), null, Guid.NewGuid(),
+                SenderPreview: "sender", SubjectPreview: "subject", BodyPreview: "preview"),
+            CancellationToken.None);
+
+        var call = Assert.Single(gateway.Calls);
+        Assert.Equal(privacy.ToString().ToLowerInvariant(), call.Data["privacy"]);
+        Assert.Equal(sender, call.Data.GetValueOrDefault("sender"));
+        Assert.Equal(subject, call.Data.GetValueOrDefault("subject"));
+        Assert.Equal(preview, call.Data.GetValueOrDefault("preview"));
+        var visible = call.Title + call.Body;
+        Assert.Equal(sender is not null, visible.Contains("sender", StringComparison.Ordinal));
+        Assert.Equal(subject is not null, visible.Contains("subject", StringComparison.Ordinal));
+        Assert.Equal(preview is not null, visible.Contains("preview", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task NotifyAsync_AccountNotificationsDisabled_SkipsMailPushesButKeepsAccountAlerts()
+    {
+        var dbName = DbName();
+        var accountId = await SeedDeviceAsync(dbName, "token-a", account => account.NotificationsEnabled = false);
+        var gateway = new FakeFirebaseGateway();
+        var service = CreatePushService(dbName, gateway, new RuntimeSettings());
+
+        await service.NotifyAsync(new PushEvent(PushEventType.NewMail, accountId, Guid.NewGuid()), CancellationToken.None);
+        await service.NotifyAsync(new PushEvent(PushEventType.SnoozeExpired, accountId, Guid.NewGuid()), CancellationToken.None);
+        Assert.Empty(gateway.Calls);
+
+        await service.NotifyAsync(new PushEvent(PushEventType.AccountReauthenticationRequired, accountId), CancellationToken.None);
+        Assert.Equal("account_reauthentication_required", Assert.Single(gateway.Calls).Data["type"]);
+        await using var check = CreateDb(dbName);
+        Assert.Equal(1, await check.DeviceTokens.CountAsync(x => x.MailAccountId == accountId));
+    }
+
+    [Fact]
+    public async Task NotifyAsync_SnoozeExpired_IsAppRenderedWithMailIds()
+    {
+        var dbName = DbName();
+        var accountId = await SeedDeviceAsync(dbName, "token-a");
+        var mailId = Guid.NewGuid();
+        var gateway = new FakeFirebaseGateway();
+        var service = CreatePushService(dbName, gateway, new RuntimeSettings());
+
+        await service.NotifyAsync(
+            new PushEvent(PushEventType.SnoozeExpired, accountId, mailId, SenderPreview: "Ayşe", SubjectPreview: "Plan"),
+            CancellationToken.None);
+
+        var call = Assert.Single(gateway.Calls);
+        Assert.Equal("snooze_expired", call.Data["type"]);
+        Assert.Equal(mailId.ToString(), call.Data["mailId"]);
+        Assert.Equal("Ayşe: Plan", call.Body);
+        Assert.True(call.AppRendered);
     }
 
     [Fact]
@@ -111,6 +178,7 @@ public sealed class PushNotificationTests
         var call = Assert.Single(gateway.Calls);
         Assert.Equal("New mail", call.Title);
         Assert.Equal("You have a new message.", call.Body);
+        Assert.Equal("private", call.Data["privacy"]);
         Assert.DoesNotContain("secret-sender@example.test", call.Title + call.Body + string.Join(" ", call.Data.Values));
         Assert.DoesNotContain("secret-subject", call.Title + call.Body + string.Join(" ", call.Data.Values));
     }
@@ -164,6 +232,7 @@ public sealed class PushNotificationTests
         var call = Assert.Single(gateway.Calls);
         Assert.Null(call.Title);
         Assert.Null(call.Body);
+        Assert.False(call.AppRendered);
         Assert.Equal("mail_state_changed", call.Data["type"]);
         Assert.Equal("star", call.Data["operation"]);
     }
@@ -187,7 +256,7 @@ public sealed class PushNotificationTests
     }
 
     [Fact]
-    public async Task SyncFolder_NewMail_IncludesConversationId()
+    public async Task SyncThenNotifier_NewMail_NotifiesOnceWithConversationId()
     {
         await using var db = CreateDb(DbName());
         var (accountId, folderId) = await SeedFolderAsync(db);
@@ -199,13 +268,21 @@ public sealed class PushNotificationTests
         var service = CreateSyncService(db, push);
 
         await service.SyncFolderCoreAsync(accountId, folderId, remote, CancellationToken.None);
+        Assert.Empty(push.Notifications);
+        var stored = await db.Mails.SingleAsync();
+        stored.RulePending = false;
+        await db.SaveChangesAsync();
+
+        var notifier = new NewMailNotifier(db, push, NullLogger<NewMailNotifier>.Instance);
+        await notifier.NotifyPendingAsync(accountId, CancellationToken.None);
+        await notifier.NotifyPendingAsync(accountId, CancellationToken.None);
 
         var notification = Assert.Single(push.Notifications);
         Assert.Equal(PushEventType.NewMail, notification.Type);
-        var stored = await db.Mails.SingleAsync();
         Assert.NotNull(stored.ConversationId);
         Assert.Equal(stored.ConversationId, notification.ConversationId);
         Assert.Equal(stored.Id, notification.MailId);
+        Assert.False((await db.Mails.SingleAsync()).NotificationPending);
     }
 
     [Fact]
@@ -240,7 +317,7 @@ public sealed class PushNotificationTests
     }
 
     [Fact]
-    public async Task Sync_PushFailure_StillPersistsMail()
+    public async Task Notifier_PushFailure_ClearsPendingWithoutThrowing()
     {
         await using var db = CreateDb(DbName());
         var (accountId, folderId) = await SeedFolderAsync(db);
@@ -248,11 +325,15 @@ public sealed class PushNotificationTests
         {
             [1] = () => SimpleMessage("push-down")
         });
-        var service = CreateSyncService(db, new ThrowingPush());
+        await CreateSyncService(db, new ThrowingPush()).SyncFolderCoreAsync(accountId, folderId, remote, CancellationToken.None);
+        (await db.Mails.SingleAsync()).RulePending = false;
+        await db.SaveChangesAsync();
 
-        await service.SyncFolderCoreAsync(accountId, folderId, remote, CancellationToken.None);
+        await new NewMailNotifier(db, new ThrowingPush(), NullLogger<NewMailNotifier>.Instance).NotifyPendingAsync(accountId, CancellationToken.None);
 
-        Assert.Equal("push-down", (await db.Mails.SingleAsync()).Subject);
+        var stored = await db.Mails.SingleAsync();
+        Assert.Equal("push-down", stored.Subject);
+        Assert.False(stored.NotificationPending);
     }
 
     [Fact]
@@ -278,11 +359,11 @@ public sealed class PushNotificationTests
     private static AppDbContext CreateDb(string name) => new(new DbContextOptionsBuilder<AppDbContext>()
         .UseInMemoryDatabase(name).Options);
 
-    private static async Task<Guid> SeedDeviceAsync(string dbName, string token)
+    private static async Task<Guid> SeedDeviceAsync(string dbName, string token, Action<MailAccount>? configure = null)
     {
         await using var db = CreateDb(dbName);
         var accountId = Guid.NewGuid();
-        db.MailAccounts.Add(new MailAccount
+        var account = new MailAccount
         {
             Id = accountId,
             EmailAddress = $"{accountId:N}@example.test",
@@ -293,7 +374,9 @@ public sealed class PushNotificationTests
             SmtpHost = "smtp.example.test",
             SmtpPort = 587,
             Status = MailAccountStatus.Active
-        });
+        };
+        configure?.Invoke(account);
+        db.MailAccounts.Add(account);
         db.DeviceTokens.Add(new DeviceToken
         {
             Id = Guid.NewGuid(),
@@ -406,7 +489,7 @@ public sealed class PushNotificationTests
 
     private sealed class FakeFirebaseGateway : IFirebaseGateway
     {
-        public List<(IReadOnlyList<FirebaseRecipient> Recipients, string? Title, string? Body, IReadOnlyDictionary<string, string> Data)> Calls { get; } = [];
+        public List<(IReadOnlyList<FirebaseRecipient> Recipients, string? Title, string? Body, IReadOnlyDictionary<string, string> Data, bool AppRendered)> Calls { get; } = [];
         public Func<FirebaseRecipient, FirebaseSendResult>? ResultFor { get; set; }
         public Exception? Throw { get; set; }
 
@@ -415,9 +498,10 @@ public sealed class PushNotificationTests
             string? title,
             string? body,
             IReadOnlyDictionary<string, string> data,
+            bool appRendered,
             CancellationToken cancellationToken)
         {
-            Calls.Add((recipients, title, body, data));
+            Calls.Add((recipients, title, body, data, appRendered));
             if (Throw is not null)
                 throw Throw;
             return Task.FromResult<IReadOnlyList<FirebaseSendResult>>(

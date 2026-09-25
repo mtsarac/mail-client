@@ -309,6 +309,17 @@ Hesabın periyodik arka plan senkronizasyon kapsamını okur veya değiştirir. 
 
 `PUT` gövdesi: `{"scope":"SelectedFolders","folderIds":["…"]}`. `SelectedFolders` için en az bir **bu hesaba ait ve kullanılabilir** klasör id'si gerekir; diğer kapsamlar için `folderIds` verilmez. Geçersiz/başka hesaba ait/erişilemeyen klasör seçimi `400` validation problem döner, mevcut ayar değişmez. Ayar backend'de kalıcıdır, hesap düzeyindedir; yeni keşfedilen klasörler `AllFolders` için dahil, `SelectedFolders` için hariç tutulur. Kullanıcının elle istediği klasör sync'i kapsamdan bağımsızdır; yeni kapsama alınan klasörler sonraki periyodik taramada senkronize edilir. `syncedFolderIds` yalnız kullanılabilir klasörleri listeler.
 
+### `GET /api/account/notification-settings` ve `PUT /api/account/notification-settings`
+**Auth:** Bearer
+
+Hesabın posta bildirim tercihleri; hesaba oturum açmış tüm cihazlarda geçerlidir, cihaz kaydını (`/api/devices`) etkilemez. Cihaz bazlı aç/kapa için cihazı kaydet/kaydını sil. `GET` ve başarılı `PUT` aynı yanıtı döner:
+
+```json
+{"enabled":true,"inboxOnly":true,"privacy":"Limited","previewsAllowedByServer":true}
+```
+
+`PUT` gövdesi: `{"enabled":true,"inboxOnly":false,"privacy":"Full"}`. `privacy`: `Full` (gönderen + konu + kısa metin önizlemesi), `Limited` (gönderen + konu, varsayılan), `Private` (yalnız "yeni posta"). Bilinmeyen `privacy` `400` validation problem döner. `previewsAllowedByServer: false` ise sunucu yöneticisi önizlemeyi kapatmıştır ve push'lar `Private` gider. `inboxOnly: false` Gönderilmiş/Taslaklar/Çöp/Spam dışındaki tüm senkronize klasörlerdeki yeni postayı bildirir. `enabled: false` yalnız `new_mail` ve `snooze_expired` push'larını durdurur.
+
 ### `GET/POST /api/rules`, `PUT/DELETE /api/rules/{id}`
 **Auth:** Bearer
 
@@ -796,20 +807,29 @@ Aynı `token` tekrar gönderilirse güncellenir (upsert) — her uygulama açıl
 
 ### Push (FCM) veri şeması
 
-`firebase_messaging` ile alınan bildirimin `data` alanı — mail içeriği/önizleme asla eklenmez, sadece sonraki API çağrısı için gerekli kimlikler taşınır.
+`firebase_messaging` ile alınan bildirimin `data` alanı. Kimliklerin yanında yalnız `new_mail`/`snooze_expired` için ve hesabın `privacy` ayarının izin verdiği ölçüde gösterim metni gelir; mail gövdesi/HTML asla eklenmez.
 
 ```json
 {
-  "type": "new_mail",  // | "mail_state_changed" | "account_reauthentication_required" | "sync_error"
+  "type": "new_mail",  // | "snooze_expired" | "mail_state_changed" | "account_reauthentication_required" | "sync_error"
   "accountId": "…",
   "mailId": "…",          // varsa
   "conversationId": "…",  // varsa
   "folderId": "…",        // varsa
-  "operation": "trash"    // mail_state_changed için: read/star/trash/move/…
+  "operation": "trash",   // mail_state_changed için: read/star/trash/move/…
+  "privacy": "limited",   // new_mail/snooze_expired: full | limited | private
+  "sender": "…",          // limited/full
+  "subject": "…",         // limited/full
+  "preview": "…"          // yalnız full; en fazla ~140 karakter düz metin
 }
 ```
 
-> Bildirim geldiğinde gövdeyi bildirimden okuma — `mailId` ile `GET /api/mails/{id}` çağırıp güncel/doğrulanmış veriyi çek.
+- `new_mail` ve `snooze_expired` Android'de **yalnız veri** mesajıdır (`notification` bloğu yok, yüksek öncelik): uygulama bildirimi kendisi çizer ve hızlı eylemleri (`POST /api/mails/{id}/read|archive|trash`, Yanıtla) ekler. iOS'ta aynı metin APNs uyarısı olarak gelir. Diğer tipler önceki gibi davranır.
+- `new_mail`, sunucu kuralları çalıştıktan sonra gönderilir; kuralın bildirilen klasörlerden çıkardığı veya okundu yaptığı posta bildirilmez.
+- `snooze_expired`: süresi dolan erteleme sunucuda sonlandırılır (`GET /api/mails/snoozed` artık içermez) ve posta başına bir kez gönderilir; iptal edilen/ileri alınan erteleme uyanmaz. Çöp/Spam'deki posta için push gönderilmez.
+- `mail_state_changed` `operation` read/archive/trash/spam/move/delete ise o mailin cihazda gösterilen bildirimini kaldır.
+
+> Bildirim geldiğinde mail durumunu bildirimden okuma — `mailId` ile `GET /api/mails/{id}` çağırıp güncel/doğrulanmış veriyi çek.
 
 ---
 
