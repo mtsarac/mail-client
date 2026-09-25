@@ -78,6 +78,9 @@ public static class MimeMessageBuilder
             contentType = new ContentType("application", "octet-stream");
         }
 
+        if (contentType.IsMimeType("multipart", "*") || contentType.IsMimeType("message", "*"))
+            contentType = new ContentType("application", "octet-stream");
+
         return new MimePart(contentType)
         {
             Content = new MimeContent(attachment.Content),

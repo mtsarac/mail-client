@@ -96,6 +96,8 @@ public sealed class RuntimeSyncSettings
 
 public sealed class RuntimeLimitSettings
 {
+    public const int MaxAttachmentCount = 20;
+
     public long MaxAttachmentBytes { get; init; } = 25 * 1024 * 1024;
     public long MaxMessageAttachmentBytes { get; init; } = 50 * 1024 * 1024;
     public long MaxMessageBytes { get; init; } = 100 * 1024 * 1024;

@@ -3,10 +3,12 @@ using MailClient.Api.OpenApi;
 using MailClient.Application;
 using MailClient.Application.Accounts;
 using MailClient.Application.Mail;
+using MailClient.Application.Runtime;
 using MailClient.Domain.Entities;
 using MailClient.Domain.Enums;
 using MailClient.Infrastructure.Mail;
 using MailClient.Infrastructure.Persistence;
+using MailClient.Infrastructure.Runtime;
 using MailClient.Infrastructure.Services;
 using MailClient.Infrastructure.Storage;
 using Microsoft.AspNetCore.Mvc;
@@ -20,6 +22,7 @@ public sealed record SendMailResponse(bool Sent, bool SentCopySaved, string? War
 public sealed record BulkMailOperationRequest(IReadOnlyList<Guid> MailIds, Guid? FolderId = null);
 public sealed record BulkMailOperationItemResponse(Guid MailId, bool Success, string? Code);
 public sealed record BulkMailOperationResponse(IReadOnlyList<BulkMailOperationItemResponse> Results);
+public sealed record ComposeLimitsResponse(long MaxAttachmentBytes, long MaxMessageAttachmentBytes, int MaxAttachmentCount);
 
 public static class MailEndpoints
 {
@@ -125,8 +128,17 @@ public static class MailEndpoints
         api.MapGet("/mails/{mailId:guid}/attachments/{attachmentId:guid}", async (Guid mailId, Guid attachmentId, ICurrentMailAccount current, AppDbContext db, IFileStorage storage, CancellationToken ct) =>
         {
             var attachment = await db.Attachments.SingleOrDefaultAsync(x => x.Id == attachmentId && x.MailId == mailId && x.MailAccountId == current.MailAccountId, ct);
-            return attachment is null ? Results.NotFound() : Results.File(await storage.OpenReadAsync(attachment.StoragePath, ct), attachment.ContentType, attachment.FileName);
-        }).WithTags(MailTag).WithName("DownloadAttachment").WithSummary("Download account-owned attachment").Produces(200, contentType: "application/octet-stream").Produces(404);
+            return attachment is null ? Results.NotFound() : Results.File(await storage.OpenReadAsync(attachment.StoragePath, ct), attachment.ContentType, attachment.FileName, enableRangeProcessing: true);
+        }).WithTags(MailTag).WithName("DownloadAttachment").WithSummary("Download account-owned attachment")
+            .WithDescription("Streams the stored file. Supports Range requests (206) when the storage is seekable; otherwise answers 200 with the full body.")
+            .Produces(200, contentType: "application/octet-stream").Produces(206, contentType: "application/octet-stream").Produces(404);
+        api.MapGet("/compose/limits", async (RuntimeOperationSettings settings, CancellationToken ct) =>
+        {
+            var limits = (await settings.GetAsync(ct)).Settings.Limits;
+            return Results.Ok(new ComposeLimitsResponse(limits.MaxAttachmentBytes, limits.MaxMessageAttachmentBytes, RuntimeLimitSettings.MaxAttachmentCount));
+        }).WithTags(ComposeTag).WithName("GetComposeLimits").WithSummary("Attachment limits for compose")
+            .WithDescription("Current operator-configured limits enforced by send, draft and scheduled send. Check picked files against them before uploading.")
+            .Produces<ComposeLimitsResponse>();
         api.MapGet("/mails/{id:guid}/compose/reply", async (Guid id, ICurrentMailAccount current, ComposeContextService service, CancellationToken ct) => await ComposeResult(service.GetAsync(current.MailAccountId, id, ComposeMode.Reply, ct))).WithTags(ComposeTag).WithName("GetReplyContext").WithSummary("Reply compose context").WithDescription("Prefilled recipients, subject and quoted body. Send the result via POST /api/mails/send with replySourceMailId set to this mail id.").Produces<ComposeContextResponse>().Produces(404);
         api.MapGet("/mails/{id:guid}/compose/reply-all", async (Guid id, ICurrentMailAccount current, ComposeContextService service, CancellationToken ct) => await ComposeResult(service.GetAsync(current.MailAccountId, id, ComposeMode.ReplyAll, ct))).WithTags(ComposeTag).WithName("GetReplyAllContext").WithSummary("Reply-all compose context").WithDescription("Prefilled recipients, subject and quoted body. Send the result via POST /api/mails/send with replySourceMailId set to this mail id.").Produces<ComposeContextResponse>().Produces(404);
         api.MapGet("/mails/{id:guid}/compose/forward", async (Guid id, ICurrentMailAccount current, ComposeContextService service, CancellationToken ct) => await ComposeResult(service.GetAsync(current.MailAccountId, id, ComposeMode.Forward, ct))).WithTags(ComposeTag).WithName("GetForwardContext").WithSummary("Forward compose context").WithDescription("Prefilled recipients, subject and quoted body. Send the result via POST /api/mails/send with replySourceMailId set to this mail id.").Produces<ComposeContextResponse>().Produces(404);
