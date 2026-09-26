@@ -76,7 +76,7 @@ public sealed class MailSendService(
             : await ResolveThreadingAsync(account.Id, command.ReplySourceMailId, cancellationToken);
         var hashed = await ComposeMailValidator.HashAttachmentsAsync(command.Attachments, cancellationToken);
         var fingerprintRecipients = string.Join(',', to.Select(x => x.Address).Concat(cc.Select(x => x.Address)).Concat(bcc.Select(x => x.Address)));
-        var fingerprint = SendOperationStore.Fingerprint(account.Id, $"{fingerprintRecipients}|{command.ReplySourceMailId}|{command.TrustedMessageId}|{command.IdentityId}", subject, command.BodyHtml, command.BodyText, hashed);
+        var fingerprint = SendOperationStore.Fingerprint(account.Id, $"{fingerprintRecipients}|{command.ReplySourceMailId}|{command.TrustedMessageId}|{command.IdentityId}|{command.RequestReadReceipt}|{command.RequestDeliveryReceipt}", subject, command.BodyHtml, command.BodyText, hashed);
         var claim = await operations.ClaimAsync(account.Id, command.IdempotencyKey, fingerprint, cancellationToken);
         return claim switch
         {
@@ -131,6 +131,10 @@ public sealed class MailSendService(
                 string.IsNullOrWhiteSpace(identity?.DisplayName) ? account.DisplayName : identity.DisplayName,
                 to, cc, bcc, subject, command.BodyHtml, command.BodyText, command.Attachments,
                 threading.InReplyToMessageId, threading.References, command.TrustedMessageId, identity?.ReplyTo);
+            if (command.RequestReadReceipt)
+                message.Headers.Add("Disposition-Notification-To", new MailboxAddress(
+                    string.IsNullOrWhiteSpace(identity?.DisplayName) ? account.DisplayName : identity.DisplayName,
+                    identity?.EmailAddress ?? account.EmailAddress).ToString());
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -144,7 +148,12 @@ public sealed class MailSendService(
         var started = Stopwatch.GetTimestamp();
         try
         {
-            await transport.SendAsync(account, message, cancellationToken);
+            await transport.SendAsync(account, message, cancellationToken, command.RequestDeliveryReceipt);
+        }
+        catch (Mail.DeliveryReceiptNotSupportedException)
+        {
+            await operations.TryFailAsync(operation.Id, "The provider does not support delivery receipts.", cancellationToken);
+            throw new InvalidOperationException("delivery_receipt_not_supported");
         }
         catch (OperationCanceledException)
         {

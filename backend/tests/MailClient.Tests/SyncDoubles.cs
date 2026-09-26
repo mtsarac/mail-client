@@ -115,6 +115,15 @@ internal class FakeRemoteMailFolder(
         return Task.FromResult(Messages[uid.Id]());
     }
 
+    public async Task<Stream> GetStreamAsync(UniqueId uid, CancellationToken cancellationToken)
+    {
+        var message = await GetMessageAsync(uid, cancellationToken);
+        var stream = new MemoryStream();
+        await message.WriteToAsync(stream, cancellationToken);
+        stream.Position = 0;
+        return stream;
+    }
+
     public Task SetSeenAsync(UniqueId uid, bool seen, CancellationToken cancellationToken)
     {
         if (seen)
@@ -320,11 +329,13 @@ internal sealed class FakeMailTransport : MailClient.Infrastructure.Mail.IMailTr
     public int AppendCount { get; private set; }
     public Exception? SendFailure { get; init; }
     public MimeMessage? Message { get; private set; }
+    public bool DeliveryReceiptRequested { get; private set; }
 
-    public Task SendAsync(MailAccount account, MimeMessage message, CancellationToken cancellationToken)
+    public Task SendAsync(MailAccount account, MimeMessage message, CancellationToken cancellationToken, bool requestDeliveryReceipt = false)
     {
         if (SendFailure is not null) throw SendFailure;
         Message = message;
+        DeliveryReceiptRequested = requestDeliveryReceipt;
         SentCount++;
         return Task.CompletedTask;
     }

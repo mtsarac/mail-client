@@ -154,6 +154,7 @@ builder.Services.AddScoped<ReplyReminderService>();
 builder.Services.AddScoped<ISyncExecutor, NewMailSyncExecutor>();
 builder.Services.AddScoped<InlineFolderSync>();
 builder.Services.AddScoped<MailReadService>();
+builder.Services.AddScoped<MailSourceService>();
 builder.Services.AddScoped<MailSearchService>();
 builder.Services.AddScoped<MailRemoteSearchService>();
 

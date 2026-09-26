@@ -8,15 +8,17 @@ namespace MailClient.Infrastructure.Mail;
 
 public interface IMailTransport
 {
-    Task SendAsync(MailAccount account, MimeMessage message, CancellationToken cancellationToken);
+    Task SendAsync(MailAccount account, MimeMessage message, CancellationToken cancellationToken, bool requestDeliveryReceipt = false);
     Task AppendToSentAsync(MailAccount account, string sentFullName, MimeMessage message, CancellationToken cancellationToken);
 }
+
+public sealed class DeliveryReceiptNotSupportedException : Exception;
 
 public sealed class MailKitMailTransport(
     MailCredentialResolver credentials,
     MailConnectionHelper connections) : IMailTransport
 {
-    public async Task SendAsync(MailAccount account, MimeMessage message, CancellationToken cancellationToken)
+    public async Task SendAsync(MailAccount account, MimeMessage message, CancellationToken cancellationToken, bool requestDeliveryReceipt = false)
     {
         var resolved = await credentials.ResolveAsync(account.Id, cancellationToken);
         var endpoint = new MailServerEndpoint(account.SmtpHost, account.SmtpPort, account.SmtpSecurity);
@@ -27,6 +29,13 @@ public sealed class MailKitMailTransport(
             "SendMail",
             async (client, ct) =>
             {
+                if (requestDeliveryReceipt)
+                {
+                    if (!client.Capabilities.HasFlag(MailKit.Net.Smtp.SmtpCapabilities.Dsn) || client is not ReceiptSmtpClient receiptClient)
+                        throw new DeliveryReceiptNotSupportedException();
+                    receiptClient.RequestDeliveryReceipt = true;
+                }
+
                 try
                 {
                     await client.SendAsync(message, ct);

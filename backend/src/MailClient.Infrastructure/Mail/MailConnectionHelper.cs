@@ -63,7 +63,7 @@ public class MailConnectionHelper(
         CancellationToken cancellationToken,
         AuthenticationMethod authenticationMethod = AuthenticationMethod.Password)
     {
-        using var client = new SmtpClient { Timeout = OperationTimeoutMs };
+        using var client = new ReceiptSmtpClient { Timeout = OperationTimeoutMs };
         return await RunAsync(client, endpoint, username, password, operation,
             (service, ct) => action((SmtpClient)service, ct), cancellationToken, authenticationMethod);
     }
@@ -99,7 +99,7 @@ public class MailConnectionHelper(
             logger.LogInformation(ex, "Mail operation {Operation} cancelled for host {Host}.", operation, LogSafe(endpoint.Host));
             throw;
         }
-        catch (Exception ex) when (ex is MailConnectionException or SmtpDeliveryException)
+        catch (Exception ex) when (ex is MailConnectionException or SmtpDeliveryException or DeliveryReceiptNotSupportedException)
         {
             throw;
         }
@@ -136,4 +136,12 @@ public class MailConnectionHelper(
         MailSecurity.StartTls => SecureSocketOptions.StartTls,
         _ => throw new ArgumentOutOfRangeException(nameof(security))
     };
+}
+
+public sealed class ReceiptSmtpClient : SmtpClient
+{
+    public bool RequestDeliveryReceipt { get; set; }
+
+    protected override DeliveryStatusNotification? GetDeliveryStatusNotifications(MimeKit.MimeMessage message, MimeKit.MailboxAddress mailbox) =>
+        RequestDeliveryReceipt ? DeliveryStatusNotification.Success | DeliveryStatusNotification.Failure : null;
 }

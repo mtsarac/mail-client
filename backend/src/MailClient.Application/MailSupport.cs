@@ -37,6 +37,8 @@ public sealed record SendMailCommand(
     public string? TrustedInReplyToMessageId { get; init; }
     public string? TrustedReferences { get; init; }
     public Guid? IdentityId { get; init; }
+    public bool RequestReadReceipt { get; init; }
+    public bool RequestDeliveryReceipt { get; init; }
 }
 
 public enum PushEventType

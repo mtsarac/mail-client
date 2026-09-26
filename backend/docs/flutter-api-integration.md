@@ -517,6 +517,7 @@ Tam mail içeriği: gövde, katılımcılar, header'lar, ekler.
   "conversationId": "806acf4c-…", "isFromMe": false,
   "headers": [{ "name": "X-Mailer", "value": "…" }],
   "authentication": { "authservId": "mx.example.com", "spf": "pass", "dkim": "pass", "dmarc": "fail" },
+  "security": { "signed": "SMime", "encrypted": null },
   "attachments": [{
     "id": "…", "fileName": "rapor.pdf", "contentType": "application/pdf",
     "sizeBytes": 48211, "isInline": false, "contentId": "", "contentDisposition": "attachment"
@@ -526,10 +527,22 @@ Tam mail içeriği: gövde, katılımcılar, header'lar, ekler.
 
 `conversationId` her zaman dolu gelir (tek mailse kendi konuşması); `isFromMe` Gönderilmiş/Taslak klasöründeki mailler için ya da gönderen adresi hesabın adresiyle (büyük/küçük harf duyarsız) aynıysa hangi klasörde olursa olsun `true`. HTML-only maillerde `bodyText` sunucuda HTML'den üretilir (yalnızca yeni senkronlanan mailler için). `body.html` sunucuda üretilen render edilebilir HTML'dir; yalnızca metin gerekirse `bodyText`. `isInline: true` ekler HTML içinde `cid:<contentId>` ile referanslanır — WebView'de bu URL'leri ek indirme ucuyla eşleştirmen gerekir. Bulunamazsa `404 mail_not_found`.
 
+`body.trackingPixelHosts` takip pikseli gibi görünen uzak görsellerin hostlarıdır (1px veya daha küçük boyut ya da `display:none`/`visibility:hidden`); bunlar `remoteContent=allow` ile de açılmaz. Liste doluysa UI "Takip içeriği engellendi" gösterebilir.
+
 `body.hasRemoteContent` HTML gövdede dış kaynaklı içerik bulunduğunu, `body.remoteImageHosts` uzak görsel hostlarını gösterir. Varsayılan yanıtta bu görsellerin `src` değerleri etkisizdir ve `body.remoteImagesAllowed` false olur. Kullanıcı "Görselleri yükle" dediğinde aynı maili `GET /api/mails/{id}?remoteContent=allow` ile yeniden çek; yalnızca temizlenmiş HTTP(S) görselleri açılır. Script, event handler, form, `javascript:`/`data:` gibi şemalar ve görsel olmayan uzak kaynaklar yine engelli kalır. Bu izin istemcide mail başına ve yalnızca açık uygulama oturumunda tutulmalıdır.
 `authentication`, yalnız alınan iletide saklanan en üst `Authentication-Results` başlığı geçerli bir SPF, DKIM veya DMARC sonucu taşıyorsa gelir; aksi halde `null` olur. Sonuçlar `pass`, `fail`, `softfail`, `neutral`, `none`, `temperror`, `permerror` veya `policy` değerlerinden biridir. Sunucu doğrulamayı yeniden çalıştırmaz; istemci `authservId` ile birlikte bu alanı yalnız bilgi amaçlı göstermeli, güven kararı olarak kullanmamalıdır.
 
-### `GET /api/mails/{mailId}/attachments/{attachmentId}`
+### `GET /api/mails/{mailId}/attachments/{attachmentId}`### Mail kaynağı ve imza
+
+- `GET /api/mails/{id}/headers`: çevrimiçi IMAP üzerinden özgün tüm başlıkları `{ "headers": [{ "name": "Received", "value": "…" }] }` olarak döner.
+- `GET /api/mails/{id}/source`: özgün `message/rfc822` baytlarını `message.eml` olarak indirir. **Sanitized HTML yerine render etme.** Kullanıcı isterse kaynak olarak göster/paylaş.
+- `GET /api/mails/{id}/signature`: `{ "standard": "SMime" | "OpenPgp", "status": "Valid" | "Untrusted" | "Invalid" | "Unverifiable", "signers": [{ "name": "…", "email": "…", "signedAt": "…", "certificateExpiresAt": "…" }] }`. OpenPGP için anahtar deposu yoktur, daima `Unverifiable` döner; `Valid` yalnızca S/MIME kriptografik imza ve zincir doğrulaması sonrası. İmzasızsa 422 `mail_operation_not_supported`.
+
+Bu uçlar hesap kapsamında ve UIDVALIDITY kontrolüyle çalışır; sunucu çevrimdışıysa 502 `mail_provider_unavailable`, UID değişmişse 409 `mail_operation_conflict`, mail bulunamazsa 404 `mail_not_found`, hesap yeniden giriş istiyorsa 409 `mail_account_needs_reauthentication` döner. Mail detayı `security: { "signed": "SMime" | "OpenPgp" | null, "encrypted": "SMime" | "OpenPgp" | null }` veya `null` içerir; algılama doğrulama ya da şifre çözme demek değildir. Kaynak yalnız kullanıcı isteğiyle indirilmelidir.
+
+`POST /api/mails/send` formu isteğe bağlı `requestReadReceipt=true` ve `requestDeliveryReceipt=true` kabul eder. İlki hesap/seçilen kimlik adresinden MDN başlığı ekler; ikincisi SMTP DSN başarı/hata ister. Sunucu DSN desteklemiyorsa göndermeden 422 `delivery_receipt_not_supported`; hatalı boolean 400 `invalid_receipt_option`. Alıcının istemi karşılayacağı garantisi yoktur; bu seçenekleri "iste" olarak adlandır. Idempotency fingerprint bunları içerir.
+
+
 **Auth:** Bearer
 
 Ham dosya baytlarını döner (`Content-Type` ekin gerçek türü, `Content-Disposition` dosya adını taşır); JSON değildir, `Authorization` header'ıyla akış olarak indir. `404` ek hesaba/mail'e ait değilse ya da yoksa.
