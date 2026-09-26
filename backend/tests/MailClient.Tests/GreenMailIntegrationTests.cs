@@ -89,6 +89,26 @@ public sealed class GreenMailIntegrationTests(GreenMailFixture greenmail)
     }
 
     [Fact]
+    public async Task RealImap_SourceStreamRetainsOriginalHeadersAndBody()
+    {
+        if (!IntegrationEnvironment.GreenMailEnabled) return;
+        var subject = $"source-{Guid.NewGuid():N}";
+        await SeedMessageAsync(subject, markSeen: false);
+
+        using var imap = await ConnectAsync();
+        var inbox = imap.Inbox;
+        var remote = new MailKitRemoteMailFolder(inbox);
+        await remote.OpenAsync(CancellationToken.None);
+        var uids = await inbox.SearchAsync(SearchQuery.SubjectContains(subject), CancellationToken.None);
+        using var stream = await remote.GetStreamAsync(Assert.Single(uids), CancellationToken.None);
+        using var reader = new StreamReader(stream);
+        var source = await reader.ReadToEndAsync();
+
+        Assert.Contains($"Subject: {subject}", source);
+        Assert.Contains("greenmail body", source);
+    }
+
+    [Fact]
     public async Task RealImap_RemoteExpungeAndFlagChanges_ConvergeLocally()
     {
         if (!IntegrationEnvironment.GreenMailEnabled) return;
