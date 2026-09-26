@@ -22,8 +22,9 @@ public sealed class MailAccount
     public MailAccountStatus Status { get; set; } = MailAccountStatus.Active;
     /// <summary>Set when the account is disabled because its email left the production allowlist; cleared if it is re-added. Drives grace-period deletion.</summary>
     public DateTime? AccessRevokedAt { get; set; }
-    /// <summary>User-authored text appended to outgoing mail from this account. Null/empty means no signature.</summary>
-    public string? Signature { get; set; }
+    public Guid? DefaultNewSignatureId { get; set; }
+    public Guid? DefaultReplySignatureId { get; set; }
+    public Guid? DefaultForwardSignatureId { get; set; }
     public FolderSyncScope FolderSyncScope { get; set; } = FolderSyncScope.InboxAndSent;
     public bool NotificationsEnabled { get; set; } = true;
     public bool NotifyInboxOnly { get; set; } = true;
@@ -75,6 +76,7 @@ public sealed class MailFolder
     public Guid MailAccountId { get; set; }
     public string Name { get; set; } = "";
     public string FullName { get; set; } = "";
+    public string? Delimiter { get; set; }
     public MailFolderType FolderType { get; set; } = MailFolderType.Unknown;
     public uint UidValidity { get; set; }
     public bool IsSyncEnabled { get; set; } = true;
@@ -232,8 +234,20 @@ public sealed class ScheduledSend
     public string IdempotencyKey { get; set; } = "";
     public string Fingerprint { get; set; } = "";
     public Guid? ReplySourceMailId { get; set; }
+    public int Revision { get; set; }
+    public Guid? IdentityId { get; set; }
     public MailAccount? MailAccount { get; set; }
     public ICollection<ScheduledSendAttachment> Attachments { get; set; } = [];
+}
+public sealed class MailIdentity
+{
+    public Guid Id { get; set; }
+    public Guid MailAccountId { get; set; }
+    public string EmailAddress { get; set; } = "";
+    public string DisplayName { get; set; } = "";
+    public string? ReplyTo { get; set; }
+    public Guid? SignatureId { get; set; }
+    public bool IsDefault { get; set; }
 }
 public sealed class ScheduledSendAttachment
 {
@@ -286,6 +300,17 @@ public sealed class MailSnooze
     public Guid MailId { get; set; }
     public DateTime UntilUtc { get; set; }
 }
+public sealed class ReplyReminder
+{
+    public Guid Id { get; set; }
+    public Guid MailAccountId { get; set; }
+    public Guid MailId { get; set; }
+    public Guid? ConversationId { get; set; }
+    public DateTime DueAtUtc { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public ReplyReminderStatus Status { get; set; } = ReplyReminderStatus.Pending;
+    public DateTime? NotifiedAt { get; set; }
+}
 public sealed class PinnedMail
 {
     public Guid Id { get; set; }
@@ -301,4 +326,48 @@ public sealed class Contact
     public string NormalizedEmail { get; set; } = "";
     public string? DisplayName { get; set; }
     public DateTime CreatedAtUtc { get; set; }
+}
+
+public sealed class MailTemplate
+{
+    public Guid Id { get; set; }
+    public Guid MailAccountId { get; set; }
+    public string Name { get; set; } = "";
+    public string NormalizedName { get; set; } = "";
+    public string Subject { get; set; } = "";
+    public string? BodyText { get; set; }
+    public string? BodyHtml { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public DateTime UpdatedAt { get; set; }
+}
+
+public sealed class MailSignature
+{
+    public Guid Id { get; set; }
+    public Guid MailAccountId { get; set; }
+    public string Name { get; set; } = "";
+    public string BodyText { get; set; } = "";
+    public string? BodyHtml { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public DateTime UpdatedAt { get; set; }
+}
+
+public sealed class TrustedSender
+{
+    public Guid Id { get; set; }
+    public Guid MailAccountId { get; set; }
+    public TrustedSenderKind Kind { get; set; }
+    public string Value { get; set; } = "";
+    public DateTime CreatedAt { get; set; }
+}
+
+public sealed class MailSnippet
+{
+    public Guid Id { get; set; }
+    public Guid MailAccountId { get; set; }
+    public string? Title { get; set; }
+    public string Text { get; set; } = "";
+    public int SortOrder { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public DateTime UpdatedAt { get; set; }
 }

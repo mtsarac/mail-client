@@ -21,7 +21,7 @@ public sealed class MailReadService(
     AuditLogger audit,
     ILogger<MailReadService> logger)
 {
-    public async Task<MailDetailResponse?> GetAsync(Guid accountId, Guid mailId, CancellationToken cancellationToken)
+    public async Task<MailDetailResponse?> GetAsync(Guid accountId, Guid mailId, CancellationToken cancellationToken, bool allowRemoteImages = false)
     {
         var mail = await db.Mails.AsNoTracking()
             .Include(item => item.Attachments)
@@ -36,8 +36,15 @@ public sealed class MailReadService(
                 && (folder.FolderType == MailFolderType.Sent || folder.FolderType == MailFolderType.Drafts), cancellationToken)
             || await db.MailAccounts.AnyAsync(account => account.Id == accountId
                 && account.NormalizedEmailAddress == normalizedFrom, cancellationToken);
-        var body = HtmlMailBodyRenderer.Render(mail, mail.BodyHtml);
-        var bodyContract = new MailBodyResponse(body.Html, body.HasRemoteContent, body.RemoteContentHosts, body.TrackingPixelHosts);
+        var headerResponses = mail.Headers
+            .OrderBy(header => header.Name)
+            .Select(header => new MailHeaderResponse(header.Name, header.Value))
+            .ToList();
+        var authentication = MailAuthenticationParser.Parse(headerResponses);
+        if (!allowRemoteImages && !isFromMe)
+            allowRemoteImages = await IsTrustedForRemoteImagesAsync(accountId, mail, authentication, cancellationToken);
+        var body = HtmlMailBodyRenderer.Render(mail, mail.BodyHtml, allowRemoteImages);
+        var bodyContract = new MailBodyResponse(body.Html, body.HasRemoteContent, body.RemoteContentHosts, body.RemoteImageHosts, body.TrackingPixelHosts, body.RemoteImagesAllowed);
 
         return new MailDetailResponse(
             mail.Id,
@@ -65,7 +72,7 @@ public sealed class MailReadService(
             mail.SentAt,
             mail.ReceivedAt,
             mail.InternalDate,
-            mail.Headers.OrderBy(header => header.Name).Select(header => new MailHeaderResponse(header.Name, header.Value)).ToList(),
+            headerResponses,
             mail.Attachments
                 .OrderBy(attachment => attachment.FileName)
                 .Select(attachment => new AttachmentResponse(
@@ -78,7 +85,24 @@ public sealed class MailReadService(
                     attachment.ContentDisposition))
                 .ToList(),
             mail.ConversationId,
-            isFromMe);
+            isFromMe,
+            authentication);
+    }
+
+    private async Task<bool> IsTrustedForRemoteImagesAsync(Guid accountId, MailEntity mail, MailAuthenticationResponse? authentication, CancellationToken cancellationToken)
+    {
+        if (string.Equals(authentication?.Dmarc, "fail", StringComparison.Ordinal))
+            return false;
+        var sender = mail.FromAddress?.Trim().ToLowerInvariant();
+        var at = sender?.LastIndexOf('@') ?? -1;
+        if (sender is null || at <= 0 || at == sender.Length - 1)
+            return false;
+        var domain = sender[(at + 1)..];
+        if (await db.MailFolders.AnyAsync(folder => folder.Id == mail.MailFolderId && folder.FolderType == MailFolderType.Junk, cancellationToken))
+            return false;
+        return await db.TrustedSenders.AnyAsync(entry => entry.MailAccountId == accountId
+            && ((entry.Kind == TrustedSenderKind.Sender && entry.Value == sender)
+                || (entry.Kind == TrustedSenderKind.Domain && entry.Value == domain)), cancellationToken);
     }
 
     private static List<MailParticipantResponse> ToParticipantResponses(IEnumerable<MailParticipant> participants, ParticipantType type) =>

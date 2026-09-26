@@ -65,6 +65,10 @@ public sealed class MailSendService(
             cancellationToken)
             ?? throw new InvalidOperationException("mail_account_not_found");
 
+        var identity = command.IdentityId is { } identityId
+            ? await db.MailIdentities.AsNoTracking().SingleOrDefaultAsync(x => x.Id == identityId && x.MailAccountId == account.Id, cancellationToken)
+                ?? throw new InvalidOperationException("identity_not_found")
+            : null;
         ComposeMailValidator.ValidateIdempotencyKey(command.IdempotencyKey);
 
         var threading = command.TrustedMessageId is not null
@@ -72,19 +76,20 @@ public sealed class MailSendService(
             : await ResolveThreadingAsync(account.Id, command.ReplySourceMailId, cancellationToken);
         var hashed = await ComposeMailValidator.HashAttachmentsAsync(command.Attachments, cancellationToken);
         var fingerprintRecipients = string.Join(',', to.Select(x => x.Address).Concat(cc.Select(x => x.Address)).Concat(bcc.Select(x => x.Address)));
-        var fingerprint = SendOperationStore.Fingerprint(account.Id, $"{fingerprintRecipients}|{command.ReplySourceMailId}|{command.TrustedMessageId}", subject, command.BodyHtml, command.BodyText, hashed);
+        var fingerprint = SendOperationStore.Fingerprint(account.Id, $"{fingerprintRecipients}|{command.ReplySourceMailId}|{command.TrustedMessageId}|{command.IdentityId}", subject, command.BodyHtml, command.BodyText, hashed);
         var claim = await operations.ClaimAsync(account.Id, command.IdempotencyKey, fingerprint, cancellationToken);
         return claim switch
         {
             SendOperationStore.Replay replay => new SendMailResult(true, replay.Operation.SentCopySaved, replay.Operation.Warning),
             SendOperationStore.Denied denied => throw new InvalidOperationException(denied.Code),
-            SendOperationStore.Proceed proceed => await SendAndAuditAsync(account, to, cc, bcc, subject, command, threading, proceed.Operation, correlationId, cancellationToken),
+            SendOperationStore.Proceed proceed => await SendAndAuditAsync(account, identity, to, cc, bcc, subject, command, threading, proceed.Operation, correlationId, cancellationToken),
             _ => throw new InvalidOperationException("idempotency_key_required")
         };
     }
 
     private async Task<SendMailResult> SendAndAuditAsync(
         MailAccount account,
+        MailIdentity? identity,
         IReadOnlyList<MailboxAddress> to,
         IReadOnlyList<MailboxAddress> cc,
         IReadOnlyList<MailboxAddress> bcc,
@@ -95,7 +100,7 @@ public sealed class MailSendService(
         string? correlationId,
         CancellationToken cancellationToken)
     {
-        var result = await SendAndStoreAsync(account, to, cc, bcc, subject, command, threading, operation, cancellationToken);
+        var result = await SendAndStoreAsync(account, identity, to, cc, bcc, subject, command, threading, operation, cancellationToken);
         if (result.Sent)
         {
             await audit.WriteAsync(account.Id, AuditActions.MailSent, "MailAccount", account.Id.ToString(),
@@ -108,6 +113,7 @@ public sealed class MailSendService(
 
     private async Task<SendMailResult> SendAndStoreAsync(
         MailAccount account,
+        MailIdentity? identity,
         IReadOnlyList<MailboxAddress> to,
         IReadOnlyList<MailboxAddress> cc,
         IReadOnlyList<MailboxAddress> bcc,
@@ -121,9 +127,10 @@ public sealed class MailSendService(
         try
         {
             message = MimeMessageBuilder.Build(
-                account.EmailAddress, account.DisplayName, to, cc, bcc,
-                subject, command.BodyHtml, command.BodyText, command.Attachments,
-                threading.InReplyToMessageId, threading.References, command.TrustedMessageId);
+                identity?.EmailAddress ?? account.EmailAddress,
+                string.IsNullOrWhiteSpace(identity?.DisplayName) ? account.DisplayName : identity.DisplayName,
+                to, cc, bcc, subject, command.BodyHtml, command.BodyText, command.Attachments,
+                threading.InReplyToMessageId, threading.References, command.TrustedMessageId, identity?.ReplyTo);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

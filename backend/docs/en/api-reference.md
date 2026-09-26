@@ -26,7 +26,8 @@ mobile client: [Flutter guide](../flutter-api-integration.md) (Turkish).
 | POST | `/api/accounts/connect` | anon | Create a mailbox from a discovery result; returns tokens |
 | POST | `/api/accounts/connect-manual` | anon | Create a mailbox with manual server settings |
 | POST | `/api/accounts/login` | anon | Sign in to an existing mailbox from another device |
-| GET | `/api/account` | bearer | Current account |
+| GET | `/api/account` | bearer | Current account (`signature` = plain-text body of the default new-mail signature, or null) |
+| PUT | `/api/account/signature` | bearer | Legacy compat: set or clear the default new-mail signature (blank clears); body `{signature}` |
 | POST | `/api/account/reconnect` | bearer | Update stored credentials (e.g. after password change) |
 | DELETE | `/api/account` | bearer | Delete the account and its data |
 | GET | `/api/account/sessions` | bearer | List signed-in devices/sessions |
@@ -50,15 +51,24 @@ subject, short text preview), `Limited` (sender and subject; default) or
 `Private` (generic text only). When the operator disables mail previews,
 `previewsAllowedByServer` is false and pushes are sent as `Private`.
 `inboxOnly: false` notifies new mail in every synced folder except Sent,
-Drafts, Trash and Junk. `enabled: false` stops new-mail and snooze wake-up
-pushes only; account alerts (reauthentication) are still sent.
+Drafts, Trash and Junk. `enabled: false` stops new-mail, snooze wake-up and
+reply-reminder pushes only; account alerts (reauthentication) are still sent.
 
 New-mail pushes are sent after server rules ran, so mail a rule moved out of
-the notified folders or marked read is not announced. `new_mail` and
-`snooze_expired` are data-only on Android (the app renders them with quick
-actions) and carry an APNs alert on iOS. Due snoozes are ended on the server
-every 30 seconds; each one wakes once, and a snooze cancelled or moved to a
-later time before it is claimed never wakes.
+the notified folders or marked read is not announced. `new_mail`,
+`snooze_expired` and `reply_reminder` are data-only on Android (the app
+renders them with quick actions) and carry an APNs alert on iOS. Due snoozes
+are ended on the server every 30 seconds; each one wakes once, and a snooze
+cancelled or moved to a later time before it is claimed never wakes. Reply
+reminders (`POST /api/mails/{id}/reply-reminder`, `GET /api/reply-reminders`,
+`DELETE /api/mails/{id}/reply-reminder`) watch sent mail for a reply: one
+pending reminder per mail, rescheduling overwrites the due time, and the
+server checks due reminders every 30 seconds — pushing `reply_reminder` once
+(`No reply yet`, recipient + subject per privacy) unless the mail was
+answered, moved to Trash/Junk, or cancelled. Past due times are rejected
+(`reply_reminder_in_past`), non-sent mail is rejected
+(`reply_reminder_requires_sent_mail`), already-answered mail is rejected
+(`reply_reminder_already_replied`).
 
 ### OAuth
 
@@ -78,7 +88,10 @@ later time before it is claimed never wakes.
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| GET | `/api/folders` | bearer | List cached folders |
+| GET | `/api/folders` | bearer | List cached folders (with `delimiter` and `parentId`) |
+| POST | `/api/folders` | bearer | Create a folder on the server (`name`, optional `parentId`) |
+| PATCH | `/api/folders/{id}` | bearer | Rename a custom folder on the server; ids are kept |
+| DELETE | `/api/folders/{id}` | bearer | Delete an empty custom folder without children |
 | POST | `/api/folders/refresh` | bearer | Re-read the folder list from the server |
 | POST | `/api/folders/{id}/sync` | bearer | Queue a folder sync (202) |
 
@@ -103,17 +116,74 @@ applies only to Inbox. Mail actions reuse the remote-first mail operation servic
 actions run in order and `stopProcessing` skips later rules. A transient failure
 leaves the mail pending for the next sync; one mail's failure never blocks the rest.
 
+### Templates
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/api/templates` | bearer | List compose templates, ordered by name |
+| POST | `/api/templates` | bearer | Create a template (201) |
+| PUT | `/api/templates/{id}` | bearer | Replace a template |
+| DELETE | `/api/templates/{id}` | bearer | Delete a template (204) |
+
+Body: `{name, subject?, bodyText?, bodyHtml?}`; response adds `id`, `createdAt`, `updatedAt`.
+`name` is trimmed, 1-100 characters and unique per account case-insensitively
+(otherwise 409 `template_name_taken`). `subject` is trimmed, single-line and at most
+500 characters (empty allowed). At least one of `bodyText`/`bodyHtml` must be
+non-blank; each is limited like send (`MaxSendBodyChars`). Validation failures return
+a 400 validation problem keyed by `name`, `subject` or `body`. Another account's
+template id returns 404. Templates are deleted with their account.
+
+### Snippets
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/api/snippets` | bearer | List quick snippets in display order (`sortOrder`, then creation time) |
+| POST | `/api/snippets` | bearer | Create a snippet (201); without `sortOrder` it is appended last |
+| PUT | `/api/snippets/{id}` | bearer | Replace a snippet; without `sortOrder` the position is kept |
+| DELETE | `/api/snippets/{id}` | bearer | Delete a snippet (204) |
+
+Body: `{title?, text, sortOrder?}`; response adds `id`, `createdAt`, `updatedAt`.
+Snippets are short reusable body texts without a subject. `text` is trimmed and
+1-2000 characters; `title` is optional, trimmed and at most 100 characters;
+`sortOrder` is 0-99999. Validation failures return a 400 validation problem keyed by
+`text`, `title` or `sortOrder`. Another account's snippet id returns 404. Snippets
+are deleted with their account.
+
+### Trusted senders
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/api/trusted-senders` | bearer | List senders and domains whose remote images load automatically |
+| POST | `/api/trusted-senders` | bearer | Trust a sender or domain (201; an existing entry returns 200) |
+| DELETE | `/api/trusted-senders/{id}` | bearer | Stop trusting a sender or domain (204) |
+
+Body: `{kind: "Sender" | "Domain", value}`; response adds `id`, `createdAt`.
+`value` is trimmed and lower-cased; a `Domain` value may start with `@`. An
+invalid address or domain returns a 400 validation problem keyed by `value`.
+When the sender address or its domain is trusted, `GET /api/mails/{id}` behaves
+as if `remoteContent=allow` was passed, except for mail in Junk or mail whose
+`Authentication-Results` report `dmarc=fail`. Sanitization is unchanged. Another
+account's entry returns 404. Entries are deleted with their account.
+
 ### Mail
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | GET | `/api/mails` | bearer | List mail (`folderId`, `isRead`, `hasAttachments`, `search`, `page`, `pageSize` ≤ 100) |
-| GET | `/api/mails/{id}` | bearer | Mail detail (`isFromMe`: Sent/Drafts mail, or sender equals the account address case-insensitively, in any folder) |
+| GET | `/api/mails/{id}` | bearer | Mail detail (`remoteContent=allow` permits sanitized HTTP(S) image sources for this response; `isFromMe`: Sent/Drafts mail, or sender equals the account address case-insensitively, in any folder) |
 | GET | `/api/search` | bearer | Search cached mail (all filters optional, AND-combined; see below) |
 | GET | `/api/search/remote` | bearer | User-triggered generic IMAP search; imports missing matches before a follow-up `/api/search` |
-| GET | `/api/mails/{mailId}/attachments/{attachmentId}` | bearer | Download an attachment |
-| POST | `/api/mails/send` | bearer + `Idempotency-Key` | Send mail (multipart/form-data) |
+| GET | `/api/mails/{mailId}/attachments/{attachmentId}` | bearer | Download an attachment (Range/206 when storage is seekable) |
+| GET | `/api/compose/limits` | bearer | Current attachment size and count limits |
+| POST | `/api/mails/send` | bearer + `Idempotency-Key` | Send mail (multipart/form-data; optional `identityId` selects a sender identity, otherwise the account address) |
 | GET | `/api/mails/{id}/compose/reply · reply-all · forward` | bearer | Prefilled compose context |
+
+Remote image URLs are neutralized by default. `remoteContent=allow` restores only
+sanitized HTTP(S) `<img src>` values; scripts, event handlers, forms, unsafe URI
+schemes and non-image remote resources stay blocked. The response body includes
+`remoteImageHosts` and `remoteImagesAllowed` for client state.
+
+Mail detail includes `authentication` when the topmost stored `Authentication-Results` header contains an SPF, DKIM, or DMARC result. It is otherwise `null`. Values are limited to `pass`, `fail`, `softfail`, `neutral`, `none`, `temperror`, `permerror`, and `policy`, together with the header's `authservId`. The server does not re-run authentication; clients must present these values as informational only.
 
 `/api/search` filters: `folderId`, `conversationId`, `isRead`, `flagged`,
 `hasAttachment`, `labelId` match exactly; `from` = case-insensitive contains
@@ -140,6 +210,70 @@ Foreign folder IDs return 404.
 | PUT | `/api/drafts/{id}` | bearer | Replace draft (returned `mailId` may differ) |
 | DELETE | `/api/drafts/{id}` | bearer | Delete draft |
 | POST | `/api/drafts/{id}/send` | bearer + `Idempotency-Key` | Send the draft and remove it; retrying a successful send with the same key replays the result (`sent: true`, `draftRemoved: true`) instead of `422 mail_not_draft` |
+
+### Scheduled sends
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| POST | `/api/scheduled-sends` | bearer + `Idempotency-Key` | Schedule a mail for future delivery (multipart/form-data) |
+| GET | `/api/scheduled-sends` | bearer | List account-scoped scheduled sends with attempts and failure state |
+| GET | `/api/scheduled-sends/{id}` | bearer | Get editable content and staged attachment metadata |
+| PUT | `/api/scheduled-sends/{id}` | bearer | Atomically replace a Pending send (multipart/form-data; repeated `keepAttachmentIds` retain staged files, new files are uploaded) |
+| POST | `/api/scheduled-sends/{id}/reschedule` | bearer + new `Idempotency-Key` | Copy a Failed send to a new Pending send |
+| DELETE | `/api/scheduled-sends/{id}` | bearer | Cancel Pending or discard Failed content |
+
+`PUT` uses the same recipients, body, subject, time and attachment limits as
+create. It returns 409 `scheduled_send_already_sent` after dispatch starts,
+`scheduled_send_not_pending` for Failed/Cancelled rows, or
+`scheduled_send_modified` when another edit won. None of those conflicts
+change content. DeliveryUnknown sends are never retried or cancelled.
+### Signatures
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/api/signatures` | bearer | List named signatures plus the per-mode defaults (`{items, defaults}`) |
+| POST | `/api/signatures` | bearer | Create a signature (201) |
+| PUT | `/api/signatures/{id}` | bearer | Replace a signature |
+| DELETE | `/api/signatures/{id}` | bearer | Delete a signature (204); defaults pointing at it are cleared |
+| PUT | `/api/signatures/defaults` | bearer | Replace all three defaults (`{newMailSignatureId?, replySignatureId?, forwardSignatureId?}`; null clears that mode) |
+
+Body: `{name, bodyText, bodyHtml?}`; response adds `id`, `createdAt`, `updatedAt`.
+Signatures are client-inserted text the server never appends to outgoing mail:
+the app picks the default for the compose mode (new, reply/reply-all, forward)
+and inserts its body into the editor. `name` is trimmed, 1-100 characters;
+`bodyText` is trimmed, 1-10000 characters; `bodyHtml` is an optional variant
+trimmed and at most 50000 characters. Validation failures return a 400
+validation problem keyed by `name`, `bodyText` or `bodyHtml`. A defaults id
+that is not owned by the account returns 404 `signature_not_found`, as does
+another account's signature id. Signatures are deleted with their account.
+`PUT /api/account/signature` is the legacy alias of the new-mail default:
+non-blank text creates or updates it (and initializes the reply/forward
+defaults when unset); blank text clears every mode pointing at it.
+
+### Identities
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/api/identities` | bearer | List sender identities (default first) |
+| POST | `/api/identities` | bearer | Create an identity (201) |
+| PUT | `/api/identities/{id}` | bearer | Replace an identity |
+| DELETE | `/api/identities/{id}` | bearer | Delete an identity (204); blocked while a pending scheduled send uses it |
+
+Body: `{emailAddress, displayName?, replyTo?, signatureId?, isDefault}`;
+response returns the same fields plus `id`. At most one default per account:
+creating or updating with `isDefault: true` clears the previous default.
+`emailAddress` must be a bare address (no display name) at most 320
+characters and unique per account case-insensitively (otherwise 409
+`identity_already_exists`); `displayName` is at most 250 characters;
+`replyTo` is an optional bare address; `signatureId` must be owned by the
+account (otherwise 404 `signature_not_found`). Validation failures return a
+400 validation problem keyed by `emailAddress`, `displayName` or `replyTo`.
+Another account's identity id returns 404 `identity_not_found`. Deleting an
+identity referenced by a pending scheduled send returns 409 `identity_in_use`.
+Send, draft and scheduled-send accept an optional `identityId` form field:
+the message goes out with that identity's address, display name and Reply-To
+(a draft sent later resolves the identity from its stored From address).
+Identities are deleted with their account.
 
 ### Mail ops
 

@@ -83,6 +83,14 @@ public sealed class DraftService(
         {
             foreach (var attachment in draft.Attachments)
                 attachments.Add(new(attachment.FileName, attachment.ContentType, await storage.OpenReadAsync(attachment.StoragePath, cancellationToken)));
+            MailIdentity? identity = null;
+            if (!string.IsNullOrWhiteSpace(draft.FromAddress))
+            {
+                identity = await db.MailIdentities.AsNoTracking().SingleOrDefaultAsync(
+                    x => x.MailAccountId == accountId && x.EmailAddress.ToUpper() == draft.FromAddress.ToUpper(), cancellationToken);
+                if (identity is null && !string.Equals(draft.FromAddress, draft.MailAccount!.EmailAddress, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("identity_not_found");
+            }
             var command = new SendMailCommand(
                 accountId,
                 Participants(draft, ParticipantType.To),
@@ -96,7 +104,8 @@ public sealed class DraftService(
                 IdempotencyKey = idempotencyKey,
                 TrustedMessageId = draft.MessageId,
                 TrustedInReplyToMessageId = draft.InReplyToMessageId,
-                TrustedReferences = draft.References
+                TrustedReferences = draft.References,
+                IdentityId = identity?.Id
             };
             result = await sender.SendAsync(accountId, command, correlationId, cancellationToken);
         }
@@ -171,9 +180,13 @@ public sealed class DraftService(
         var threading = existing is null
             ? await ResolveThreadingAsync(account.Id, command.ReplySourceMailId, cancellationToken)
             : new(existing.InReplyToMessageId, existing.References);
+        var identity = command.IdentityId is { } identityId
+            ? await db.MailIdentities.AsNoTracking().SingleOrDefaultAsync(x => x.Id == identityId && x.MailAccountId == account.Id, cancellationToken)
+                ?? throw new InvalidOperationException("identity_not_found")
+            : null;
         return MimeMessageBuilder.Build(
-            account.EmailAddress,
-            account.DisplayName,
+            identity?.EmailAddress ?? account.EmailAddress,
+            string.IsNullOrWhiteSpace(identity?.DisplayName) ? account.DisplayName : identity.DisplayName,
             recipients.To.Select(ToMailbox).ToList(),
             recipients.Cc.Select(ToMailbox).ToList(),
             recipients.Bcc.Select(ToMailbox).ToList(),
@@ -183,7 +196,8 @@ public sealed class DraftService(
             command.Attachments,
             threading.InReplyTo,
             threading.References,
-            existing?.MessageId);
+            existing?.MessageId,
+            identity?.ReplyTo);
     }
 
     private async Task<RemoteAppendResult> AppendAsync(MailAccount account, MailFolderEntity folder, MimeMessage message, CancellationToken cancellationToken) =>

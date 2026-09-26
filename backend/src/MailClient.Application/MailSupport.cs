@@ -36,6 +36,7 @@ public sealed record SendMailCommand(
     public string? TrustedMessageId { get; init; }
     public string? TrustedInReplyToMessageId { get; init; }
     public string? TrustedReferences { get; init; }
+    public Guid? IdentityId { get; init; }
 }
 
 public enum PushEventType
@@ -46,7 +47,8 @@ public enum PushEventType
     /// <summary>Contract-reserved. Not emitted yet: nothing can reliably distinguish
     /// persistent sync failure from transient errors before Phase 9 retry classification.</summary>
     SyncError,
-    SnoozeExpired
+    SnoozeExpired,
+    ReplyReminder
 }
 
 /// <summary>
@@ -64,7 +66,8 @@ public sealed record PushEvent(
     string? Operation = null,
     string? SenderPreview = null,
     string? SubjectPreview = null,
-    string? BodyPreview = null);
+    string? BodyPreview = null,
+    string? RecipientPreview = null);
 
 /// <summary>
 /// Best-effort push delivery. Implementations must never let a push failure fail

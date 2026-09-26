@@ -100,7 +100,7 @@ public static class ConversationEndpoints
                     return m with
                     {
                         BodyText = mail.BodyText,
-                        Body = new MailClient.Application.Mail.MailBodyResponse(body.Html, body.HasRemoteContent, body.RemoteContentHosts, body.TrackingPixelHosts)
+                        Body = new MailClient.Application.Mail.MailBodyResponse(body.Html, body.HasRemoteContent, body.RemoteContentHosts, body.RemoteImageHosts, body.TrackingPixelHosts, body.RemoteImagesAllowed)
                     };
                 }).ToList();
             }

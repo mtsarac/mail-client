@@ -73,6 +73,21 @@ public sealed class MailBodySecurityTests
     }
 
     [Fact]
+    public void Sanitize_AllowsOnlyHttpImagesWhenRequested()
+    {
+        var mail = CreateMail();
+
+        var contract = HtmlMailBodyRenderer.Render(mail, """<script>alert(1)</script><img src="https://images.example/photo.jpg" onerror="alert(2)"><a href="javascript:alert(3)">x</a>""", true);
+
+        Assert.Contains("src=\"https://images.example/photo.jpg\"", contract.Html, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("script", contract.Html, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("onerror", contract.Html, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("javascript:", contract.Html, StringComparison.OrdinalIgnoreCase);
+        Assert.True(contract.RemoteImagesAllowed);
+        Assert.Contains("images.example", contract.RemoteImageHosts);
+    }
+
+    [Fact]
     public void Sanitize_DetectsProtocolRelativeRemoteImages()
     {
         var mail = CreateMail();

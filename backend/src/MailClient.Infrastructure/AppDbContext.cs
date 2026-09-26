@@ -29,8 +29,14 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<MailRule> MailRules => Set<MailRule>();
     public DbSet<MailLabelAssignment> MailLabelAssignments => Set<MailLabelAssignment>();
     public DbSet<MailSnooze> MailSnoozes => Set<MailSnooze>();
+    public DbSet<ReplyReminder> ReplyReminders => Set<ReplyReminder>();
     public DbSet<PinnedMail> PinnedMails => Set<PinnedMail>();
     public DbSet<Contact> Contacts => Set<Contact>();
+    public DbSet<MailTemplate> MailTemplates => Set<MailTemplate>();
+    public DbSet<MailSnippet> MailSnippets => Set<MailSnippet>();
+    public DbSet<TrustedSender> TrustedSenders => Set<TrustedSender>();
+    public DbSet<MailSignature> MailSignatures => Set<MailSignature>();
+    public DbSet<MailIdentity> MailIdentities => Set<MailIdentity>();
 
     protected override void OnModelCreating(ModelBuilder model)
     {
@@ -42,6 +48,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         model.Entity<MailSession>().HasOne(x => x.MailAccount).WithMany(x => x.Sessions).HasForeignKey(x => x.MailAccountId).OnDelete(DeleteBehavior.Cascade);
         model.Entity<MailSession>().HasIndex(x => x.RefreshTokenHash).IsUnique();
         model.Entity<MailFolder>().HasIndex(x => new { x.MailAccountId, x.FullName }).IsUnique();
+        model.Entity<MailFolder>().Property(x => x.Delimiter).HasMaxLength(8);
         model.Entity<MailFolder>().HasOne(x => x.MailAccount).WithMany(x => x.Folders).HasForeignKey(x => x.MailAccountId).OnDelete(DeleteBehavior.Cascade);
         model.Entity<MailFolder>().HasOne(x => x.SyncState).WithOne(x => x.MailFolder).HasForeignKey<SyncState>(x => x.MailFolderId).OnDelete(DeleteBehavior.Cascade);
         model.Entity<MailClient.Domain.Entities.Mail>().HasIndex(x => new { x.MailFolderId, x.Uid }).IsUnique();
@@ -111,6 +118,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         model.Entity<ScheduledSend>().HasIndex(x => new { x.Status, x.SendAtUtc });
         model.Entity<ScheduledSend>().Property(x => x.Subject).HasMaxLength(500);
         model.Entity<ScheduledSend>().Property(x => x.IdempotencyKey).HasMaxLength(200);
+        model.Entity<ScheduledSend>().Property(x => x.Status).IsConcurrencyToken();
+        model.Entity<ScheduledSend>().Property(x => x.Revision).IsConcurrencyToken();
         model.Entity<ScheduledSend>().HasOne(x => x.MailAccount).WithMany().HasForeignKey(x => x.MailAccountId).OnDelete(DeleteBehavior.Cascade);
         model.Entity<ScheduledSendAttachment>().Property(x => x.FileName).HasMaxLength(255);
         model.Entity<ScheduledSendAttachment>().Property(x => x.ContentType).HasMaxLength(150);
@@ -131,6 +140,10 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         model.Entity<MailSnooze>().HasIndex(x => new { x.MailAccountId, x.MailId }).IsUnique();
         model.Entity<MailSnooze>().HasOne<MailAccount>().WithMany().HasForeignKey(x => x.MailAccountId).OnDelete(DeleteBehavior.Cascade);
         model.Entity<MailSnooze>().HasOne<MailClient.Domain.Entities.Mail>().WithMany().HasForeignKey(x => x.MailId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<ReplyReminder>().HasIndex(x => new { x.MailAccountId, x.MailId }).IsUnique();
+        model.Entity<ReplyReminder>().HasIndex(x => new { x.Status, x.DueAtUtc });
+        model.Entity<ReplyReminder>().HasOne<MailAccount>().WithMany().HasForeignKey(x => x.MailAccountId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<ReplyReminder>().HasOne<MailClient.Domain.Entities.Mail>().WithMany().HasForeignKey(x => x.MailId).OnDelete(DeleteBehavior.Cascade);
         model.Entity<PinnedMail>().HasIndex(x => new { x.MailAccountId, x.MailId }).IsUnique();
         model.Entity<PinnedMail>().HasOne<MailAccount>().WithMany().HasForeignKey(x => x.MailAccountId).OnDelete(DeleteBehavior.Cascade);
         model.Entity<PinnedMail>().HasOne<MailClient.Domain.Entities.Mail>().WithMany().HasForeignKey(x => x.MailId).OnDelete(DeleteBehavior.Cascade);
@@ -139,5 +152,28 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         model.Entity<Contact>().Property(x => x.NormalizedEmail).HasMaxLength(320);
         model.Entity<Contact>().Property(x => x.DisplayName).HasMaxLength(250);
         model.Entity<Contact>().HasOne<MailAccount>().WithMany().HasForeignKey(x => x.MailAccountId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<MailTemplate>().HasIndex(x => new { x.MailAccountId, x.NormalizedName }).IsUnique();
+        model.Entity<MailTemplate>().Property(x => x.Name).HasMaxLength(100);
+        model.Entity<MailTemplate>().Property(x => x.NormalizedName).HasMaxLength(100);
+        model.Entity<MailTemplate>().Property(x => x.Subject).HasMaxLength(500);
+        model.Entity<MailTemplate>().HasOne<MailAccount>().WithMany().HasForeignKey(x => x.MailAccountId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<TrustedSender>().HasIndex(x => new { x.MailAccountId, x.Kind, x.Value }).IsUnique();
+        model.Entity<TrustedSender>().Property(x => x.Value).HasMaxLength(320);
+        model.Entity<TrustedSender>().HasOne<MailAccount>().WithMany().HasForeignKey(x => x.MailAccountId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<MailSnippet>().HasIndex(x => new { x.MailAccountId, x.SortOrder });
+        model.Entity<MailSnippet>().Property(x => x.Title).HasMaxLength(100);
+        model.Entity<MailSnippet>().Property(x => x.Text).HasMaxLength(2000);
+        model.Entity<MailSnippet>().HasOne<MailAccount>().WithMany().HasForeignKey(x => x.MailAccountId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<MailSignature>().Property(x => x.Name).HasMaxLength(100);
+        model.Entity<MailSignature>().HasOne<MailAccount>().WithMany().HasForeignKey(x => x.MailAccountId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<MailAccount>().HasOne<MailSignature>().WithMany().HasForeignKey(x => x.DefaultNewSignatureId).OnDelete(DeleteBehavior.SetNull);
+        model.Entity<MailAccount>().HasOne<MailSignature>().WithMany().HasForeignKey(x => x.DefaultReplySignatureId).OnDelete(DeleteBehavior.SetNull);
+        model.Entity<MailAccount>().HasOne<MailSignature>().WithMany().HasForeignKey(x => x.DefaultForwardSignatureId).OnDelete(DeleteBehavior.SetNull);
+        model.Entity<MailIdentity>().Property(x => x.EmailAddress).HasMaxLength(320);
+        model.Entity<MailIdentity>().Property(x => x.DisplayName).HasMaxLength(250);
+        model.Entity<MailIdentity>().Property(x => x.ReplyTo).HasMaxLength(320);
+        model.Entity<MailIdentity>().HasOne<MailAccount>().WithMany().HasForeignKey(x => x.MailAccountId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<MailIdentity>().HasOne<MailSignature>().WithMany().HasForeignKey(x => x.SignatureId).OnDelete(DeleteBehavior.SetNull);
+        model.Entity<ScheduledSend>().HasOne<MailIdentity>().WithMany().HasForeignKey(x => x.IdentityId).OnDelete(DeleteBehavior.SetNull);
     }
 }

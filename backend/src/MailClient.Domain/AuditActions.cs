@@ -28,13 +28,34 @@ public static class AuditActions
     public const string MailAccountAccessRestored = "mail-account.access-restored";
     public const string MailAccountDeletedGracePeriodExpired = "mail-account.deleted-grace-period-expired";
     public const string ScheduledSendCreated = "scheduled-send.created";
+    public const string ScheduledSendUpdated = "scheduled-send.updated";
     public const string ScheduledSendCancelled = "scheduled-send.cancelled";
+    public const string ReplyReminderCreated = "reply-reminder.created";
+    public const string ReplyReminderCancelled = "reply-reminder.cancelled";
     public const string LabelCreated = "label.created";
     public const string LabelUpdated = "label.updated";
     public const string LabelDeleted = "label.deleted";
+    public const string MailFolderCreated = "mail-folder.created";
+    public const string MailFolderRenamed = "mail-folder.renamed";
+    public const string MailFolderDeleted = "mail-folder.deleted";
     public const string ContactCreated = "contact.created";
     public const string ContactUpdated = "contact.updated";
     public const string ContactDeleted = "contact.deleted";
+    public const string TemplateCreated = "template.created";
+    public const string TemplateUpdated = "template.updated";
+    public const string TemplateDeleted = "template.deleted";
+    public const string SnippetCreated = "snippet.created";
+    public const string SnippetUpdated = "snippet.updated";
+    public const string SnippetDeleted = "snippet.deleted";
+    public const string TrustedSenderAdded = "trusted_sender.added";
+    public const string TrustedSenderRemoved = "trusted_sender.removed";
+    public const string SignatureCreated = "signature.created";
+    public const string SignatureUpdated = "signature.updated";
+    public const string SignatureDeleted = "signature.deleted";
+    public const string SignatureDefaultsUpdated = "signature.defaults-updated";
+    public const string IdentityCreated = "identity.created";
+    public const string IdentityUpdated = "identity.updated";
+    public const string IdentityDeleted = "identity.deleted";
     // Stored values predate the dotted naming and are kept so existing audit rows stay comparable.
     public const string RuntimeSettingsUpdated = "runtime_settings_updated";
 }

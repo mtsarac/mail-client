@@ -8,35 +8,32 @@ public sealed record MailBodyContract(
     string Html,
     bool HasRemoteContent,
     IReadOnlyList<string> RemoteContentHosts,
+    IReadOnlyList<string> RemoteImageHosts,
     IReadOnlyList<string> TrackingPixelHosts,
+    bool RemoteImagesAllowed,
     IReadOnlyDictionary<string, Guid> CidAttachmentIds);
 
 public static class HtmlMailBodyRenderer
 {
-    private static readonly string[] TrackingSizeHeuristicsUrlSuffixes = { "pixel", "track", "beacon", "open", "click" };
-
-    public static MailBodyContract Render(MailClient.Domain.Entities.Mail mail, string? rawHtml)
+    public static MailBodyContract Render(MailClient.Domain.Entities.Mail mail, string? rawHtml, bool allowRemoteImages = false)
     {
         if (string.IsNullOrWhiteSpace(rawHtml))
-            return new MailBodyContract(string.Empty, false, [], [], new Dictionary<string, Guid>());
+            return new MailBodyContract(string.Empty, false, [], [], [], allowRemoteImages, new Dictionary<string, Guid>());
 
         var html = ResolveCids(mail, rawHtml, out var cidMapping);
-        var sanitizer = CreateSanitizer();
-        var sanitized = sanitizer.Sanitize(html);
-
+        var sanitized = CreateSanitizer().Sanitize(html);
         var document = new AngleSharp.Html.Parser.HtmlParser().ParseDocument(sanitized);
         var remoteHosts = CollectRemoteHosts(document.Body);
-        var trackingHosts = remoteHosts
-            .Where(host => TrackingSizeHeuristicsUrlSuffixes.Any(host.Contains))
-            .ToList();
-
-        var safe = NeutralizeRemoteResources(sanitized);
+        var remoteImageHosts = CollectRemoteImageHosts(document.Body);
+        NeutralizeRemoteResources(document.Body, allowRemoteImages);
 
         return new MailBodyContract(
-            safe,
+            document.Body?.InnerHtml ?? sanitized,
             remoteHosts.Count > 0,
-            remoteHosts.Distinct().ToList(),
-            trackingHosts,
+            remoteHosts.Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
+            remoteImageHosts.Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
+            [],
+            allowRemoteImages,
             cidMapping);
     }
 
@@ -71,22 +68,28 @@ public static class HtmlMailBodyRenderer
         return resolved;
     }
 
-    private static string NeutralizeRemoteResources(string html)
+    private static void NeutralizeRemoteResources(AngleSharp.Dom.IElement? root, bool allowRemoteImages)
     {
-        var document = new AngleSharp.Html.Parser.HtmlParser().ParseDocument(html);
-        foreach (var element in document.QuerySelectorAll("[src], [srcset], [href], [background], [poster], source, track, video, audio, link"))
+        if (root is null)
+            return;
+
+        foreach (var element in root.QuerySelectorAll("[src], [srcset], [href], [background], [poster], source, track, video, audio, link"))
         {
             foreach (var attribute in new[] { "src", "srcset", "href", "background", "poster" })
             {
                 var value = element.GetAttribute(attribute);
                 if (string.IsNullOrWhiteSpace(value) || !IsRemoteResource(value, attribute))
                     continue;
+                if (allowRemoteImages && element.LocalName == "img" && attribute == "src")
+                {
+                    if (value.StartsWith("//", StringComparison.Ordinal))
+                        element.SetAttribute(attribute, "https:" + value);
+                    continue;
+                }
                 element.SetAttribute($"data-remote-{attribute}", value);
                 element.RemoveAttribute(attribute);
             }
         }
-
-        return document.Body?.InnerHtml ?? html;
     }
 
     private static bool IsRemoteResource(string value, string attribute) =>
@@ -94,6 +97,28 @@ public static class HtmlMailBodyRenderer
         || (attribute == "srcset"
             ? value.Split(',', StringSplitOptions.RemoveEmptyEntries).Any(candidate => IsRemoteResource(candidate.Trim().Split(' ', 2)[0], "src"))
             : Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https");
+
+    private static List<string> CollectRemoteImageHosts(AngleSharp.Dom.IElement? root) =>
+        root is null
+            ? []
+            : root.QuerySelectorAll("img[src]")
+                .Select(element => RemoteHost(element.GetAttribute("src")))
+                .Where(host => host is not null)
+                .Select(host => host!)
+                .ToList();
+
+    private static string? RemoteHost(string? source)
+    {
+        if (string.IsNullOrWhiteSpace(source))
+            return null;
+        if (source.StartsWith("//", StringComparison.Ordinal))
+            source = "https:" + source;
+        return Uri.TryCreate(source, UriKind.Absolute, out var uri)
+            && uri.Scheme is "http" or "https"
+            && !string.IsNullOrEmpty(uri.Host)
+            ? uri.Host
+            : null;
+    }
 
     private static List<string> CollectRemoteHosts(AngleSharp.Dom.IElement? root)
     {
@@ -107,21 +132,9 @@ public static class HtmlMailBodyRenderer
                 ?? element.GetAttribute("href")
                 ?? element.GetAttribute("background")
                 ?? element.GetAttribute("poster");
-            if (string.IsNullOrEmpty(source)
-                || source.StartsWith("cid:", StringComparison.OrdinalIgnoreCase)
-                || source.StartsWith('#')
-                || (source.StartsWith('/') && !source.StartsWith("//")))
-                continue;
-
-            if (source.StartsWith("//", StringComparison.Ordinal))
-                source = "https:" + source;
-
-            if (Uri.TryCreate(source, UriKind.Absolute, out var uri)
-                && uri.Scheme is "http" or "https"
-                && !string.IsNullOrEmpty(uri.Host))
-            {
-                hosts.Add(uri.Host);
-            }
+            var host = RemoteHost(source);
+            if (host is not null)
+                hosts.Add(host);
         }
 
         return hosts;

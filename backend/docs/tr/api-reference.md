@@ -26,7 +26,8 @@ arayüzüne bakın (`/swagger`, yalnızca Development). Mobil istemci için örn
 | POST | `/api/accounts/connect` | anon | Keşif sonucundan posta kutusu oluşturur; token döner |
 | POST | `/api/accounts/connect-manual` | anon | Manuel sunucu ayarlarıyla posta kutusu oluşturur |
 | POST | `/api/accounts/login` | anon | Mevcut posta kutusuna başka cihazdan giriş |
-| GET | `/api/account` | bearer | Geçerli hesap |
+| GET | `/api/account` | bearer | Geçerli hesap (`signature` = varsayılan yeni-posta imzasının düz metni, yoksa null) |
+| PUT | `/api/account/signature` | bearer | Eski uyumluluk: varsayılan yeni-posta imzasını ayarlar veya temizler (boş metin temizler); gövde `{signature}` |
 | POST | `/api/account/reconnect` | bearer | Saklanan kimlik bilgilerini günceller (ör. şifre değişince) |
 | DELETE | `/api/account` | bearer | Hesabı ve verilerini siler |
 | GET | `/api/account/sessions` | bearer | Oturum açmış cihazları/oturumları listeler |
@@ -51,15 +52,24 @@ varsayılan) veya `Private` (yalnız genel metin). Sunucu yöneticisi posta
 önizlemelerini kapattıysa `previewsAllowedByServer` false olur ve push'lar
 `Private` gönderilir. `inboxOnly: false` Gönderilmiş, Taslaklar, Çöp ve Spam
 dışındaki tüm senkronize klasörlerdeki yeni postayı bildirir. `enabled: false`
-yalnız yeni posta ve erteleme bitişi push'larını durdurur; hesap uyarıları
-(yeniden kimlik doğrulama) yine gönderilir.
+yalnız yeni posta, erteleme bitişi ve yanıt hatırlatıcı push'larını durdurur;
+hesap uyarıları (yeniden kimlik doğrulama) yine gönderilir.
 
 Yeni posta push'u sunucu kuralları çalıştıktan sonra gönderilir; kuralın
 bildirilen klasörlerden çıkardığı veya okundu yaptığı posta bildirilmez.
-`new_mail` ve `snooze_expired` Android'de yalnız veri olarak gelir (uygulama
-hızlı eylemlerle gösterir), iOS'ta APNs uyarısı taşır. Süresi dolan
-ertelemeler sunucuda 30 saniyede bir sonlandırılır; her biri bir kez uyanır,
-sahiplenilmeden önce iptal edilen veya ileri alınan erteleme hiç uyanmaz.
+`new_mail`, `snooze_expired` ve `reply_reminder` Android'de yalnız veri olarak
+gelir (uygulama hızlı eylemlerle gösterir), iOS'ta APNs uyarısı taşır. Süresi
+dolan ertelemeler sunucuda 30 saniyede bir sonlandırılır; her biri bir kez
+uyanır, sahiplenilmeden önce iptal edilen veya ileri alınan erteleme hiç
+uyanmaz. Yanıt hatırlatıcılar (`POST /api/mails/{id}/reply-reminder`,
+`GET /api/reply-reminders`, `DELETE /api/mails/{id}/reply-reminder`)
+gönderilmiş postanın yanıtını izler: posta başına tek bekleyen hatırlatıcı,
+yeniden kurma zamanı günceller, sunucu zamanı gelenleri 30 saniyede bir tarar
+— yanıt gelmediyse, Çöp/Spam'e taşınmadıysa ve iptal edilmediyse posta başına
+bir kez `reply_reminder` push'u (`No reply yet`, gizliliğe göre alıcı + konu)
+gönderir. Geçmiş zaman reddedilir (`reply_reminder_in_past`), gönderilmemiş
+posta reddedilir (`reply_reminder_requires_sent_mail`), yanıtlanmış posta
+reddedilir (`reply_reminder_already_replied`).
 
 ### OAuth
 
@@ -79,7 +89,10 @@ sahiplenilmeden önce iptal edilen veya ileri alınan erteleme hiç uyanmaz.
 
 | Metot | Yol | Yetki | Açıklama |
 |---|---|---|---|
-| GET | `/api/folders` | bearer | Önbellekteki klasörleri listeler |
+| GET | `/api/folders` | bearer | Önbellekteki klasörleri listeler (`delimiter` ve `parentId` ile) |
+| POST | `/api/folders` | bearer | Sunucuda klasör oluşturur (`name`, isteğe bağlı `parentId`) |
+| PATCH | `/api/folders/{id}` | bearer | Özel klasörü sunucuda yeniden adlandırır; id'ler korunur |
+| DELETE | `/api/folders/{id}` | bearer | Alt klasörü olmayan boş özel klasörü siler |
 | POST | `/api/folders/refresh` | bearer | Klasör listesini sunucudan yeniden okur |
 | POST | `/api/folders/{id}/sync` | bearer | Klasör sync'ini kuyruğa alır (202) |
 
@@ -105,17 +118,76 @@ remote-first işlem servisini kullanır; işlemler sırayla çalışır, `stopPr
 sonraki kuralları atlar. Geçici hata maili sonraki sync için bekletir; bir mailin
 hatası diğerlerini engellemez.
 
+### Templates
+
+| Metot | Yol | Yetki | Açıklama |
+|---|---|---|---|
+| GET | `/api/templates` | bearer | Yazma şablonlarını ada göre sıralı listeler |
+| POST | `/api/templates` | bearer | Şablon oluşturur (201) |
+| PUT | `/api/templates/{id}` | bearer | Şablonu tümüyle günceller |
+| DELETE | `/api/templates/{id}` | bearer | Şablonu siler (204) |
+
+Gövde: `{name, subject?, bodyText?, bodyHtml?}`; yanıta `id`, `createdAt`, `updatedAt` eklenir.
+`name` kırpılır, 1-100 karakterdir ve hesap içinde büyük/küçük harf duyarsız
+benzersizdir (aksi halde 409 `template_name_taken`). `subject` kırpılır, tek satır ve
+en fazla 500 karakterdir (boş olabilir). `bodyText`/`bodyHtml`'den en az biri dolu
+olmalı; her biri gönderimdeki sınırla (`MaxSendBodyChars`) sınırlıdır. Doğrulama
+hataları `name`, `subject` veya `body` anahtarlı 400 validation problem döner. Başka
+hesabın şablon id'si 404 döner. Şablonlar hesapla birlikte silinir.
+
+### Snippets
+
+| Metot | Yol | Yetki | Açıklama |
+|---|---|---|---|
+| GET | `/api/snippets` | bearer | Hazır metinleri gösterim sırasıyla listeler (`sortOrder`, sonra oluşturulma zamanı) |
+| POST | `/api/snippets` | bearer | Hazır metin oluşturur (201); `sortOrder` yoksa sona eklenir |
+| PUT | `/api/snippets/{id}` | bearer | Hazır metni tümüyle günceller; `sortOrder` yoksa sırası korunur |
+| DELETE | `/api/snippets/{id}` | bearer | Hazır metni siler (204) |
+
+Gövde: `{title?, text, sortOrder?}`; yanıta `id`, `createdAt`, `updatedAt` eklenir.
+Hazır metinler konusuz, kısa ve tekrar kullanılabilir gövde metinleridir. `text`
+kırpılır ve 1-2000 karakterdir; `title` opsiyonel, kırpılır ve en fazla 100
+karakterdir; `sortOrder` 0-99999. Doğrulama hataları `text`, `title` veya
+`sortOrder` anahtarlı 400 validation problem döner. Başka hesabın hazır metin id'si
+404 döner. Hazır metinler hesapla birlikte silinir.
+
+### Güvenilir göndericiler
+
+| Metot | Yol | Yetki | Açıklama |
+|---|---|---|---|
+| GET | `/api/trusted-senders` | bearer | Uzak görselleri otomatik yüklenen gönderici ve alan adlarını listeler |
+| POST | `/api/trusted-senders` | bearer | Gönderici veya alan adını güvenilir yapar (201; kayıt zaten varsa 200) |
+| DELETE | `/api/trusted-senders/{id}` | bearer | Göndericiye veya alan adına güveni kaldırır (204) |
+
+Gövde: `{kind: "Sender" | "Domain", value}`; yanıta `id`, `createdAt` eklenir.
+`value` kırpılır ve küçük harfe çevrilir; `Domain` değeri `@` ile başlayabilir.
+Geçersiz adres veya alan adı `value` anahtarlı 400 validation problem döner.
+Gönderici adresi ya da alan adı güvenilirse `GET /api/mails/{id}`,
+`remoteContent=allow` verilmiş gibi davranır; Junk klasöründeki postalar ve
+`Authentication-Results` başlığı `dmarc=fail` bildiren postalar hariçtir.
+Temizleme kuralları değişmez. Başka hesabın kaydı 404 döner. Kayıtlar hesapla
+birlikte silinir.
+
 ### Mail
 
 | Metot | Yol | Yetki | Açıklama |
 |---|---|---|---|
 | GET | `/api/mails` | bearer | Posta listesi (`folderId`, `isRead`, `hasAttachments`, `search`, `page`, `pageSize` ≤ 100) |
-| GET | `/api/mails/{id}` | bearer | Posta detayı (`isFromMe`: Sent/Drafts postası ya da gönderen hesabın adresiyle büyük/küçük harf duyarsız aynıysa, klasörden bağımsız) |
+| GET | `/api/mails/{id}` | bearer | Posta detayı (`remoteContent=allow` yalnızca bu yanıtta temizlenmiş HTTP(S) görsellerine izin verir; `isFromMe`: Sent/Drafts postası ya da gönderen hesabın adresiyle büyük/küçük harf duyarsız aynıysa, klasörden bağımsız) |
 | GET | `/api/search` | bearer | Önbellekteki postada arama (tüm filtreler opsiyonel, AND; aşağıya bakın) |
 | GET | `/api/search/remote` | bearer | Kullanıcının başlattığı genel IMAP araması; eksik eşleşmeleri içeri alır, ardından `/api/search` tekrar çağrılır |
-| GET | `/api/mails/{mailId}/attachments/{attachmentId}` | bearer | Eki indirir |
-| POST | `/api/mails/send` | bearer + `Idempotency-Key` | Posta gönderir (multipart/form-data) |
+| GET | `/api/mails/{mailId}/attachments/{attachmentId}` | bearer | Eki indirir (depolama aranabilirse Range/206) |
+| GET | `/api/compose/limits` | bearer | Güncel ek boyutu ve sayı sınırları |
+| POST | `/api/mails/send` | bearer + `Idempotency-Key` | Posta gönderir (multipart/form-data; opsiyonel `identityId` bir gönderici kimliği seçer, verilmezse hesap adresi) |
 | GET | `/api/mails/{id}/compose/reply · reply-all · forward` | bearer | Hazır doldurulmuş yazma bağlamı |
+
+Uzak görsel URL'leri varsayılan olarak etkisizleştirilir. `remoteContent=allow`
+yalnızca temizlenmiş HTTP(S) `<img src>` değerlerini geri açar; script, event
+handler, form, güvensiz URI şeması ve görsel olmayan uzak kaynaklar engelli
+kalır. Yanıt gövdesi istemci durumu için `remoteImageHosts` ve
+`remoteImagesAllowed` alanlarını içerir.
+
+Posta detayı, saklanan en üst `Authentication-Results` başlığı SPF, DKIM veya DMARC sonucu içeriyorsa `authentication` döner; aksi halde alan `null` olur. Sonuçlar `authservId` ile birlikte `pass`, `fail`, `softfail`, `neutral`, `none`, `temperror`, `permerror` ve `policy` değerleriyle sınırlıdır. Sunucu doğrulamayı yeniden çalıştırmaz; istemciler bu değerleri yalnız bilgi amaçlı göstermelidir.
 
 `/api/search` filtreleri: `folderId`, `conversationId`, `isRead`, `flagged`,
 `hasAttachment`, `labelId` tam eşleşir; `from` = gönderen adresi veya görünen
@@ -142,6 +214,70 @@ Başka hesaba ait klasör id'si 404 döner.
 | PUT | `/api/drafts/{id}` | bearer | Taslağı değiştirir (dönen `mailId` farklı olabilir) |
 | DELETE | `/api/drafts/{id}` | bearer | Taslağı siler |
 | POST | `/api/drafts/{id}/send` | bearer + `Idempotency-Key` | Taslağı gönderir ve siler; başarılı gönderim aynı key ile tekrarlanırsa `422 mail_not_draft` yerine kayıtlı sonuç döner (`sent: true`, `draftRemoved: true`) |
+
+### Zamanlanmış gönderimler
+
+| Metot | Yol | Yetki | Açıklama |
+|---|---|---|---|
+| POST | `/api/scheduled-sends` | bearer + `Idempotency-Key` | Postayı ileri bir tarihte göndermek üzere zamanlar (multipart/form-data) |
+| GET | `/api/scheduled-sends` | bearer | Hesaba ait gönderimleri deneme ve hata durumlarıyla listeler |
+| GET | `/api/scheduled-sends/{id}` | bearer | Düzenlenebilir içeriği ve bekletilen ek üstverisini getirir |
+| PUT | `/api/scheduled-sends/{id}` | bearer | Pending gönderimi atomik değiştirir (multipart/form-data; tekrarlanan `keepAttachmentIds` mevcut ekleri korur, yeni dosyalar yüklenir) |
+| POST | `/api/scheduled-sends/{id}/reschedule` | bearer + yeni `Idempotency-Key` | Failed gönderimi yeni Pending gönderime kopyalar |
+| DELETE | `/api/scheduled-sends/{id}` | bearer | Pending gönderimi iptal eder veya Failed içeriği siler |
+
+`PUT`, oluşturmayla aynı alıcı, gövde, konu, zaman ve ek sınırlarını uygular.
+Dispatch başladıysa 409 `scheduled_send_already_sent`, Failed/Cancelled kayıt
+için `scheduled_send_not_pending`, başka düzenleme önce tamamlandıysa
+`scheduled_send_modified` döner. Bu çakışmalar içeriği değiştirmez.
+DeliveryUnknown gönderimler tekrar denenmez ve iptal edilemez.
+### Signatures
+
+| Metot | Yol | Yetki | Açıklama |
+|---|---|---|---|
+| GET | `/api/signatures` | bearer | Adlandırılmış imzaları ve mod başına varsayılanları listeler (`{items, defaults}`) |
+| POST | `/api/signatures` | bearer | İmza oluşturur (201) |
+| PUT | `/api/signatures/{id}` | bearer | İmzanın yerine yenisini yazar |
+| DELETE | `/api/signatures/{id}` | bearer | İmza siler (204); ona bakan varsayılanlar temizlenir |
+| PUT | `/api/signatures/defaults` | bearer | Üç varsayılanı birden değiştirir (`{newMailSignatureId?, replySignatureId?, forwardSignatureId?}`; null ilgili modu temizler) |
+
+Gövde: `{name, bodyText, bodyHtml?}`; yanıta `id`, `createdAt`, `updatedAt` eklenir.
+İmzalar istemcinin düzenleyiciye eklediği metindir, sunucu giden postaya asla
+kendisi eklemez: uygulama yazma moduna (yeni, yanıt/tümünü yanıtla, ilet)
+ait varsayılanı seçip gövdesini düzenleyiciye yerleştirir. `name` kırpılır,
+1-100 karakter; `bodyText` kırpılır, 1-10000 karakter; `bodyHtml` opsiyonel
+varyanttır, kırpılır ve en fazla 50000 karakterdir. Doğrulama hataları
+`name`, `bodyText` veya `bodyHtml` anahtarlı 400 validation problem döner.
+Hesaba ait olmayan bir varsayılan id'si 404 `signature_not_found` döner;
+başka hesaba ait imza id'si için de aynı kod döner. İmzalar hesapla birlikte
+silinir. `PUT /api/account/signature`, yeni-posta varsayılanının eski adıdır:
+boş olmayan metin onu oluşturur veya günceller (ve yanıt/ilet varsayılanı
+boşsa onları da başlatır); boş metin ona bakan her modu temizler.
+
+### Identities
+
+| Metot | Yol | Yetki | Açıklama |
+|---|---|---|---|
+| GET | `/api/identities` | bearer | Gönderici kimliklerini listeler (varsayılan önce) |
+| POST | `/api/identities` | bearer | Kimlik oluşturur (201) |
+| PUT | `/api/identities/{id}` | bearer | Kimliğin yerine yenisini yazar |
+| DELETE | `/api/identities/{id}` | bearer | Kimlik siler (204); bekleyen zamanlanmış gönderim kullanıyorsa engellenir |
+
+Gövde: `{emailAddress, displayName?, replyTo?, signatureId?, isDefault}`;
+yanıt aynı alanlara `id` ekler. Hesap başına en fazla bir varsayılan olur:
+`isDefault: true` ile oluşturma/güncelleme önceki varsayılanı temizler.
+`emailAddress` görünen adsız yalın adres olmalı, en fazla 320 karakter ve
+hesap içinde büyük/küçük harf duyarsız benzersizdir (aksi halde 409
+`identity_already_exists`); `displayName` en fazla 250 karakter; `replyTo`
+opsiyonel yalın adrestir; `signatureId` hesaba ait olmalı (değilse 404
+`signature_not_found`). Doğrulama hataları `emailAddress`, `displayName`
+veya `replyTo` anahtarlı 400 validation problem döner. Başka hesaba ait
+kimlik id'si 404 `identity_not_found` döner. Bekleyen zamanlanmış gönderimin
+kullandığı kimliği silmek 409 `identity_in_use` döner. Gönderim, taslak ve
+zamanlanmış gönderim opsiyonel `identityId` form alanı kabul eder: mesaj o
+kimliğin adresi, görünen adı ve Reply-To değeriyle gider (daha sonra
+gönderilen taslak, kimliği kayıtlı From adresinden çözer). Kimlikler hesapla
+birlikte silinir.
 
 ### Mail ops
 

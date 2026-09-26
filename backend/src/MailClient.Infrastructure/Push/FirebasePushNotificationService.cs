@@ -100,15 +100,17 @@ public sealed class FirebasePushNotificationService(
         PushEventType.AccountReauthenticationRequired => push.ReauthenticationEnabled,
         PushEventType.SyncError => push.SyncErrorEnabled,
         PushEventType.SnoozeExpired => push.SnoozeExpiredEnabled,
+        PushEventType.ReplyReminder => push.ReplyReminderEnabled,
         _ => false
     };
 
     private static bool IsMailNotification(PushEventType type) =>
-        type is PushEventType.NewMail or PushEventType.SnoozeExpired;
+        type is PushEventType.NewMail or PushEventType.SnoozeExpired or PushEventType.ReplyReminder;
 
     private static (string? Title, string? Body) NotificationText(PushEvent pushEvent, NotificationPrivacy privacy)
     {
         var sender = string.IsNullOrWhiteSpace(pushEvent.SenderPreview) ? null : pushEvent.SenderPreview;
+        var recipient = string.IsNullOrWhiteSpace(pushEvent.RecipientPreview) ? null : pushEvent.RecipientPreview;
         var subject = pushEvent.SubjectPreview ?? string.Empty;
         var details = privacy == NotificationPrivacy.Full && !string.IsNullOrWhiteSpace(pushEvent.BodyPreview)
             ? $"{subject}\n{pushEvent.BodyPreview}"
@@ -121,6 +123,10 @@ public sealed class FirebasePushNotificationService(
                 "Snoozed mail is back",
                 sender is null ? details : $"{sender}: {details}"),
             PushEventType.SnoozeExpired => ("Snoozed mail is back", "A snoozed message is back in your inbox."),
+            PushEventType.ReplyReminder when privacy != NotificationPrivacy.Private => (
+                "No reply yet",
+                recipient is null ? details : $"{recipient}: {details}"),
+            PushEventType.ReplyReminder => ("No reply yet", "A sent message has not received a reply."),
             PushEventType.MailStateChanged => (null, null),
             PushEventType.AccountReauthenticationRequired => ("Mail account needs attention", "Reconnect your mail account to continue syncing."),
             PushEventType.SyncError => ("Mail sync delayed", "Mail synchronization is having trouble. Open the app for details."),
@@ -139,6 +145,7 @@ public sealed class FirebasePushNotificationService(
                 PushEventType.AccountReauthenticationRequired => "account_reauthentication_required",
                 PushEventType.SyncError => "sync_error",
                 PushEventType.SnoozeExpired => "snooze_expired",
+                PushEventType.ReplyReminder => "reply_reminder",
                 _ => throw new InvalidOperationException("Unknown push event type.")
             },
             ["accountId"] = pushEvent.MailAccountId.ToString()
@@ -158,6 +165,8 @@ public sealed class FirebasePushNotificationService(
             return data;
         if (!string.IsNullOrWhiteSpace(pushEvent.SenderPreview))
             data["sender"] = pushEvent.SenderPreview;
+        if (!string.IsNullOrWhiteSpace(pushEvent.RecipientPreview))
+            data["recipient"] = pushEvent.RecipientPreview;
         if (!string.IsNullOrWhiteSpace(pushEvent.SubjectPreview))
             data["subject"] = pushEvent.SubjectPreview;
         if (privacy == NotificationPrivacy.Full && !string.IsNullOrWhiteSpace(pushEvent.BodyPreview))

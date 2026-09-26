@@ -230,6 +230,7 @@ public sealed class AccountConnectionService(
                     FullName = folder.FullName,
                     FolderType = folder.FolderType,
                     UidValidity = folder.UidValidity,
+                    Delimiter = folder.Delimiter,
                     IsSyncEnabled = MailFolder.SyncedByDefault(account.FolderSyncScope, folder.FolderType),
                     IsAvailable = true
                 });
@@ -239,6 +240,7 @@ public sealed class AccountConnectionService(
                 row.Name = folder.Name;
                 row.FolderType = folder.FolderType;
                 row.UidValidity = folder.UidValidity;
+                row.Delimiter = folder.Delimiter;
                 row.IsAvailable = true;
             }
         }

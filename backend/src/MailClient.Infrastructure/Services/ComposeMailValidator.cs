@@ -13,8 +13,6 @@ namespace MailClient.Infrastructure.Services;
 /// </summary>
 internal static class ComposeMailValidator
 {
-    public const int MaxAttachmentCount = 20;
-
     public static void ValidateIdempotencyKey(string key)
     {
         if (string.IsNullOrWhiteSpace(key))
@@ -33,7 +31,7 @@ internal static class ComposeMailValidator
 
     public static void ValidateAttachments(IReadOnlyList<SendMailAttachment> attachments, RuntimeLimitSettings limits)
     {
-        if (attachments.Count > MaxAttachmentCount)
+        if (attachments.Count > RuntimeLimitSettings.MaxAttachmentCount)
             throw new InvalidOperationException("too_many_attachments");
         if (!AttachmentsWithinLimits(attachments, limits))
             throw new InvalidOperationException("attachment_too_large");

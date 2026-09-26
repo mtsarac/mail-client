@@ -23,11 +23,12 @@ Bir IMAP/SMTP posta istemcisi API'si. Bir hesap aynı anda birden çok cihazdan 
 5. [Mail — okuma & arama](#3-mail--okuma--arama)
 6. [Mail — durum & taşıma](#4-mail--durum--taşıma)
 7. [Yazma, taslak & gönderme](#5-yazma-taslak--gönderme)
-8. [Konuşmalar](#6-konuşmalar)
-9. [Cihaz & push bildirimleri](#7-cihaz--push-bildirimleri)
-10. [Hata kodları](#8-hata-kodları)
-11. [Enum referansı](#9-enum-referansı)
-12. [Prod erişim listesi (allowlist)](#10-prod-erişim-listesi-allowlist)
+8. [İmzalar & gönderici kimlikleri](#6-i̇mzalar--gönderici-kimlikleri)
+9. [Konuşmalar](#7-konuşmalar)
+10. [Cihaz & push bildirimleri](#8-cihaz--push-bildirimleri)
+11. [Hata kodları](#9-hata-kodları)
+12. [Enum referansı](#10-enum-referansı)
+13. [Prod erişim listesi (allowlist)](#11-prod-erişim-listesi-allowlist)
 
 ---
 
@@ -237,9 +238,21 @@ Oturum açmış hesabın özet bilgisi — uygulama açılışında "kim bağlı
   "emailAddress": "person@example.com",
   "displayName": "",
   "provider": "Custom",
-  "status": "Active"
+  "status": "Active",
+  "signature": "… | null"
 }
 ```
+
+`signature`, varsayılan yeni-posta imzasının düz metnidir (yoksa `null`). Eski
+tek-imza uyumluluğu için korunur; tam liste için aşağıdaki imza bölümüne bak.
+
+### `PUT /api/account/signature`
+**Auth:** Bearer · **Gövde:** `{ "signature": "… | null" }`
+
+Eski tek-imza uyumluluğu: boş olmayan metin varsayılan yeni-posta imzasını
+oluşturur veya günceller (yanıt/ilet varsayılanı boşsa onları da başlatır);
+boş/`null` metin ona bakan her modu temizler. `200 OK` güncel `AccountResponse`
+döner. Tam imza yönetimi için aşağıdaki imza bölümünü kullan.
 
 ### `POST /api/account/reconnect`
 **Auth:** Bearer
@@ -318,7 +331,7 @@ Hesabın posta bildirim tercihleri; hesaba oturum açmış tüm cihazlarda geçe
 {"enabled":true,"inboxOnly":true,"privacy":"Limited","previewsAllowedByServer":true}
 ```
 
-`PUT` gövdesi: `{"enabled":true,"inboxOnly":false,"privacy":"Full"}`. `privacy`: `Full` (gönderen + konu + kısa metin önizlemesi), `Limited` (gönderen + konu, varsayılan), `Private` (yalnız "yeni posta"). Bilinmeyen `privacy` `400` validation problem döner. `previewsAllowedByServer: false` ise sunucu yöneticisi önizlemeyi kapatmıştır ve push'lar `Private` gider. `inboxOnly: false` Gönderilmiş/Taslaklar/Çöp/Spam dışındaki tüm senkronize klasörlerdeki yeni postayı bildirir. `enabled: false` yalnız `new_mail` ve `snooze_expired` push'larını durdurur.
+`PUT` gövdesi: `{"enabled":true,"inboxOnly":false,"privacy":"Full"}`. `privacy`: `Full` (gönderen + konu + kısa metin önizlemesi), `Limited` (gönderen + konu, varsayılan), `Private` (yalnız "yeni posta"). Bilinmeyen `privacy` `400` validation problem döner. `previewsAllowedByServer: false` ise sunucu yöneticisi önizlemeyi kapatmıştır ve push'lar `Private` gider. `inboxOnly: false` Gönderilmiş/Taslaklar/Çöp/Spam dışındaki tüm senkronize klasörlerdeki yeni postayı bildirir. `enabled: false` yalnız `new_mail`, `snooze_expired` ve `reply_reminder` push'larını durdurur.
 
 ### `GET/POST /api/rules`, `PUT/DELETE /api/rules/{id}`
 **Auth:** Bearer
@@ -373,13 +386,46 @@ Hesabın tüm klasörlerini döner (dizi, sayfalama yok).
   "isSyncEnabled": true,
   "isAvailable": true,
   "unreadCount": 3,
-  "totalCount": 142
+  "totalCount": 142,
+  "delimiter": "/",
+  "parentId": null
 }
 ```
 
 `unreadCount` / `totalCount` silinmiş işaretli (`deleted`) mailler hariç, sunucudaki önbellekten sayılır — drawer rozetleri için sayfalardan hesap yapma, bunları kullan.
 
 `folderType` filtrelemede kullanışlı: `Inbox · Sent · Drafts · Trash · Junk · Archive · Custom`. `isAvailable: false` olan klasörler sunucudan silinmiş demektir, UI'da gizle.
+
+`delimiter` sunucunun IMAP hiyerarşi ayracıdır (`/`, `.` veya bilinmiyorsa `null`). `parentId` bir üst klasörün id'sidir, en üstte `null`. Üst klasör `Custom` olmayabilir (her şeyi `INBOX` altında tutan sunucular); yalnızca özel klasörlerden ağaç kuruyorsan listede olmayan üstü kök say. Bu alanlar eklenmeden önce keşfedilmiş klasörlerde `delimiter`, bir sonraki `POST /api/folders/refresh`'e kadar `null` kalır.
+
+### `POST /api/folders`
+**Auth:** Bearer · **Gövde:** `{ "name": "Mobil", "parentId": "<guid>" | null }`
+
+Klasörü önce mail sunucusunda oluşturur (üst klasörün altında ya da kişisel ad alanının en üstünde), sonra önbelleğe ekler. `201 Created` + klasör nesnesi (`GET /api/folders` elemanıyla aynı şekil). Ad kırpılır; boş, 200 karakterden uzun, kontrol karakteri ya da ayraç içeren ad reddedilir.
+
+### `PATCH /api/folders/{id}`
+**Auth:** Bearer · **Gövde:** `{ "name": "Yeni ad" }`
+
+Yalnızca `Custom` klasörü aynı üst klasör içinde sunucuda yeniden adlandırır. Id'ler korunur; alt klasörlerin `fullName`'i değişir. `200 OK` + güncel klasör.
+
+### `DELETE /api/folders/{id}`
+**Auth:** Bearer
+
+Yalnızca `Custom` klasörü sunucudan siler, `204`. Alt klasörü varsa ya da sunucuda hâlâ mail içeriyorsa reddedilir; mail hiçbir zaman örtük olarak silinmez. Kullanıcıdan önce postaları taşımasını iste.
+
+| Durum | code | Anlamı |
+|---|---|---|
+| 400 | `invalid_folder_name` | Ad boş/çok uzun/ayraç içeriyor. |
+| 404 | `mail_folder_not_found` | Klasör ya da üst klasör yok / başka hesaba ait. |
+| 409 | `mail_folder_exists` | Aynı yerde aynı adda klasör var (büyük/küçük harf duyarsız). |
+| 409 | `mail_folder_has_children` | Silmeden önce alt klasörleri sil. |
+| 409 | `mail_folder_not_empty` | Klasörde mail var. |
+| 422 | `mail_folder_protected` | Standart klasör (Gelen, Gönderilen…) değiştirilemez. |
+| 422 | `mail_folder_rejected` | Sunucu işlemi reddetti. |
+| 409 | `mail_account_needs_reauthentication` | Reconnect gerekli. |
+| 502 | `mail_provider_unavailable` / `mail_server_unreachable` / `mail_tls_failed` | Sunucuya ulaşılamadı; yerel durum değişmedi. |
+
+Maili herhangi bir klasöre (özel olanlar dahil) taşımak mevcut `POST /api/mails/{id}/move` / `POST /api/mails/bulk/move` ile yapılır; hedef `folderId` mailin hesabına ait olmalıdır.
 
 ### `POST /api/folders/refresh`
 **Auth:** Bearer
@@ -464,12 +510,13 @@ Tam mail içeriği: gövde, katılımcılar, header'lar, ekler.
   "from": [{ "id": "…", "type": "From", "address": "sender@example.com", "displayName": "Gönderen", "sortOrder": 0 }],
   "to": ["…"], "cc": [], "bcc": [], "replyTo": [],
   "bodyText": "…",
-  "body": { "html": "…", "hasRemoteContent": false, "remoteContentHosts": [], "trackingPixelHosts": [] },
+  "body": { "html": "…", "hasRemoteContent": false, "remoteContentHosts": [], "remoteImageHosts": [], "trackingPixelHosts": [], "remoteImagesAllowed": false },
   "isRead": true, "answered": false, "flagged": false, "draft": false,
   "deleted": false, "recent": false, "hasAttachments": true,
   "sentAt": "…", "receivedAt": "…", "internalDate": "…",
   "conversationId": "806acf4c-…", "isFromMe": false,
   "headers": [{ "name": "X-Mailer", "value": "…" }],
+  "authentication": { "authservId": "mx.example.com", "spf": "pass", "dkim": "pass", "dmarc": "fail" },
   "attachments": [{
     "id": "…", "fileName": "rapor.pdf", "contentType": "application/pdf",
     "sizeBytes": 48211, "isInline": false, "contentId": "", "contentDisposition": "attachment"
@@ -479,12 +526,20 @@ Tam mail içeriği: gövde, katılımcılar, header'lar, ekler.
 
 `conversationId` her zaman dolu gelir (tek mailse kendi konuşması); `isFromMe` Gönderilmiş/Taslak klasöründeki mailler için ya da gönderen adresi hesabın adresiyle (büyük/küçük harf duyarsız) aynıysa hangi klasörde olursa olsun `true`. HTML-only maillerde `bodyText` sunucuda HTML'den üretilir (yalnızca yeni senkronlanan mailler için). `body.html` sunucuda üretilen render edilebilir HTML'dir; yalnızca metin gerekirse `bodyText`. `isInline: true` ekler HTML içinde `cid:<contentId>` ile referanslanır — WebView'de bu URL'leri ek indirme ucuyla eşleştirmen gerekir. Bulunamazsa `404 mail_not_found`.
 
-`body.hasRemoteContent` true ise HTML gövdede dış kaynaklı içerik (izleme pikseli olabilir) var — `WebView`'de uzak içerik yüklemeden önce kullanıcıya sor.
+`body.hasRemoteContent` HTML gövdede dış kaynaklı içerik bulunduğunu, `body.remoteImageHosts` uzak görsel hostlarını gösterir. Varsayılan yanıtta bu görsellerin `src` değerleri etkisizdir ve `body.remoteImagesAllowed` false olur. Kullanıcı "Görselleri yükle" dediğinde aynı maili `GET /api/mails/{id}?remoteContent=allow` ile yeniden çek; yalnızca temizlenmiş HTTP(S) görselleri açılır. Script, event handler, form, `javascript:`/`data:` gibi şemalar ve görsel olmayan uzak kaynaklar yine engelli kalır. Bu izin istemcide mail başına ve yalnızca açık uygulama oturumunda tutulmalıdır.
+`authentication`, yalnız alınan iletide saklanan en üst `Authentication-Results` başlığı geçerli bir SPF, DKIM veya DMARC sonucu taşıyorsa gelir; aksi halde `null` olur. Sonuçlar `pass`, `fail`, `softfail`, `neutral`, `none`, `temperror`, `permerror` veya `policy` değerlerinden biridir. Sunucu doğrulamayı yeniden çalıştırmaz; istemci `authservId` ile birlikte bu alanı yalnız bilgi amaçlı göstermeli, güven kararı olarak kullanmamalıdır.
 
 ### `GET /api/mails/{mailId}/attachments/{attachmentId}`
 **Auth:** Bearer
 
-Ham dosya baytlarını döner (`Content-Type` ekin gerçek türü, `Content-Disposition` dosya adını taşır); JSON değildir, `Authorization` header'ıyla akış olarak indir (`Dio` `ResponseType.bytes`). `404` ek hesaba/mail'e ait değilse ya da yoksa.
+Ham dosya baytlarını döner (`Content-Type` ekin gerçek türü, `Content-Disposition` dosya adını taşır); JSON değildir, `Authorization` header'ıyla akış olarak indir. `404` ek hesaba/mail'e ait değilse ya da yoksa.
+
+`Range: bytes=N-` desteklenir: depolama aranabilirse (varsayılan yerel depolama) `206 Partial Content` + `Content-Range` döner, yarım kalan indirme kaldığı yerden sürer. S3 gibi depolamalarda `200` ve tam gövde gelebilir; istemci ikisini de kabul edip `200`'de baştan yazmalıdır. İlerleme için `Content-Length`, yoksa ekin `sizeBytes` değeri kullanılabilir; bütünlük kontrolü yalnızca `Content-Length` ile yapılmalıdır.
+
+### `GET /api/compose/limits`
+**Auth:** Bearer
+
+`{ "maxAttachmentBytes": 26214400, "maxMessageAttachmentBytes": 52428800, "maxAttachmentCount": 20 }` — send, taslak ve zamanlanmış gönderimin uyguladığı güncel sınırlar. Yönetici değiştirebilir; istemciye gömme, dosya seçildiğinde bununla kontrol et. Sınır aşılırsa sunucu yine `400 attachment_too_large` / `too_many_attachments` döner. Bilinmeyen/bozuk ek `Content-Type`'ı `application/octet-stream` olarak gönderilir; dosya adı ve baytlar korunur.
 
 ---
 
@@ -593,7 +648,7 @@ Bir maile yanıt/ilet ekranını önceden doldurmak için gereken alanları dön
 ### `POST /api/drafts`
 **Auth:** Bearer · **Gövde:** `multipart/form-data`
 
-Yeni taslak oluşturur (sunucu tarafında IMAP `APPEND` ile). Alanlar form-data: `To` (çoklu), `Cc`, `Bcc`, `subject`, `bodyHtml` ve/veya `bodyText`, `replySourceMailId` (opsiyonel), dosya alanları ek olarak eklenir (alan adı serbest, her dosya bir ek). Form doğrulama hataları gönderimdeki kodlarla aynıdır. `reconciliationPending: true` ise `mailId` henüz sunucuyla eşleşmemiştir; kısa süre sonra taslak listesini/`GET /drafts/{id}`'yi tazele. `warning` doluysa kullanıcıya göster.
+Yeni taslak oluşturur (sunucu tarafında IMAP `APPEND` ile). Alanlar form-data: `To` (çoklu), `Cc`, `Bcc`, `subject`, `bodyHtml` ve/veya `bodyText`, `replySourceMailId` (opsiyonel), `identityId` (opsiyonel gönderici kimliği — bilinmeyen id `404 identity_not_found` döner), dosya alanları ek olarak eklenir (alan adı serbest, her dosya bir ek). Form doğrulama hataları gönderimdeki kodlarla aynıdır. `reconciliationPending: true` ise `mailId` henüz sunucuyla eşleşmemiştir; kısa süre sonra taslak listesini/`GET /drafts/{id}`'yi tazele. `warning` doluysa kullanıcıya göster.
 
 | Durum | code | Anlamı |
 |---|---|---|
@@ -645,7 +700,7 @@ Taslağı olduğu gibi gönderir, gövde yok. `Idempotency-Key` header'ı **zoru
 ### `POST /api/mails/send`
 **Auth:** Bearer · **Gövde:** `multipart/form-data`
 
-Taslaksız doğrudan gönderim. Form alanları: `To` (çoklu, en az bir tane), `Cc`, `Bcc`, `subject`, `bodyHtml` ve/veya `bodyText`, en fazla 20 dosya eki, `replySourceMailId` (yanıtlarken). `Idempotency-Key` header'ı zorunlu.
+Taslaksız doğrudan gönderim. Form alanları: `To` (çoklu, en az bir tane), `Cc`, `Bcc`, `subject`, `bodyHtml` ve/veya `bodyText`, en fazla 20 dosya eki, `replySourceMailId` (yanıtlarken), `identityId` (opsiyonel gönderici kimliği — bilinmeyen id `404 identity_not_found` döner). `Idempotency-Key` header'ı zorunlu.
 
 ```json
 // 200 OK
@@ -679,7 +734,7 @@ Bir maili şimdi değil, belirli bir zamanda göndermek için. Sunucu arka pland
 ### `POST /api/scheduled-sends`
 **Auth:** Bearer · **Gövde:** `multipart/form-data`
 
-`POST /api/mails/send` ile aynı alanlar (`To`, `Cc`, `Bcc`, `subject`, `bodyHtml`/`bodyText`, en fazla 20 dosya eki, `replySourceMailId`) artı **`sendAtUtc`** (ISO-8601, zorunlu, gelecekte bir zaman olmalı). `Idempotency-Key` header'ı zorunlu.
+`POST /api/mails/send` ile aynı alanlar (`To`, `Cc`, `Bcc`, `subject`, `bodyHtml`/`bodyText`, en fazla 20 dosya eki, `replySourceMailId`, `identityId`) artı **`sendAtUtc`** (ISO-8601, zorunlu, gelecekte bir zaman olmalı). `Idempotency-Key` header'ı zorunlu.
 
 ```json
 // 201 Created
@@ -711,26 +766,164 @@ Hesabın tüm zamanlanmış gönderimlerini döner (dizi, sayfalama yok), `sendA
     "status": "Pending",
     "createdAtUtc": "2026-09-23T18:12:00Z",
     "sentMailId": null,
-    "failureReason": null
+    "failureReason": null,
+    "attemptCount": 0,
+    "nextAttemptAtUtc": null
   }]
 }
 ```
 
-`status`: `Pending · Sent · Cancelled · Failed`. `sentMailId` yalnızca `Sent` durumunda ve Gönderilmiş kopyası kaydedildiyse dolar; `failureReason` yalnızca `Failed` durumunda dolar.
+`status`: `Pending · Sent · Cancelled · Failed · DeliveryUnknown`. `attemptCount`
+SMTP deneme sayısıdır; `nextAttemptAtUtc` geçici hata sonrası otomatik retry
+zamanını verir. `failureReason`, Failed veya DeliveryUnknown durumunu açıklar.
+
+### `GET /api/scheduled-sends/{id}`
+**Auth:** Bearer
+
+Liste alanlarına ek olarak `bodyHtml`, `bodyText` ve her biri
+`{ id, fileName, contentType, sizeBytes }` olan `attachments` dizisini döner.
+Başka hesabın kaydı dahil bulunmayan id için 404 `scheduled_send_not_found`.
+
+### `PUT /api/scheduled-sends/{id}`
+**Auth:** Bearer · **Gövde:** `multipart/form-data`
+
+Pending kaydın içeriğini tek işlemde değiştirir. `To`, `Cc`, `Bcc`, `subject`,
+`bodyHtml`/`bodyText`, gelecekte `sendAtUtc`, korunacak her mevcut ek için
+tekrarlanan `keepAttachmentIds` ve yeni dosya parçaları gönderilir. Listedeki
+mevcut ek korunur; listelenmeyen mevcut ek silinir. Yeni ve korunan ekler
+birlikte oluşturmayla aynı sayı/boyut sınırlarına tabidir. Başarı: 200
+`{ id, sendAtUtc, status }`.
+
+| Durum | code | Anlamı |
+|---|---|---|
+| 400 | create ile aynı doğrulama kodları | Alıcı, gövde, konu, zaman veya ek geçersiz. |
+| 404 | `scheduled_send_not_found` / `scheduled_send_attachment_not_found` | Kayıt hesaba ait değil/yok veya korunacak ek bu kayıtta yok. |
+| 409 | `scheduled_send_already_sent` | Dispatcher kaydı aldı, gönderdi veya teslim sonucu belirsiz; içerik değişmedi. |
+| 409 | `scheduled_send_not_pending` | Kayıt Failed/Cancelled; pending düzenleme yerine reschedule kullan. |
+| 409 | `scheduled_send_modified` | Eşzamanlı düzenleme önce tamamlandı; detayı yenile. |
+
+### `POST /api/scheduled-sends/{id}/reschedule`
+**Auth:** Bearer + yeni `Idempotency-Key` · **Gövde:** JSON
+
+Yalnız Failed kaydı yeni Pending kayıt olarak tekrar zamanlar. Alanlar:
+`sendAtUtc`, `to`, `cc`, `bcc`, `subject`, `bodyHtml`, `bodyText`; opsiyonel
+`attachmentIds` verilmezse tüm bekletilen ekler, verilirse seçilenler kopyalanır.
+DeliveryUnknown otomatik/manuel retry edilmez: 409
+`scheduled_send_already_sent`.
 
 ### `DELETE /api/scheduled-sends/{id}`
 **Auth:** Bearer
 
-Henüz gönderilmemiş bir zamanlanmış gönderimi iptal eder, `204` döner.
+Pending kaydı iptal eder veya Failed içeriği ve bekletilen eklerini siler,
+`204` döner. DeliveryUnknown gönderimler iptal edilemez.
 
 | Durum | code | Anlamı |
 |---|---|---|
 | 404 | `scheduled_send_not_found` | Kayıt yok ya da başka hesaba ait. |
-| 409 | `scheduled_send_already_sent` | Kayıt artık `Pending` değil (gönderildi/iptal edildi/başarısız oldu). |
+| 409 | `scheduled_send_already_sent` | Gönderim başladı/tamamlandı veya teslim sonucu belirsiz. |
+
+### `GET/POST /api/templates`, `PUT/DELETE /api/templates/{id}`
+**Auth:** Bearer
+
+Hesap düzeyindeki yazma şablonları; aynı hesaba bağlı tüm cihazlarda aynıdır. Liste ada göre sıralı gelir. Şablon hesaba aittir: çoklu hesapta şablonları **Gönderen** hesabın oturumuyla çek ve oluştur/düzenle.
+
+```json
+// GET 200 OK
+{
+  "items": [{
+    "id": "…",
+    "name": "Toplantı notu",
+    "subject": "Haftalık toplantı",
+    "bodyText": "Merhaba,\nNotlar ekte.",
+    "bodyHtml": null,
+    "createdAt": "2026-09-25T09:00:00Z",
+    "updatedAt": "2026-09-25T09:00:00Z"
+  }]
+}
+```
+
+`POST`/`PUT` gövdesi `{ "name", "subject", "bodyText", "bodyHtml" }`; `POST` `201` + şablon, `PUT` `200` + şablon, `DELETE` `204` döner. `name` kırpılır, 1-100 karakter ve hesap içinde büyük/küçük harf duyarsız benzersizdir; çakışmada `409 template_name_taken`. `subject` opsiyonel, tek satır, en fazla 500 karakter. `bodyText`/`bodyHtml`'den en az biri dolu olmalı, her biri gönderimdeki gövde sınırını aşamaz. Doğrulama hatası `400` validation problem (`errors` anahtarları: `name`, `subject`, `body`). Başka hesabın şablon id'si `404`.
+
+### `GET/POST /api/snippets`, `PUT/DELETE /api/snippets/{id}`
+**Auth:** Bearer
+
+Yazma ekranında gövdeye tek dokunuşla eklenen kısa hazır metinler ("Teşekkürler.", "İyi çalışmalar." gibi). Konu içermez; şablondan ayrıdır. Hesap düzeyindedir: çoklu hesapta **Gönderen** hesabın oturumunu kullan. Liste `sortOrder`'a, eşitlikte oluşturulma zamanına göre sıralı gelir.
+
+```json
+// GET 200 OK
+{
+  "items": [{
+    "id": "…",
+    "title": null,
+    "text": "Teşekkürler.",
+    "sortOrder": 0,
+    "createdAt": "2026-09-25T09:00:00Z",
+    "updatedAt": "2026-09-25T09:00:00Z"
+  }]
+}
+```
+
+`POST`/`PUT` gövdesi `{ "title", "text", "sortOrder" }`; `POST` `201` + hazır metin, `PUT` `200` + hazır metin, `DELETE` `204` döner. `text` kırpılır, 1-2000 karakter; `title` opsiyonel, en fazla 100 karakter; `sortOrder` 0-99999 ve opsiyonel (`POST`'ta yoksa sona eklenir, `PUT`'ta yoksa sıra korunur). Doğrulama hatası `400` validation problem (`errors` anahtarları: `text`, `title`, `sortOrder`). Başka hesabın id'si `404`.
+
+### `GET/POST /api/trusted-senders`, `DELETE /api/trusted-senders/{id}`
+**Auth:** Bearer
+
+"Bu göndericiden / bu alan adından her zaman yükle" tercihi. Kayıtlıysa `GET /api/mails/{id}` uzak görselleri `remoteContent=allow` olmadan da açar ve `body.remoteImagesAllowed` `true` gelir; Junk klasöründeki ve `dmarc=fail` taşıyan postalar yine engelli kalır, temizleme kuralları değişmez.
+
+```json
+// GET 200 OK
+{ "items": [{ "id": "…", "kind": "Domain", "value": "corp.example", "createdAt": "2026-09-26T08:00:00Z" }] }
+```
+
+`POST` gövdesi `{ "kind": "Sender" | "Domain", "value" }`; yeni kayıt `201`, zaten varsa `200` + mevcut kayıt döner. `value` kırpılır ve küçük harfe çevrilir, `Domain` değeri `@` ile başlayabilir. Geçersiz değer `400` validation problem (`errors.value`). `DELETE` `204`; başka hesabın id'si `404`.
 
 ---
 
-## 6. Konuşmalar
+## 6. İmzalar & gönderici kimlikleri
+
+Sunucu imzayı giden postaya asla kendisi eklemez: uygulama yazma moduna
+(yeni, yanıt/tümünü yanıtla, ilet) ait varsayılan imzanın gövdesini
+düzenleyiciye yerleştirir, kullanıcı gönderir. Kimlik (`identity`) ise
+gönderici adresini/adını ve Reply-To'yu belirler.
+
+### `GET /api/signatures`
+**Auth:** Bearer
+
+`{ items: [{ id, name, bodyText, bodyHtml, createdAt, updatedAt }], defaults: { newMailSignatureId, replySignatureId, forwardSignatureId } }` döner. `defaults` içindeki id'ler `null` olabilir (o modda imza yok).
+
+### `POST /api/signatures`
+**Auth:** Bearer · **Gövde (JSON):** `{ "name": "…", "bodyText": "…", "bodyHtml": "…?" }`
+
+`201 Created` + imza nesnesi. `name` 1-100, `bodyText` 1-10000, `bodyHtml` opsiyonel en fazla 50000 karakter. Hatalar anahtarlı 400 validation problem döner.
+
+### `PUT /api/signatures/{id}` ve `DELETE /api/signatures/{id}`
+**Auth:** Bearer
+
+`PUT` gövdesi oluşturmayla aynıdır, `200 OK` + güncel imza döner. `DELETE` `204` döner; silinen imzaya bakan varsayılanlar temizlenir. Başka hesaba ait id `404 signature_not_found` döner.
+
+### `PUT /api/signatures/defaults`
+**Auth:** Bearer · **Gövde (JSON):** `{ "newMailSignatureId": "…?", "replySignatureId": "…?", "forwardSignatureId": "…?" }`
+
+Üç varsayılanı birden değiştirir; `null` ilgili modu temizler. `200 OK` güncel `defaults` nesnesini döner. Hesaba ait olmayan id `404 signature_not_found` döner.
+
+### `GET /api/identities`
+**Auth:** Bearer
+
+`[{ id, emailAddress, displayName, replyTo, signatureId, isDefault }]` döner (varsayılan önce).
+
+### `POST /api/identities`
+**Auth:** Bearer · **Gövde (JSON):** `{ "emailAddress": "…", "displayName": "…?", "replyTo": "…?", "signatureId": "…?", "isDefault": false }`
+
+`201 Created` + kimlik nesnesi. `emailAddress` yalın adres olmalı (görünen ad yok), en fazla 320 karakter, hesap içinde benzersiz (çakışmada 409 `identity_already_exists`). `displayName` en fazla 250 karakter; `replyTo` opsiyonel yalın adres; `signatureId` hesaba ait olmalı (değilse 404 `signature_not_found`). `isDefault: true` önceki varsayılanı temizler.
+
+### `PUT /api/identities/{id}` ve `DELETE /api/identities/{id}`
+**Auth:** Bearer
+
+`PUT` gövdesi oluşturmayla aynıdır, `200 OK` + güncel kimlik döner. `DELETE` `204` döner; bekleyen zamanlanmış gönderimin kullandığı kimlik silinemez (409 `identity_in_use`). Başka hesaba ait id `404 identity_not_found` döner.
+
+Kimlik seçimi: yazma ekranında kimlik seçici göster; seçilen kimliğin `signatureId`'si varsa o imzayı da öner. Gönderim/taslak/zamanlanmış gönderimde `identityId` form alanı ver; mesaj o kimliğin adresi, görünen adı ve Reply-To değeriyle gider.
+
+## 7. Konuşmalar
 
 Mailleri `Message-ID` / `In-Reply-To` / `References` zincirine göre gruplar; zincir yoksa normalize edilmiş subject + ortak katılımcı yedeği kullanılır (`Re:`, `Fwd:`, `Ynt:`, `İlt:`, `AW:`, `WG:` vb. önekler temizlenir).
 
@@ -770,9 +963,43 @@ Query: `includeTrash=false` Çöp ve Spam klasörlerindeki mesajları dışarıd
 }
 ```
 
+### Yanıt hatırlatıcıları (reply reminders)
+**Auth:** Bearer
+
+Gönderilmiş bir postaya yanıt gelmezse belirtilen zamanda push ile hatırlatır. Hesap kapsamlıdır; posta başka hesaba aitse `404` döner.
+
+```json
+// İstek — POST /api/mails/{id}/reply-reminder
+{ "dueAtUtc": "2026-09-28T09:00:00Z" }
+```
+
+`POST` tek nesne döner (`200 OK`); `GET /api/reply-reminders` aynı nesnelerin `{ "items": [...] }` sarılmış halini döner (`dueAtUtc` artan sırada, sayfalama yok):
+
+```json
+{
+  "id": "…", "mailId": "…", "conversationId": "…",
+  "dueAtUtc": "…", "createdAt": "…", "status": "Pending", "notifiedAt": null,
+  "subject": "…", "recipient": "alici@example.com", "sentAt": "…"
+}
+```
+
+| Uç | Anlamı |
+|---|---|
+| `POST /api/mails/{id}/reply-reminder` | Hatırlatıcı kur/değiştir. Bekleyen kayıt varsa zamanı güncellenir. |
+| `GET /api/reply-reminders` | Bekleyen hatırlatıcılar. |
+| `DELETE /api/mails/{id}/reply-reminder` | İptal; kayıt yoksa/yabancıysa da `204`. |
+
+| Durum | code | Anlamı |
+|---|---|---|
+| 400 | `reply_reminder_in_past` | `dueAtUtc` gelecekte değil. |
+| 409 | `reply_reminder_already_replied` | Posta zaten yanıtlanmış. |
+| 422 | `reply_reminder_requires_sent_mail` | Yalnız Gönderilmiş klasöründeki (veya gönderen adresi hesaba ait, Taslaklar dışı) posta. |
+
+> Zamanı gelen hatırlatıcı sunucuda 30 saniyede bir taranır; yanıt gelmişse sessizce kapanır, gelmemişse posta başına bir kez `reply_reminder` push'u gönderilir. Çöp/Spam'deki posta için push gönderilmez.
+
 ---
 
-## 7. Cihaz & push bildirimleri
+## 8. Cihaz & push bildirimleri
 
 Firebase Cloud Messaging üzerinden çalışır. Uygulama açılışında ve token yenilendiğinde `POST /api/devices` çağır.
 
@@ -807,33 +1034,35 @@ Aynı `token` tekrar gönderilirse güncellenir (upsert) — her uygulama açıl
 
 ### Push (FCM) veri şeması
 
-`firebase_messaging` ile alınan bildirimin `data` alanı. Kimliklerin yanında yalnız `new_mail`/`snooze_expired` için ve hesabın `privacy` ayarının izin verdiği ölçüde gösterim metni gelir; mail gövdesi/HTML asla eklenmez.
+`firebase_messaging` ile alınan bildirimin `data` alanı. Kimliklerin yanında yalnız `new_mail`/`snooze_expired`/`reply_reminder` için ve hesabın `privacy` ayarının izin verdiği ölçüde gösterim metni gelir; mail gövdesi/HTML asla eklenmez.
 
 ```json
 {
-  "type": "new_mail",  // | "snooze_expired" | "mail_state_changed" | "account_reauthentication_required" | "sync_error"
+  "type": "new_mail",  // | "snooze_expired" | "reply_reminder" | "mail_state_changed" | "account_reauthentication_required" | "sync_error"
   "accountId": "…",
   "mailId": "…",          // varsa
   "conversationId": "…",  // varsa
   "folderId": "…",        // varsa
   "operation": "trash",   // mail_state_changed için: read/star/trash/move/…
-  "privacy": "limited",   // new_mail/snooze_expired: full | limited | private
-  "sender": "…",          // limited/full
+  "privacy": "limited",   // new_mail/snooze_expired/reply_reminder: full | limited | private
+  "sender": "…",          // new_mail/snooze_expired, limited/full
+  "recipient": "…",       // reply_reminder, limited/full (alıcı adresi)
   "subject": "…",         // limited/full
   "preview": "…"          // yalnız full; en fazla ~140 karakter düz metin
 }
 ```
 
-- `new_mail` ve `snooze_expired` Android'de **yalnız veri** mesajıdır (`notification` bloğu yok, yüksek öncelik): uygulama bildirimi kendisi çizer ve hızlı eylemleri (`POST /api/mails/{id}/read|archive|trash`, Yanıtla) ekler. iOS'ta aynı metin APNs uyarısı olarak gelir. Diğer tipler önceki gibi davranır.
+- `new_mail`, `snooze_expired` ve `reply_reminder` Android'de **yalnız veri** mesajıdır (`notification` bloğu yok, yüksek öncelik): uygulama bildirimi kendisi çizer ve hızlı eylemleri (`POST /api/mails/{id}/read|archive|trash`, Yanıtla) ekler. iOS'ta aynı metin APNs uyarısı olarak gelir. Diğer tipler önceki gibi davranır.
 - `new_mail`, sunucu kuralları çalıştıktan sonra gönderilir; kuralın bildirilen klasörlerden çıkardığı veya okundu yaptığı posta bildirilmez.
 - `snooze_expired`: süresi dolan erteleme sunucuda sonlandırılır (`GET /api/mails/snoozed` artık içermez) ve posta başına bir kez gönderilir; iptal edilen/ileri alınan erteleme uyanmaz. Çöp/Spam'deki posta için push gönderilmez.
+- `reply_reminder`: başlık "No reply yet"; limited/full gövdede `alıcı: konu` (full ise konu + kısa metin). Posta başına bir kez; yanıt gelirse/silinirse push gönderilmez, Çöp/Spam'deki posta için gönderilmez.
 - `mail_state_changed` `operation` read/archive/trash/spam/move/delete ise o mailin cihazda gösterilen bildirimini kaldır.
 
 > Bildirim geldiğinde mail durumunu bildirimden okuma — `mailId` ile `GET /api/mails/{id}` çağırıp güncel/doğrulanmış veriyi çek.
 
 ---
 
-## 8. Hata kodları
+## 9. Hata kodları
 
 Her hata gövdesi `{ code, title, status, correlationId }` — bazılarında ek alanlar (`manualSetupAvailable` gibi) olur. Destek talebinde her zaman `correlationId`'yi ilet.
 
@@ -848,17 +1077,21 @@ Her hata gövdesi `{ code, title, status, correlationId }` — bazılarında ek 
 | 400 | `invalid_email` / `invalid_recipient` / `recipient_required` / `body_required` / `body_too_large` / `too_many_attachments` / `attachment_too_large` / `invalid_mail_header` / `message_not_constructible` / `manual_setup_invalid` | Form/gövde doğrulaması. |
 | 400 | `idempotency_key_required` / `idempotency_key_too_long` | Gönderim uçları. |
 | 400 | `scheduled_send_in_past` | Zamanlanmış gönderimde `sendAtUtc` şu andan ileride değil. |
-| 403 | `email_not_allowlisted` | Prod erişim listesi açık, email listede değil — bkz. [altta](#10-prod-erişim-listesi-allowlist). |
+| 400 | `reply_reminder_in_past` | Yanıt hatırlatıcıda `dueAtUtc` şu andan ileride değil. |
+| 403 | `email_not_allowlisted` | Prod erişim listesi açık, email listede değil — bkz. [altta](#11-prod-erişim-listesi-allowlist). |
 | 403 | `mail_account_disabled` | Hesap devre dışı bırakıldı. |
 | 403 | `provider_disabled` / `provider_new_accounts_disabled` / `provider_existing_accounts_disabled` / `authentication_method_disabled` | Sunucu tarafı politika: sağlayıcı/yöntem kapalı ("şu an desteklenmiyor"). |
-| 404 | `mail_account_not_found` / `mail_not_found` / `draft_not_found` / `scheduled_send_not_found` | Kaynak yok ya da başka hesaba ait. Kodsuz `404`: oturum/klasör/ek/konuşma/cihaz/bilinmeyen bulk eylemi. |
+| 404 | `mail_account_not_found` / `mail_not_found` / `draft_not_found` / `scheduled_send_not_found` / `signature_not_found` / `identity_not_found` | Kaynak yok ya da başka hesaba ait. Kodsuz `404`: oturum/klasör/ek/konuşma/cihaz/bilinmeyen bulk eylemi. |
 | 404 | `mail_folder_not_found` | Mail durum/taşıma uçlarında hedef klasör hesapta yok. |
+| 409 | `identity_already_exists` | Email adresi hesapta zaten kayıtlı. |
+| 409 | `identity_in_use` | Kimlik bekleyen zamanlanmış gönderimde kullanılıyor. |
 | 422 | `mail_discovery_failed` | Otomatik keşif başarısız → manuel bağlantıya geç. |
 | 422 | `mail_server_unsafe` / `unsupported_authentication_method` / `discovery_invalid` / `discovery_expired` | Sunucu/keşif/yöntem reddi. |
 | 422 | `oauth_provider_not_configured` / `oauth_redirect_uri_invalid` / `oauth_state_invalid` / `oauth_code_exchange_failed` | OAuth akışı hataları (bkz. OAuth bölümü). |
 | 422 | `drafts_folder_unavailable` / `trash_folder_unavailable` | Hesapta gerekli özel klasör yok. |
 | 422 | `mail_not_draft` | Taslak id'si artık geçerli değil (gönderildi/güncellendi/silindi). |
 | 422 | `mail_operation_not_supported` | Mail durum/taşıma uçlarında desteklenmeyen işlem (örn. trash'lenmemiş maile `restore`, Trash/Junk dışındaki maile `delete`). |
+| 422 | `reply_reminder_requires_sent_mail` | Yanıt hatırlatıcı yalnız gönderilmiş postaya kurulur. |
 | 409 | `mail_account_already_exists` | Email zaten bağlı. |
 | 409 | `mail_operation_conflict` | Modern `POST /api/mails/{id}/{action}` (ve `/move`, `/copy`) uçlarında klasör durumu değişti, yeniden senkronize et. |
 | 409 | `mailbox_changed` | Yalnızca eski `PATCH /api/mails/{id}/read` uçlarına özgü — aynı anlam, farklı kod. |
@@ -866,7 +1099,9 @@ Her hata gövdesi `{ code, title, status, correlationId }` — bazılarında ek 
 | 409 | `delivery_unknown` | Gönderim sonucu belirsiz — otomatik retry yapma. |
 | 409 | `mail_account_needs_reauthentication` / `credential_missing` | Saklı kimlik bilgisi geçersiz/yok → `reconnect` (OAuth ise OAuth'u yeniden çalıştır). |
 | 409 | `mail_folder_unavailable` | Klasör sunucudan silinmiş. |
+| 409 | `template_name_taken` | Hesapta aynı adlı (büyük/küçük harf duyarsız) bir şablon zaten var. |
 | 409 | `scheduled_send_already_sent` | Zamanlanmış gönderim artık `Pending` değil. |
+| 409 | `reply_reminder_already_replied` | Posta zaten yanıtlanmış. |
 | 429 | — | Hız sınırı aşıldı (dk. başına 60 istek); gövde yok. |
 | 502 | `mail_move_failed` | Klasör değiştiren mail işlemi (trash/restore/archive/spam/not-spam/move) sunucu tarafında başarısız. |
 | 502 | `mail_delete_failed` | Kalıcı silme (`delete`) sunucu tarafında başarısız; yerel kayıt korunur, tekrar dene. |
@@ -878,7 +1113,7 @@ Her hata gövdesi `{ code, title, status, correlationId }` — bazılarında ek 
 
 ---
 
-## 9. Enum referansı
+## 10. Enum referansı
 
 Tüm enum değerleri JSON'da **string** olarak serileşir (sayısal değil).
 
@@ -889,7 +1124,8 @@ Tüm enum değerleri JSON'da **string** olarak serileşir (sayısal değil).
 | `AuthenticationMethod` | `Password · AppSpecificPassword · OAuth2` |
 | `MailFolderType` | `Inbox · Sent · Drafts · Trash · Junk · Archive · Custom · Unknown` |
 | `MailAccountStatus` | `Active · NeedsReauthentication · ConnectionError · Disabled` |
-| `ScheduledSendStatus` | `Pending · Sent · Cancelled · Failed` |
+| `ReplyReminderStatus` | `Pending · Replied · Notified · Cancelled` |
+| `TrustedSenderKind` | `Sender · Domain` |
 
 > `MailAccountStatus.NeedsReauthentication` gördüğünde kullanıcıyı `/api/account/reconnect` ekranına yönlendir; `Disabled` gördüğünde tüm istekler `401`/`403` döner, uygulama çıkışı yaptır.
 

@@ -27,11 +27,14 @@ public static class MimeMessageBuilder
         IReadOnlyList<SendMailAttachment> attachments,
         string? inReplyTo,
         string? references,
-        string? messageId = null)
+        string? messageId = null,
+        string? replyTo = null)
     {
         var message = new MimeMessage();
         message.From.Add(new MailboxAddress(fromDisplayName, fromAddress));
         message.To.AddRange(to);
+        if (!string.IsNullOrWhiteSpace(replyTo))
+            message.ReplyTo.Add(MailboxAddress.Parse(replyTo));
         message.Cc.AddRange(cc);
         message.Bcc.AddRange(bcc);
         message.Subject = subject;
@@ -77,6 +80,9 @@ public static class MimeMessageBuilder
         {
             contentType = new ContentType("application", "octet-stream");
         }
+
+        if (contentType.IsMimeType("multipart", "*") || contentType.IsMimeType("message", "*"))
+            contentType = new ContentType("application", "octet-stream");
 
         return new MimePart(contentType)
         {

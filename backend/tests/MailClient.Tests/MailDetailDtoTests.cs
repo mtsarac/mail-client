@@ -44,6 +44,26 @@ public sealed class MailDetailDtoTests(AcceptingApiFactory factory) : IClassFixt
     }
 
     [Fact]
+    public async Task Get_RemoteContentAllow_ReturnsSanitizedRemoteImages()
+    {
+        var (client, accountId) = await ConnectAsync();
+        var mailId = await SeedMailAsync(accountId, """<script>alert(1)</script><img src="https://images.example/photo.jpg" onerror="alert(2)"><a href="javascript:alert(3)">x</a>""", "sender@corp.example", "Sender");
+
+        var response = await client.GetAsync($"/api/mails/{mailId}?remoteContent=allow");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var root = (await response.Content.ReadFromJsonAsync<JsonDocument>())!.RootElement;
+        var body = root.GetProperty("body");
+        var html = body.GetProperty("html").GetString()!;
+        Assert.True(body.GetProperty("remoteImagesAllowed").GetBoolean());
+        Assert.Contains("images.example", body.GetProperty("remoteImageHosts").EnumerateArray().Select(item => item.GetString()));
+        Assert.Contains("src=\"https://images.example/photo.jpg\"", html, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("script", html, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("onerror", html, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("javascript:", html, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task Get_ForeignAccount_Returns404()
     {
         var (client1, accountId1) = await ConnectAsync();

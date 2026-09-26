@@ -95,6 +95,7 @@ public sealed class ScheduledSendDispatcher(
 
         var entity = await db.ScheduledSends.Include(x => x.Attachments)
             .SingleAsync(x => x.Id == id && x.MailAccountId == accountId, cancellationToken);
+        var dispatchKey = ScheduledSendService.DispatchKey(entity);
         var storage = provider.GetRequiredService<IFileStorage>();
         var sender = provider.GetRequiredService<MailSendService>();
         var logger = provider.GetRequiredService<ILogger<ScheduledSendDispatcher>>();
@@ -114,7 +115,8 @@ public sealed class ScheduledSendDispatcher(
                 ScheduledSendService.Deserialize(entity.BccAddressesJson),
                 entity.Subject, entity.BodyHtml, entity.BodyText, attachments, entity.ReplySourceMailId)
             {
-                IdempotencyKey = entity.IdempotencyKey
+                IdempotencyKey = dispatchKey,
+                IdentityId = entity.IdentityId
             };
 
             sendStarted = true;
@@ -136,7 +138,7 @@ public sealed class ScheduledSendDispatcher(
             logger.LogWarning(ex, "Scheduled send {Id} could not be dispatched.", id);
             var operationStatus = sendStarted
                 ? await db.SendOperations.AsNoTracking()
-                    .Where(x => x.MailAccountId == accountId && x.IdempotencyKey == entity.IdempotencyKey)
+                    .Where(x => x.MailAccountId == accountId && x.IdempotencyKey == dispatchKey)
                     .Select(x => (SendOperationStatus?)x.Status).SingleOrDefaultAsync(CancellationToken.None)
                 : null;
             entity.Status = operationStatus switch
