@@ -54,6 +54,26 @@ public static class MailEndpoints
                 new MailSearchRequest(search, folderId, null, null, null, null, null, isRead, null, hasAttachments, page ?? 1, pageSize ?? 0),
                 ct))).WithTags(MailTag).WithName("ListMails").WithSummary("List mailbox mail").WithDescription("Account-scoped list, newest first. Supports folderId, isRead, hasAttachments, search, page, pageSize (max 100).").Produces<MailListResponse>();
         api.MapGet("/mails/{id:guid}", async (Guid id, string? remoteContent, ICurrentMailAccount current, MailReadService reader, CancellationToken ct) => await reader.GetAsync(current.MailAccountId, id, ct, remoteContent == "allow") is { } mail ? Results.Ok(mail) : Results.NotFound()).WithTags(MailTag).WithName("GetMail").WithSummary("Get mailbox mail").WithDescription("Full mail with sanitized body and attachment metadata. remoteContent=allow permits sanitized http(s) image sources for this response only. `id` comes from list/search results.").Produces<MailDetailResponse>().Produces(404);
+        api.MapGet("/mails/{id:guid}/headers", async (Guid id, ICurrentMailAccount current, MailSourceService source, CancellationToken ct) =>
+        {
+            var result = await source.GetHeadersAsync(current.MailAccountId, id, ct);
+            return SourceResult(result);
+        }).WithTags(MailTag).WithName("GetMailHeaders").WithSummary("Inspect all original mail headers")
+            .Produces<MailSourceHeadersResponse>().WithOperationProblems();
+        api.MapGet("/mails/{id:guid}/source", async (Guid id, ICurrentMailAccount current, MailSourceService source, CancellationToken ct) =>
+        {
+            var result = await source.GetRawAsync(current.MailAccountId, id, ct);
+            return result.Value is { } bytes
+                ? Results.File(bytes, "message/rfc822", "message.eml")
+                : SourceError(result.Error);
+        }).WithTags(MailTag).WithName("GetMailSource").WithSummary("Download raw MIME")
+            .Produces(200, contentType: "message/rfc822").WithOperationProblems();
+        api.MapGet("/mails/{id:guid}/signature", async (Guid id, ICurrentMailAccount current, MailSourceService source, CancellationToken ct) =>
+        {
+            var result = await source.VerifySignatureAsync(current.MailAccountId, id, ct);
+            return SourceResult(result);
+        }).WithTags(MailTag).WithName("VerifyMailSignature").WithSummary("Verify the original S/MIME signature or inspect an OpenPGP signature")
+            .Produces<MailSignatureResponse>().WithOperationProblems();
         api.MapGet("/drafts/{id:guid}", async (Guid id, ICurrentMailAccount current, DraftService drafts, CancellationToken ct) => await drafts.GetAsync(current.MailAccountId, id, ct) switch
         {
             { Draft: { } draft } => Results.Ok(draft),
@@ -147,10 +167,11 @@ public static class MailEndpoints
             var command = ComposeForm.Read(form).ToSend(current.MailAccountId, idempotencyKey ?? "");
             var result = await sender.SendAsync(current.MailAccountId, command, correlation.CorrelationId, ct);
             return Results.Ok(new SendMailResponse(result.Sent, result.SentCopySaved, result.Warning, result.MailId, result.ConversationId));
-        }).WithTags(ComposeTag).WithName("SendMail").WithSummary("Send mail idempotently").WithDescription("multipart/form-data: to, subject, bodyHtml and/or bodyText, optional identityId, up to 20 attachments. Idempotency-Key header is required; retrying with the same key never sends twice.")
+        }).WithTags(ComposeTag).WithName("SendMail").WithSummary("Send mail idempotently").WithDescription("multipart/form-data: to, subject, bodyHtml and/or bodyText, optional identityId, requestReadReceipt and requestDeliveryReceipt booleans, up to 20 attachments. Idempotency-Key header is required; retrying with the same key never sends twice.")
             .Accepts<IFormCollection>("multipart/form-data").Produces<SendMailResponse>()
-            .ProblemCodes(400, "recipient_required", "invalid_recipient", "body_required", "body_too_large", "too_many_attachments", "attachment_too_large", "idempotency_key_required", "idempotency_key_too_long")
+            .ProblemCodes(400, "recipient_required", "invalid_recipient", "body_required", "body_too_large", "too_many_attachments", "attachment_too_large", "idempotency_key_required", "idempotency_key_too_long", "invalid_receipt_option")
             .ProblemCodes(401, "mail_smtp_authentication_failed").ProblemCodes(404, "identity_not_found").ProblemCodes(409, "idempotency_conflict", "send_in_progress", "delivery_unknown", "mail_account_needs_reauthentication")
+            .ProblemCodes(422, "delivery_receipt_not_supported")
             .ProblemCodes(502, "mail_provider_unavailable", "mail_server_unreachable", "mail_tls_failed").DisableAntiforgery();
     }
 
@@ -164,7 +185,9 @@ public static class MailEndpoints
         string? BodyText,
         IReadOnlyList<SendMailAttachment> Attachments,
         Guid? ReplySourceMailId,
-        Guid? IdentityId)
+        Guid? IdentityId,
+        bool RequestReadReceipt,
+        bool RequestDeliveryReceipt)
     {
         public static ComposeForm Read(IFormCollection form) => new(
             Values(form, "to"),
@@ -175,13 +198,15 @@ public static class MailEndpoints
             Optional(form, "bodyText"),
             form.Files.Select(file => new SendMailAttachment(file.FileName, file.ContentType, file.OpenReadStream())).ToList(),
             OptionalGuid(form, "replySourceMailId", "mail_not_found"),
-            OptionalGuid(form, "identityId", "identity_not_found"));
+            OptionalGuid(form, "identityId", "identity_not_found"),
+            OptionalBool(form, "requestReadReceipt"),
+            OptionalBool(form, "requestDeliveryReceipt"));
 
         public DraftCommand ToDraft(Guid accountId) =>
             new(accountId, To, Cc, Bcc, Subject, BodyHtml, BodyText, Attachments, ReplySourceMailId, IdentityId);
 
         public SendMailCommand ToSend(Guid accountId, string idempotencyKey) =>
-            new(accountId, To, Cc, Bcc, Subject, BodyHtml, BodyText, Attachments, ReplySourceMailId) { IdempotencyKey = idempotencyKey, IdentityId = IdentityId };
+            new(accountId, To, Cc, Bcc, Subject, BodyHtml, BodyText, Attachments, ReplySourceMailId) { IdempotencyKey = idempotencyKey, IdentityId = IdentityId, RequestReadReceipt = RequestReadReceipt, RequestDeliveryReceipt = RequestDeliveryReceipt };
 
         private static List<string> Values(IFormCollection form, string name) =>
             form[name].Where(value => !string.IsNullOrWhiteSpace(value)).Select(value => value!).ToList();
@@ -198,6 +223,13 @@ public static class MailEndpoints
             if (value is null) return null;
             return Guid.TryParse(value, out var id) ? id : throw new InvalidOperationException(error);
         }
+        private static bool OptionalBool(IFormCollection form, string name)
+        {
+            var value = Optional(form, name);
+            if (value is null) return false;
+            return bool.TryParse(value, out var enabled) ? enabled : throw new InvalidOperationException("invalid_receipt_option");
+        }
+
     }
 
     private static async Task<IResult> ComposeResult(Task<ComposeContextResponse?> response) =>
@@ -237,6 +269,15 @@ public static class MailEndpoints
             .ProblemCodes(409, "mail_account_needs_reauthentication", "mail_operation_conflict")
             .ProblemCodes(422, "mail_operation_not_supported")
             .ProblemCodes(502, "mail_provider_unavailable", delete ? "mail_delete_failed" : "mail_move_failed");
+    }
+
+    private static IResult SourceResult<T>(MailSourceResult<T> result) where T : class =>
+        result.Value is { } value ? Results.Ok(value) : SourceError(result.Error);
+
+    private static IResult SourceError(MailOperationError error)
+    {
+        var (status, title, code) = MapOperationError(error);
+        return Results.Problem(title: title, statusCode: status, extensions: new Dictionary<string, object?> { ["code"] = code });
     }
 
     private static IResult OperationResult(MailOperationResult result, string correlationId, bool legacyRead = false)

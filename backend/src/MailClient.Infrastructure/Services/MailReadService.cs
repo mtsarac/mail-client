@@ -86,7 +86,8 @@ public sealed class MailReadService(
                 .ToList(),
             mail.ConversationId,
             isFromMe,
-            authentication);
+            authentication,
+            MailSecurityParser.Parse(headerResponses, mail.BodyText));
     }
 
     private async Task<bool> IsTrustedForRemoteImagesAsync(Guid accountId, MailEntity mail, MailAuthenticationResponse? authentication, CancellationToken cancellationToken)

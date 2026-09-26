@@ -182,6 +182,28 @@ public sealed class SendServiceTests
     }
 
     [Fact]
+    public async Task SendAsync_RequestsReceiptsOnlyWhenOptedIn()
+    {
+        await using var db = CreateDb();
+        var accountId = await SeedAccountAsync(db, saveSentCopy: false);
+        var transport = new FakeMailTransport();
+        var service = CreateService(db, transport);
+        var command = new SendMailCommand(accountId, "friend@example.test", "Receipt", null, "body", [])
+        {
+            IdempotencyKey = "receipts-1",
+            RequestReadReceipt = true,
+            RequestDeliveryReceipt = true
+        };
+
+        var result = await service.SendAsync(accountId, command, null, CancellationToken.None);
+
+        Assert.True(result.Sent);
+        Assert.True(transport.DeliveryReceiptRequested);
+        Assert.Equal("me@example.test", InternetAddressList.Parse(transport.Message!.Headers["Disposition-Notification-To"]!).Mailboxes.Single().Address);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.SendAsync(accountId, command with { RequestReadReceipt = false }, null, CancellationToken.None));
+    }
+
+    [Fact]
     public async Task SendAsync_InvalidRecipient_ThrowsContractCode()
     {
         await using var db = CreateDb();

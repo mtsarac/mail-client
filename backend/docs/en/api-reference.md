@@ -171,6 +171,9 @@ account's entry returns 404. Entries are deleted with their account.
 |---|---|---|---|
 | GET | `/api/mails` | bearer | List mail (`folderId`, `isRead`, `hasAttachments`, `search`, `page`, `pageSize` ≤ 100) |
 | GET | `/api/mails/{id}` | bearer | Mail detail (`remoteContent=allow` permits sanitized HTTP(S) image sources for this response; `isFromMe`: Sent/Drafts mail, or sender equals the account address case-insensitively, in any folder) |
+| GET | `/api/mails/{id}/headers` | bearer | Fetch all original headers from IMAP (`{headers:[{name,value}]}`) |
+| GET | `/api/mails/{id}/source` | bearer | Download original MIME as `message/rfc822` (requires online IMAP) |
+| GET | `/api/mails/{id}/signature` | bearer | Verify original S/MIME signature, or return `Unverifiable` for OpenPGP; 422 if unsigned |
 | GET | `/api/search` | bearer | Search cached mail (all filters optional, AND-combined; see below) |
 | GET | `/api/search/remote` | bearer | User-triggered generic IMAP search; imports missing matches before a follow-up `/api/search` |
 | GET | `/api/mails/{mailId}/attachments/{attachmentId}` | bearer | Download an attachment (Range/206 when storage is seekable) |
@@ -184,6 +187,10 @@ schemes and non-image remote resources stay blocked. The response body includes
 `remoteImageHosts` and `remoteImagesAllowed` for client state.
 
 `trackingPixelHosts` lists hosts of remote images that look like tracking pixels (width or height of 1px or less, or hidden with `display:none`/`visibility:hidden`). These stay blocked even with `remoteContent=allow`, so clients can show that tracking content was blocked.
+
+Mail detail `security` reports recognized MIME/inline OpenPGP `signed`/`encrypted` standards (`SMime` or `OpenPgp`) without implying trust or successful decryption. The signature endpoint returns `{standard,status,signers}`; `status` is `Valid`, `Untrusted`, `Invalid`, or `Unverifiable`. `Valid` means the cryptographic signature and certificate chain validated; never treat `Unverifiable` as valid. Source endpoints require a matching IMAP UIDVALIDITY and an online provider; errors include `mail_not_found` (404), `mail_account_needs_reauthentication` or `mail_operation_conflict` (409), and `mail_provider_unavailable` (502). Raw MIME and full headers contain private information: display or share only at the user’s request.
+
+Send accepts optional `requestReadReceipt=true` (adds `Disposition-Notification-To` with the account/selected identity address) and `requestDeliveryReceipt=true` (SMTP DSN success/failure request, only if the server advertises DSN; otherwise 422 `delivery_receipt_not_supported` before sending). Neither guarantees a receipt: the recipient or server can ignore the request. Invalid booleans return 400 `invalid_receipt_option`. Receipt options are included in the idempotency fingerprint.
 
 Mail detail includes `authentication` when the topmost stored `Authentication-Results` header contains an SPF, DKIM, or DMARC result. It is otherwise `null`. Values are limited to `pass`, `fail`, `softfail`, `neutral`, `none`, `temperror`, `permerror`, and `policy`, together with the header's `authservId`. The server does not re-run authentication; clients must present these values as informational only.
 

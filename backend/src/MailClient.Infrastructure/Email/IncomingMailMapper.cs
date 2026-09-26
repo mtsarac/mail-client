@@ -74,7 +74,7 @@ public static class IncomingMailMapper
 
         var storedHeaders = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            "Content-Language", "List-Id", "List-Unsubscribe", "List-Unsubscribe-Post", "Authentication-Results"
+            "Content-Language", "List-Id", "List-Unsubscribe", "List-Unsubscribe-Post", "Authentication-Results", "Content-Type"
         };
         var headers = message.Headers
             .Where(header => storedHeaders.Contains(header.Field) && !string.IsNullOrWhiteSpace(header.Value))

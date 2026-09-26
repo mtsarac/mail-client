@@ -39,6 +39,7 @@ public interface IRemoteMailFolder
     Task<IReadOnlyDictionary<uint, RemoteSummary?>> GetSummariesAsync(IReadOnlyCollection<UniqueId> uids, CancellationToken cancellationToken);
     Task<IReadOnlyDictionary<uint, RemoteMessageFlags>> GetFlagsAsync(IReadOnlyCollection<UniqueId> uids, CancellationToken cancellationToken);
     Task<MimeMessage> GetMessageAsync(UniqueId uid, CancellationToken cancellationToken);
+    Task<Stream> GetStreamAsync(UniqueId uid, CancellationToken cancellationToken);
     Task SetSeenAsync(UniqueId uid, bool seen, CancellationToken cancellationToken);
     Task SetFlaggedAsync(UniqueId uid, bool flagged, CancellationToken cancellationToken);
     Task<RemoteMoveResult> MoveAsync(UniqueId uid, string destinationFullName, CancellationToken cancellationToken);
@@ -229,6 +230,8 @@ public sealed class MailKitRemoteMailFolder(IMailFolder folder, Func<string, Can
 
     public Task<MimeMessage> GetMessageAsync(UniqueId uid, CancellationToken cancellationToken) =>
         folder.GetMessageAsync(uid, cancellationToken);
+    public Task<Stream> GetStreamAsync(UniqueId uid, CancellationToken cancellationToken) =>
+        folder.GetStreamAsync(uid, cancellationToken);
 
     public Task SetSeenAsync(UniqueId uid, bool seen, CancellationToken cancellationToken) =>
         seen

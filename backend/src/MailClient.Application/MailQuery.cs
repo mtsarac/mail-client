@@ -101,4 +101,5 @@ public sealed record MailDetailResponse(
     IReadOnlyList<AttachmentResponse> Attachments,
     Guid? ConversationId = null,
     bool IsFromMe = false,
-    MailAuthenticationResponse? Authentication = null);
+    MailAuthenticationResponse? Authentication = null,
+    MailSecurityResponse? Security = null);

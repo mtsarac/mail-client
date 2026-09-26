@@ -413,7 +413,7 @@ public sealed class ScheduledSendDispatcherTests
         public int Attempts { get; private set; }
         public MimeKit.MimeMessage? Message { get; private set; }
 
-        public Task SendAsync(MailAccount account, MimeKit.MimeMessage message, CancellationToken cancellationToken)
+        public Task SendAsync(MailAccount account, MimeKit.MimeMessage message, CancellationToken cancellationToken, bool requestDeliveryReceipt = false)
         {
             Attempts++;
             Message = message;
