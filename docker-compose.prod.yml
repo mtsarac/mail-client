@@ -14,11 +14,11 @@ services:
     environment:
       POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
-      POSTGRES_DB: ${POSTGRES_DB:-mailclient_v2}
+      POSTGRES_DB: ${POSTGRES_DB:-kaydetmail-db}
     volumes:
       - pgdata:/var/lib/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-mailclient_v2}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-kaydetmail-db}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -31,7 +31,7 @@ services:
       target: migrator
     command:
       - "--connection"
-      - "Host=postgres;Port=5432;Database=${POSTGRES_DB:-mailclient_v2};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD};GSS Encryption Mode=Disable"
+      - "Host=postgres;Port=5432;Database=${POSTGRES_DB:-kaydetmail-db};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD};GSS Encryption Mode=Disable"
     depends_on:
       postgres:
         condition: service_healthy
@@ -46,7 +46,7 @@ services:
       - .env
     environment:
       ASPNETCORE_ENVIRONMENT: Production
-      ConnectionStrings__Default: Host=postgres;Port=5432;Database=${POSTGRES_DB:-mailclient_v2};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD};GSS Encryption Mode=Disable
+      ConnectionStrings__Default: Host=postgres;Port=5432;Database=${POSTGRES_DB:-kaydetmail-db};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD};GSS Encryption Mode=Disable
       DataProtection__KeyPath: /app/data/protection-keys
       DataProtection__CertificatePath: /run/secrets/dataprotection.pfx
       Firebase__CredentialsPath: /run/secrets/firebase-service-account.json

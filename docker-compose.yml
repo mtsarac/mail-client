@@ -13,13 +13,13 @@ services:
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: mailclient_v2
+      POSTGRES_DB: kaydetmail-db
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d mailclient_v2"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d kaydetmail-db"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -37,7 +37,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile
       target: migrator
-    command: ["--connection", "Host=postgres;Port=5432;Database=mailclient_v2;Username=postgres;Password=postgres;GSS Encryption Mode=Disable"]
+    command: ["--connection", "Host=postgres;Port=5432;Database=kaydetmail-db;Username=postgres;Password=postgres;GSS Encryption Mode=Disable"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -52,7 +52,7 @@ services:
       - .env
     environment:
       ASPNETCORE_ENVIRONMENT: Development
-      ConnectionStrings__Default: Host=postgres;Port=5432;Database=mailclient_v2;Username=postgres;Password=postgres;GSS Encryption Mode=Disable
+      ConnectionStrings__Default: Host=postgres;Port=5432;Database=kaydetmail-db;Username=postgres;Password=postgres;GSS Encryption Mode=Disable
       Firebase__CredentialsPath: /run/secrets/firebase-service-account.json
     ports:
       - "${API_PORT:-8080}:8080"

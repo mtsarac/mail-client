@@ -7,8 +7,8 @@ public sealed class DesignTimeDbContextFactory : IDesignTimeDbContextFactory<App
 {
     public AppDbContext CreateDbContext(string[] args)
     {
-        var connection = Environment.GetEnvironmentVariable("MAILCLIENT_V2_CONNECTION")
-            ?? "Host=localhost;Port=5432;Database=mailclient_v2;Username=postgres;Password=postgres;GSS Encryption Mode=Disable";
+        var connection = Environment.GetEnvironmentVariable("KAYDETMAIL_DB_CONNECTION")
+            ?? "Host=localhost;Port=5432;Database=kaydetmail-db;Username=postgres;Password=postgres;GSS Encryption Mode=Disable";
         return new AppDbContext(new DbContextOptionsBuilder<AppDbContext>().UseNpgsql(connection).Options);
     }
 }

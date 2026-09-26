@@ -92,7 +92,7 @@ var managementOptions = builder.Configuration.GetSection("Management").Get<Manag
 managementOptions.Validate(isProduction);
 builder.Services.AddSingleton(managementOptions);
 builder.Services.AddScoped<ManagementApiKeyFilter>();
-var connection = builder.Configuration.GetConnectionString("Default") ?? "Host=localhost;Port=5432;Database=mailclient_v2;Username=postgres;Password=postgres;GSS Encryption Mode=Disable";
+var connection = builder.Configuration.GetConnectionString("Default") ?? "Host=localhost;Port=5432;Database=kaydetmail-db;Username=postgres;Password=postgres;GSS Encryption Mode=Disable";
 builder.Services.AddDbContext<AppDbContext>(options => options.UseNpgsql(connection));
 var keyPath = builder.Configuration["DataProtection:KeyPath"] ?? Path.Combine(builder.Environment.ContentRootPath, "data", "protection-keys");
 var dataProtection = builder.Services.AddDataProtection().PersistKeysToFileSystem(new DirectoryInfo(keyPath));
