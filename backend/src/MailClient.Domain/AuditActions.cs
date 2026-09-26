@@ -47,6 +47,8 @@ public static class AuditActions
     public const string SnippetCreated = "snippet.created";
     public const string SnippetUpdated = "snippet.updated";
     public const string SnippetDeleted = "snippet.deleted";
+    public const string TrustedSenderAdded = "trusted_sender.added";
+    public const string TrustedSenderRemoved = "trusted_sender.removed";
     public const string SignatureCreated = "signature.created";
     public const string SignatureUpdated = "signature.updated";
     public const string SignatureDeleted = "signature.deleted";

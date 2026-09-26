@@ -151,6 +151,23 @@ karakterdir; `sortOrder` 0-99999. Doğrulama hataları `text`, `title` veya
 `sortOrder` anahtarlı 400 validation problem döner. Başka hesabın hazır metin id'si
 404 döner. Hazır metinler hesapla birlikte silinir.
 
+### Güvenilir göndericiler
+
+| Metot | Yol | Yetki | Açıklama |
+|---|---|---|---|
+| GET | `/api/trusted-senders` | bearer | Uzak görselleri otomatik yüklenen gönderici ve alan adlarını listeler |
+| POST | `/api/trusted-senders` | bearer | Gönderici veya alan adını güvenilir yapar (201; kayıt zaten varsa 200) |
+| DELETE | `/api/trusted-senders/{id}` | bearer | Göndericiye veya alan adına güveni kaldırır (204) |
+
+Gövde: `{kind: "Sender" | "Domain", value}`; yanıta `id`, `createdAt` eklenir.
+`value` kırpılır ve küçük harfe çevrilir; `Domain` değeri `@` ile başlayabilir.
+Geçersiz adres veya alan adı `value` anahtarlı 400 validation problem döner.
+Gönderici adresi ya da alan adı güvenilirse `GET /api/mails/{id}`,
+`remoteContent=allow` verilmiş gibi davranır; Junk klasöründeki postalar ve
+`Authentication-Results` başlığı `dmarc=fail` bildiren postalar hariçtir.
+Temizleme kuralları değişmez. Başka hesabın kaydı 404 döner. Kayıtlar hesapla
+birlikte silinir.
+
 ### Mail
 
 | Metot | Yol | Yetki | Açıklama |

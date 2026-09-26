@@ -865,6 +865,18 @@ Yazma ekranında gövdeye tek dokunuşla eklenen kısa hazır metinler ("Teşekk
 
 `POST`/`PUT` gövdesi `{ "title", "text", "sortOrder" }`; `POST` `201` + hazır metin, `PUT` `200` + hazır metin, `DELETE` `204` döner. `text` kırpılır, 1-2000 karakter; `title` opsiyonel, en fazla 100 karakter; `sortOrder` 0-99999 ve opsiyonel (`POST`'ta yoksa sona eklenir, `PUT`'ta yoksa sıra korunur). Doğrulama hatası `400` validation problem (`errors` anahtarları: `text`, `title`, `sortOrder`). Başka hesabın id'si `404`.
 
+### `GET/POST /api/trusted-senders`, `DELETE /api/trusted-senders/{id}`
+**Auth:** Bearer
+
+"Bu göndericiden / bu alan adından her zaman yükle" tercihi. Kayıtlıysa `GET /api/mails/{id}` uzak görselleri `remoteContent=allow` olmadan da açar ve `body.remoteImagesAllowed` `true` gelir; Junk klasöründeki ve `dmarc=fail` taşıyan postalar yine engelli kalır, temizleme kuralları değişmez.
+
+```json
+// GET 200 OK
+{ "items": [{ "id": "…", "kind": "Domain", "value": "corp.example", "createdAt": "2026-09-26T08:00:00Z" }] }
+```
+
+`POST` gövdesi `{ "kind": "Sender" | "Domain", "value" }`; yeni kayıt `201`, zaten varsa `200` + mevcut kayıt döner. `value` kırpılır ve küçük harfe çevrilir, `Domain` değeri `@` ile başlayabilir. Geçersiz değer `400` validation problem (`errors.value`). `DELETE` `204`; başka hesabın id'si `404`.
+
 ---
 
 ## 6. İmzalar & gönderici kimlikleri
@@ -1113,6 +1125,7 @@ Tüm enum değerleri JSON'da **string** olarak serileşir (sayısal değil).
 | `MailFolderType` | `Inbox · Sent · Drafts · Trash · Junk · Archive · Custom · Unknown` |
 | `MailAccountStatus` | `Active · NeedsReauthentication · ConnectionError · Disabled` |
 | `ReplyReminderStatus` | `Pending · Replied · Notified · Cancelled` |
+| `TrustedSenderKind` | `Sender · Domain` |
 
 > `MailAccountStatus.NeedsReauthentication` gördüğünde kullanıcıyı `/api/account/reconnect` ekranına yönlendir; `Disabled` gördüğünde tüm istekler `401`/`403` döner, uygulama çıkışı yaptır.
 

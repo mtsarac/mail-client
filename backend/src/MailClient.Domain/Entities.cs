@@ -352,6 +352,15 @@ public sealed class MailSignature
     public DateTime UpdatedAt { get; set; }
 }
 
+public sealed class TrustedSender
+{
+    public Guid Id { get; set; }
+    public Guid MailAccountId { get; set; }
+    public TrustedSenderKind Kind { get; set; }
+    public string Value { get; set; } = "";
+    public DateTime CreatedAt { get; set; }
+}
+
 public sealed class MailSnippet
 {
     public Guid Id { get; set; }

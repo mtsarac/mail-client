@@ -149,6 +149,22 @@ Snippets are short reusable body texts without a subject. `text` is trimmed and
 `text`, `title` or `sortOrder`. Another account's snippet id returns 404. Snippets
 are deleted with their account.
 
+### Trusted senders
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/api/trusted-senders` | bearer | List senders and domains whose remote images load automatically |
+| POST | `/api/trusted-senders` | bearer | Trust a sender or domain (201; an existing entry returns 200) |
+| DELETE | `/api/trusted-senders/{id}` | bearer | Stop trusting a sender or domain (204) |
+
+Body: `{kind: "Sender" | "Domain", value}`; response adds `id`, `createdAt`.
+`value` is trimmed and lower-cased; a `Domain` value may start with `@`. An
+invalid address or domain returns a 400 validation problem keyed by `value`.
+When the sender address or its domain is trusted, `GET /api/mails/{id}` behaves
+as if `remoteContent=allow` was passed, except for mail in Junk or mail whose
+`Authentication-Results` report `dmarc=fail`. Sanitization is unchanged. Another
+account's entry returns 404. Entries are deleted with their account.
+
 ### Mail
 
 | Method | Path | Auth | Description |

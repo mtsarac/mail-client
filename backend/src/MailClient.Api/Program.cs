@@ -359,6 +359,7 @@ app.MapRuleEndpoints();
 app.MapContactEndpoints();
 app.MapTemplateEndpoints();
 app.MapSnippetEndpoints();
+app.MapTrustedSenderEndpoints();
 app.MapSignatureEndpoints();
 app.MapIdentityEndpoints();
 app.MapScheduledSendEndpoints();

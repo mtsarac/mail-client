@@ -34,6 +34,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<Contact> Contacts => Set<Contact>();
     public DbSet<MailTemplate> MailTemplates => Set<MailTemplate>();
     public DbSet<MailSnippet> MailSnippets => Set<MailSnippet>();
+    public DbSet<TrustedSender> TrustedSenders => Set<TrustedSender>();
     public DbSet<MailSignature> MailSignatures => Set<MailSignature>();
     public DbSet<MailIdentity> MailIdentities => Set<MailIdentity>();
 
@@ -156,6 +157,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         model.Entity<MailTemplate>().Property(x => x.NormalizedName).HasMaxLength(100);
         model.Entity<MailTemplate>().Property(x => x.Subject).HasMaxLength(500);
         model.Entity<MailTemplate>().HasOne<MailAccount>().WithMany().HasForeignKey(x => x.MailAccountId).OnDelete(DeleteBehavior.Cascade);
+        model.Entity<TrustedSender>().HasIndex(x => new { x.MailAccountId, x.Kind, x.Value }).IsUnique();
+        model.Entity<TrustedSender>().Property(x => x.Value).HasMaxLength(320);
+        model.Entity<TrustedSender>().HasOne<MailAccount>().WithMany().HasForeignKey(x => x.MailAccountId).OnDelete(DeleteBehavior.Cascade);
         model.Entity<MailSnippet>().HasIndex(x => new { x.MailAccountId, x.SortOrder });
         model.Entity<MailSnippet>().Property(x => x.Title).HasMaxLength(100);
         model.Entity<MailSnippet>().Property(x => x.Text).HasMaxLength(2000);

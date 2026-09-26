@@ -14,3 +14,4 @@ public enum ScheduledSendStatus { Pending, Sent, Cancelled, Failed, DeliveryUnkn
 public enum FolderSyncScope { InboxAndSent, AllFolders, SelectedFolders }
 public enum NotificationPrivacy { Full, Limited, Private }
 public enum ReplyReminderStatus { Pending, Replied, Notified, Cancelled }
+public enum TrustedSenderKind { Sender, Domain }
