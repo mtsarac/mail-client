@@ -68,24 +68,19 @@ public sealed class TrustedSenderApiTests(AcceptingApiFactory factory) : IClassF
     }
 
     [Fact]
-    public async Task MailDetail_TrustedSenderOrDomain_LoadsSanitizedRemoteImages()
+    public async Task MailDetail_LoadsOrdinaryImagesByDefault()
     {
         var (client, accountId) = await ConnectAsync();
         var bySender = await SeedMailAsync(accountId, "news@corp.example", MailFolderType.Inbox);
         var byDomain = await SeedMailAsync(accountId, "billing@corp.example", MailFolderType.Inbox);
         var untrusted = await SeedMailAsync(accountId, "someone@other.example", MailFolderType.Inbox);
 
-        Assert.False(await RemoteImagesAllowedAsync(client, bySender));
-
-        await client.PostAsJsonAsync("/api/trusted-senders", new { kind = "Sender", value = "news@corp.example" });
+        Assert.True(await RemoteImagesAllowedAsync(client, bySender));
+        Assert.True(await RemoteImagesAllowedAsync(client, byDomain));
+        Assert.True(await RemoteImagesAllowedAsync(client, untrusted));
         var html = await BodyHtmlAsync(client, bySender);
         Assert.Contains("src=\"https://images.example/photo.jpg\"", html, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("javascript:", html, StringComparison.OrdinalIgnoreCase);
-        Assert.False(await RemoteImagesAllowedAsync(client, byDomain));
-
-        await client.PostAsJsonAsync("/api/trusted-senders", new { kind = "Domain", value = "corp.example" });
-        Assert.True(await RemoteImagesAllowedAsync(client, byDomain));
-        Assert.False(await RemoteImagesAllowedAsync(client, untrusted));
     }
 
     [Fact]

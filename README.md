@@ -7,6 +7,12 @@ signed in from several devices; the API syncs mail from the remote server,
 serves it to the client, and applies mutations (read, move, trash, send…) on the
 mail server first.
 
+Mail details load ordinary remote images by default, except in Junk and messages
+reporting `dmarc=fail`. Clients can request images for a blocked message with
+`remoteContent=allow`. Tiny/hidden tracking pixels, scripts and non-image remote
+resources remain blocked; loading other remote images may reveal when a message
+was opened. See the [mail API](backend/docs/en/api-reference.md#mail).
+
 ## Quick start
 
 ```bash

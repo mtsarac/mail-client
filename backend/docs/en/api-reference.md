@@ -153,17 +153,18 @@ are deleted with their account.
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| GET | `/api/trusted-senders` | bearer | List senders and domains whose remote images load automatically |
-| POST | `/api/trusted-senders` | bearer | Trust a sender or domain (201; an existing entry returns 200) |
-| DELETE | `/api/trusted-senders/{id}` | bearer | Stop trusting a sender or domain (204) |
+| GET | `/api/trusted-senders` | bearer | List stored sender/domain image preferences |
+| POST | `/api/trusted-senders` | bearer | Store a sender or domain preference (201; an existing entry returns 200) |
+| DELETE | `/api/trusted-senders/{id}` | bearer | Delete a stored preference (204) |
 
 Body: `{kind: "Sender" | "Domain", value}`; response adds `id`, `createdAt`.
 `value` is trimmed and lower-cased; a `Domain` value may start with `@`. An
 invalid address or domain returns a 400 validation problem keyed by `value`.
-When the sender address or its domain is trusted, `GET /api/mails/{id}` behaves
-as if `remoteContent=allow` was passed, except for mail in Junk or mail whose
-`Authentication-Results` report `dmarc=fail`. Sanitization is unchanged. Another
-account's entry returns 404. Entries are deleted with their account.
+Ordinary remote images now load by default even without a trusted-sender entry.
+Junk mail and messages whose `Authentication-Results` report `dmarc=fail`
+remain blocked by default; `remoteContent=allow` is a one-mail override.
+Sanitization is unchanged. Another account's entry returns 404. Entries are
+deleted with their account.
 
 ### Mail
 
@@ -181,10 +182,12 @@ account's entry returns 404. Entries are deleted with their account.
 | POST | `/api/mails/send` | bearer + `Idempotency-Key` | Send mail (multipart/form-data; optional `identityId` selects a sender identity, otherwise the account address) |
 | GET | `/api/mails/{id}/compose/reply · reply-all · forward` | bearer | Prefilled compose context |
 
-Remote image URLs are neutralized by default. `remoteContent=allow` restores only
-sanitized HTTP(S) `<img src>` values; scripts, event handlers, forms, unsafe URI
-schemes and non-image remote resources stay blocked. The response body includes
-`remoteImageHosts` and `remoteImagesAllowed` for client state.
+Ordinary sanitized HTTP(S) `<img src>` values load by default outside Junk
+and `dmarc=fail` mail. `remoteContent=allow` explicitly loads them for a
+blocked message. Scripts, event handlers, forms, unsafe URI schemes and
+non-image remote resources stay blocked. The response body includes
+`remoteImageHosts` and `remoteImagesAllowed` for client state. Automatically
+loading remote images can reveal an open to the sender.
 
 `trackingPixelHosts` lists hosts of remote images that look like tracking pixels (width or height of 1px or less, or hidden with `display:none`/`visibility:hidden`). These stay blocked even with `remoteContent=allow`, so clients can show that tracking content was blocked.
 
