@@ -7,11 +7,12 @@ kutusu birden çok cihazdan oturum açabilir; API uzak sunucudan postayı senkro
 eder, istemciye sunar ve değişiklikleri (okundu, taşı, çöpe at, gönder…) önce
 posta sunucusunda uygular.
 
-Posta ayrıntılarında normal uzak görseller varsayılan olarak yüklenir; Junk
-klasöründeki ve `dmarc=fail` bildiren postalarda kullanıcı izni gerekir
-(`remoteContent=allow`). Görünmez/küçük takip pikselleri, scriptler ve görsel
-olmayan uzak kaynaklar engelli kalır. Diğer uzak görsellerin yüklenmesi, postanın
-açıldığını göndericiye bildirebilir. Ayrıntılar için [posta API'si](backend/docs/tr/api-reference.md#mail).
+Posta ayrıntısında normal uzak görseller kendiliğinden yüklenir. Junk
+klasöründeki veya `dmarc=fail` olan postalarda normal görseller ancak
+`remoteContent=allow` isteğiyle yüklenir. Küçük veya görünmez takip pikselleri,
+betikler ve görsel olmayan uzak kaynaklar engellenir. Diğer uzak görsellerin
+yüklenmesi, postayı açtığınızı göndericiye gösterebilir. Ayrıntılar için
+[posta API'sine](backend/docs/tr/api-reference.md#mail) bakın.
 
 ## Hızlı başlangıç
 
