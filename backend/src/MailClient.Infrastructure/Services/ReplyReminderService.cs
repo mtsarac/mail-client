@@ -67,6 +67,7 @@ public sealed class ReplyReminderService(AppDbContext db)
     public async Task<IReadOnlyList<ReplyReminderItem>> ListAsync(Guid accountId, CancellationToken cancellationToken) =>
         await db.ReplyReminders.AsNoTracking()
             .Where(x => x.MailAccountId == accountId && x.Status == ReplyReminderStatus.Pending)
+            .OrderBy(x => x.DueAtUtc)
             .Join(db.Mails.AsNoTracking(), reminder => reminder.MailId, mail => mail.Id,
                 (reminder, mail) => new ReplyReminderItem(
                     reminder.Id,
@@ -79,7 +80,6 @@ public sealed class ReplyReminderService(AppDbContext db)
                     mail.Subject,
                     mail.ToAddress,
                     mail.SentAt))
-            .OrderBy(x => x.DueAtUtc)
             .ToListAsync(cancellationToken);
 
     public async Task<bool> CancelAsync(Guid accountId, Guid mailId, CancellationToken cancellationToken)
