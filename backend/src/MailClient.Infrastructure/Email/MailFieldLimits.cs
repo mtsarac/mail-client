@@ -11,6 +11,7 @@ public static class MailFieldLimits
     public const int FileName = 255;
     public const int ContentType = 150;
     public const int ContentId = 998;
+    public const int HeaderValue = 4096;
 }
 
 public static class MailFieldNormalizer

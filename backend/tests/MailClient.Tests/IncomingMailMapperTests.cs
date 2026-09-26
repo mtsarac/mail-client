@@ -201,6 +201,18 @@ public sealed class IncomingMailMapperTests
     }
 
     [Fact]
+    public void Map_ExtractsEveryAuthenticationResultsHeader()
+    {
+        var message = SyncTestSeed.SimpleMessage("authentication headers");
+        message.Headers.Add("Authentication-Results", "mx.example.test; spf=pass smtp.mailfrom=example.test");
+        message.Headers.Add("Authentication-Results", "edge.example.test; dkim=temperror header.d=example.test");
+
+        var incoming = IncomingMailMapper.Map(message, 1, 7, AccountId, FolderId, Unseen);
+
+        Assert.Equal(2, incoming.Headers.Count(header => header.Name == "Authentication-Results"));
+    }
+
+    [Fact]
     public void Map_MultipartAlternative_KeepsBothBodies_AndUtf8Headers()
     {
         var message = new MimeMessage();

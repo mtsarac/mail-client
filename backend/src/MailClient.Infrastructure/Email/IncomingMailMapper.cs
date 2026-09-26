@@ -72,13 +72,14 @@ public static class IncomingMailMapper
             .OrderBy(participant => participant.SortOrder)
             .ToList();
 
-        var headers = new List<IncomingHeader>();
-        foreach (var headerName in (string[])["Content-Language", "List-Id", "List-Unsubscribe", "List-Unsubscribe-Post"])
+        var storedHeaders = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            var value = message.Headers[headerName];
-            if (!string.IsNullOrWhiteSpace(value))
-                headers.Add(new IncomingHeader(headerName, value.Trim()));
-        }
+            "Content-Language", "List-Id", "List-Unsubscribe", "List-Unsubscribe-Post", "Authentication-Results"
+        };
+        var headers = message.Headers
+            .Where(header => storedHeaders.Contains(header.Field) && !string.IsNullOrWhiteSpace(header.Value))
+            .Select(header => new IncomingHeader(header.Field, MailFieldNormalizer.Truncate(header.Value.Trim(), MailFieldLimits.HeaderValue)))
+            .ToList();
 
         var sentAt = message.Date == DateTimeOffset.MinValue
             ? internalDate ?? DateTime.UnixEpoch

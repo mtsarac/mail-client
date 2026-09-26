@@ -170,6 +170,8 @@ handler, form, güvensiz URI şeması ve görsel olmayan uzak kaynaklar engelli
 kalır. Yanıt gövdesi istemci durumu için `remoteImageHosts` ve
 `remoteImagesAllowed` alanlarını içerir.
 
+Posta detayı, saklanan en üst `Authentication-Results` başlığı SPF, DKIM veya DMARC sonucu içeriyorsa `authentication` döner; aksi halde alan `null` olur. Sonuçlar `authservId` ile birlikte `pass`, `fail`, `softfail`, `neutral`, `none`, `temperror`, `permerror` ve `policy` değerleriyle sınırlıdır. Sunucu doğrulamayı yeniden çalıştırmaz; istemciler bu değerleri yalnız bilgi amaçlı göstermelidir.
+
 `/api/search` filtreleri: `folderId`, `conversationId`, `isRead`, `flagged`,
 `hasAttachment`, `labelId` tam eşleşir; `from` = gönderen adresi veya görünen
 adında büyük/küçük harf duyarsız "içerir"; `to` = herhangi bir To/Cc/Bcc

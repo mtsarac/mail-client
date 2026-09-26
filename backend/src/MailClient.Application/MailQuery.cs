@@ -18,6 +18,12 @@ public sealed record AttachmentResponse(
 
 public sealed record MailHeaderResponse(string Name, string Value);
 
+public sealed record MailAuthenticationResponse(
+    string? AuthservId,
+    string? Spf,
+    string? Dkim,
+    string? Dmarc);
+
 public sealed record MailBodyResponse(
     string Html,
     bool HasRemoteContent,
@@ -94,4 +100,5 @@ public sealed record MailDetailResponse(
     IReadOnlyList<MailHeaderResponse> Headers,
     IReadOnlyList<AttachmentResponse> Attachments,
     Guid? ConversationId = null,
-    bool IsFromMe = false);
+    bool IsFromMe = false,
+    MailAuthenticationResponse? Authentication = null);

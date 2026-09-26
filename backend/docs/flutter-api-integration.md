@@ -516,6 +516,7 @@ Tam mail içeriği: gövde, katılımcılar, header'lar, ekler.
   "sentAt": "…", "receivedAt": "…", "internalDate": "…",
   "conversationId": "806acf4c-…", "isFromMe": false,
   "headers": [{ "name": "X-Mailer", "value": "…" }],
+  "authentication": { "authservId": "mx.example.com", "spf": "pass", "dkim": "pass", "dmarc": "fail" },
   "attachments": [{
     "id": "…", "fileName": "rapor.pdf", "contentType": "application/pdf",
     "sizeBytes": 48211, "isInline": false, "contentId": "", "contentDisposition": "attachment"
@@ -526,6 +527,7 @@ Tam mail içeriği: gövde, katılımcılar, header'lar, ekler.
 `conversationId` her zaman dolu gelir (tek mailse kendi konuşması); `isFromMe` Gönderilmiş/Taslak klasöründeki mailler için ya da gönderen adresi hesabın adresiyle (büyük/küçük harf duyarsız) aynıysa hangi klasörde olursa olsun `true`. HTML-only maillerde `bodyText` sunucuda HTML'den üretilir (yalnızca yeni senkronlanan mailler için). `body.html` sunucuda üretilen render edilebilir HTML'dir; yalnızca metin gerekirse `bodyText`. `isInline: true` ekler HTML içinde `cid:<contentId>` ile referanslanır — WebView'de bu URL'leri ek indirme ucuyla eşleştirmen gerekir. Bulunamazsa `404 mail_not_found`.
 
 `body.hasRemoteContent` HTML gövdede dış kaynaklı içerik bulunduğunu, `body.remoteImageHosts` uzak görsel hostlarını gösterir. Varsayılan yanıtta bu görsellerin `src` değerleri etkisizdir ve `body.remoteImagesAllowed` false olur. Kullanıcı "Görselleri yükle" dediğinde aynı maili `GET /api/mails/{id}?remoteContent=allow` ile yeniden çek; yalnızca temizlenmiş HTTP(S) görselleri açılır. Script, event handler, form, `javascript:`/`data:` gibi şemalar ve görsel olmayan uzak kaynaklar yine engelli kalır. Bu izin istemcide mail başına ve yalnızca açık uygulama oturumunda tutulmalıdır.
+`authentication`, yalnız alınan iletide saklanan en üst `Authentication-Results` başlığı geçerli bir SPF, DKIM veya DMARC sonucu taşıyorsa gelir; aksi halde `null` olur. Sonuçlar `pass`, `fail`, `softfail`, `neutral`, `none`, `temperror`, `permerror` veya `policy` değerlerinden biridir. Sunucu doğrulamayı yeniden çalıştırmaz; istemci `authservId` ile birlikte bu alanı yalnız bilgi amaçlı göstermeli, güven kararı olarak kullanmamalıdır.
 
 ### `GET /api/mails/{mailId}/attachments/{attachmentId}`
 **Auth:** Bearer

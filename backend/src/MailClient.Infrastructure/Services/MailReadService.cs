@@ -38,6 +38,10 @@ public sealed class MailReadService(
                 && account.NormalizedEmailAddress == normalizedFrom, cancellationToken);
         var body = HtmlMailBodyRenderer.Render(mail, mail.BodyHtml, allowRemoteImages);
         var bodyContract = new MailBodyResponse(body.Html, body.HasRemoteContent, body.RemoteContentHosts, body.RemoteImageHosts, body.TrackingPixelHosts, body.RemoteImagesAllowed);
+        var headerResponses = mail.Headers
+            .OrderBy(header => header.Name)
+            .Select(header => new MailHeaderResponse(header.Name, header.Value))
+            .ToList();
 
         return new MailDetailResponse(
             mail.Id,
@@ -65,7 +69,7 @@ public sealed class MailReadService(
             mail.SentAt,
             mail.ReceivedAt,
             mail.InternalDate,
-            mail.Headers.OrderBy(header => header.Name).Select(header => new MailHeaderResponse(header.Name, header.Value)).ToList(),
+            headerResponses,
             mail.Attachments
                 .OrderBy(attachment => attachment.FileName)
                 .Select(attachment => new AttachmentResponse(
@@ -78,7 +82,8 @@ public sealed class MailReadService(
                     attachment.ContentDisposition))
                 .ToList(),
             mail.ConversationId,
-            isFromMe);
+            isFromMe,
+            MailAuthenticationParser.Parse(headerResponses));
     }
 
     private static List<MailParticipantResponse> ToParticipantResponses(IEnumerable<MailParticipant> participants, ParticipantType type) =>
