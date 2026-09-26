@@ -26,12 +26,12 @@ Docker olmadan: PostgreSQL'i başlatın, migration'ları uygulayın, API'yi
 çalıştırın. `dotnet run` `.env` dosyasını okumaz — ayarları gerçek ortam
 değişkeni olarak verin (ör. `export ConnectionStrings__Default=...`) ya da
 `appsettings.json` varsayılanlarına güvenin (yerel `postgres`/`postgres`,
-`mailclient_v2` veritabanı). `dotnet ef` ise `DesignTimeDbContextFactory`'yi
-kullanır ve `MAILCLIENT_V2_CONNECTION` değişkenini okur (yoksa aynı yerel
+`kaydetmail-db` veritabanı). `dotnet ef` ise `DesignTimeDbContextFactory`'yi
+kullanır ve `KAYDETMAIL_DB_CONNECTION` değişkenini okur (yoksa aynı yerel
 veritabanı, `GSS Encryption Mode=Disable` ile):
 
 ```bash
-export MAILCLIENT_V2_CONNECTION="Host=localhost;Port=5432;Database=mailclient_v2;Username=postgres;Password=postgres"
+export KAYDETMAIL_DB_CONNECTION="Host=localhost;Port=5432;Database=kaydetmail-db;Username=postgres;Password=postgres"
 dotnet ef database update --project backend/src/MailClient.Infrastructure --startup-project backend/src/MailClient.Api
 dotnet run --project backend/src/MailClient.Api
 ```

@@ -22,7 +22,7 @@ public sealed class PostgresCollection : ICollectionFixture<PostgresFixture>;
 
 public sealed class PostgresFixture : IAsyncLifetime
 {
-    private const string TestDatabase = "mailclient_v2_tests";
+    private const string TestDatabase = "kaydetmail-db-tests";
 
     public string ConnectionString { get; private set; } = "";
 
