@@ -155,18 +155,18 @@ karakterdir; `sortOrder` 0-99999. Doğrulama hataları `text`, `title` veya
 
 | Metot | Yol | Yetki | Açıklama |
 |---|---|---|---|
-| GET | `/api/trusted-senders` | bearer | Uzak görselleri otomatik yüklenen gönderici ve alan adlarını listeler |
-| POST | `/api/trusted-senders` | bearer | Gönderici veya alan adını güvenilir yapar (201; kayıt zaten varsa 200) |
-| DELETE | `/api/trusted-senders/{id}` | bearer | Göndericiye veya alan adına güveni kaldırır (204) |
+| GET | `/api/trusted-senders` | bearer | Kayıtlı gönderici/alan adı görsel tercihlerini listeler |
+| POST | `/api/trusted-senders` | bearer | Gönderici/alan adı tercihini kaydeder (201; varsa 200) |
+| DELETE | `/api/trusted-senders/{id}` | bearer | Kayıtlı tercihi siler (204) |
 
 Gövde: `{kind: "Sender" | "Domain", value}`; yanıta `id`, `createdAt` eklenir.
 `value` kırpılır ve küçük harfe çevrilir; `Domain` değeri `@` ile başlayabilir.
 Geçersiz adres veya alan adı `value` anahtarlı 400 validation problem döner.
-Gönderici adresi ya da alan adı güvenilirse `GET /api/mails/{id}`,
-`remoteContent=allow` verilmiş gibi davranır; Junk klasöründeki postalar ve
-`Authentication-Results` başlığı `dmarc=fail` bildiren postalar hariçtir.
-Temizleme kuralları değişmez. Başka hesabın kaydı 404 döner. Kayıtlar hesapla
-birlikte silinir.
+Normal uzak görseller güvenilir gönderici kaydı olmadan da varsayılan olarak
+yüklenir. Junk klasöründeki ve `Authentication-Results` başlığı `dmarc=fail`
+bildiren postalar varsayılan olarak engellidir; `remoteContent=allow` yalnız o
+posta için kullanıcı iznidir. Temizleme kuralları değişmez. Başka hesabın
+kaydı 404 döner. Kayıtlar hesapla birlikte silinir.
 
 ### Mail
 
@@ -184,11 +184,12 @@ birlikte silinir.
 | POST | `/api/mails/send` | bearer + `Idempotency-Key` | Posta gönderir (multipart/form-data; opsiyonel `identityId` bir gönderici kimliği seçer, verilmezse hesap adresi) |
 | GET | `/api/mails/{id}/compose/reply · reply-all · forward` | bearer | Hazır doldurulmuş yazma bağlamı |
 
-Uzak görsel URL'leri varsayılan olarak etkisizleştirilir. `remoteContent=allow`
-yalnızca temizlenmiş HTTP(S) `<img src>` değerlerini geri açar; script, event
+Normal HTTP(S) `<img src>` görselleri Junk veya `dmarc=fail` dışındaki
+postalarda varsayılan olarak açılır. `remoteContent=allow` engellenen
+postanın temizlenmiş görsellerini kullanıcı isteğiyle açar; script, event
 handler, form, güvensiz URI şeması ve görsel olmayan uzak kaynaklar engelli
-kalır. Yanıt gövdesi istemci durumu için `remoteImageHosts` ve
-`remoteImagesAllowed` alanlarını içerir.
+kalır. Yanıt gövdesi `remoteImageHosts` ve `remoteImagesAllowed` alanlarını
+içerir. Görsellerin otomatik yüklenmesi açılma bilgisini göndericiye iletebilir.
 
 `trackingPixelHosts`, takip pikseli gibi görünen uzak görsellerin hostlarını listeler (genişliği veya yüksekliği 1px ya da daha küçük olan veya `display:none`/`visibility:hidden` ile gizlenen görseller). Bunlar `remoteContent=allow` ile de engelli kalır; istemci takip içeriğinin engellendiğini gösterebilir.
 

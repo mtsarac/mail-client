@@ -668,6 +668,30 @@ public sealed class PostgresIntegrationTests(PostgresFixture fixture)
         Assert.Equal([rescheduled.Id], await check.MailSnoozes.Where(x => x.MailAccountId == accountId).Select(x => x.Id).ToListAsync());
     }
 
+    [Fact]
+    public async Task ReplyReminderList_TranslatesOnPostgres_OrderedByDueDate()
+    {
+        if (!IntegrationEnvironment.PostgresEnabled) return;
+        var accountId = await SeedAccountAsync();
+        ReplyReminder later, sooner;
+        await using (var db = fixture.CreateDb())
+        {
+            var folderId = await SeedFolderAsync(db, accountId);
+            var laterMail = Mail(accountId, folderId, 911);
+            var soonerMail = Mail(accountId, folderId, 912);
+            db.Mails.AddRange(laterMail, soonerMail);
+            later = new ReplyReminder { Id = Guid.NewGuid(), MailAccountId = accountId, MailId = laterMail.Id, DueAtUtc = DateTime.UtcNow.AddDays(2), CreatedAt = DateTime.UtcNow };
+            sooner = new ReplyReminder { Id = Guid.NewGuid(), MailAccountId = accountId, MailId = soonerMail.Id, DueAtUtc = DateTime.UtcNow.AddDays(1), CreatedAt = DateTime.UtcNow };
+            db.ReplyReminders.AddRange(later, sooner);
+            await db.SaveChangesAsync();
+        }
+
+        await using var check = fixture.CreateDb();
+        var items = await new ReplyReminderService(check).ListAsync(accountId, CancellationToken.None);
+
+        Assert.Equal([sooner.Id, later.Id], items.Select(x => x.Id));
+    }
+
     private async Task RunSnoozeWakeupAsync(IPushNotificationService push)
     {
         var services = new ServiceCollection();

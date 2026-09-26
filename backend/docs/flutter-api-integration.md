@@ -529,7 +529,7 @@ Tam mail içeriği: gövde, katılımcılar, header'lar, ekler.
 
 `body.trackingPixelHosts` takip pikseli gibi görünen uzak görsellerin hostlarıdır (1px veya daha küçük boyut ya da `display:none`/`visibility:hidden`); bunlar `remoteContent=allow` ile de açılmaz. Liste doluysa UI "Takip içeriği engellendi" gösterebilir.
 
-`body.hasRemoteContent` HTML gövdede dış kaynaklı içerik bulunduğunu, `body.remoteImageHosts` uzak görsel hostlarını gösterir. Varsayılan yanıtta bu görsellerin `src` değerleri etkisizdir ve `body.remoteImagesAllowed` false olur. Kullanıcı "Görselleri yükle" dediğinde aynı maili `GET /api/mails/{id}?remoteContent=allow` ile yeniden çek; yalnızca temizlenmiş HTTP(S) görselleri açılır. Script, event handler, form, `javascript:`/`data:` gibi şemalar ve görsel olmayan uzak kaynaklar yine engelli kalır. Bu izin istemcide mail başına ve yalnızca açık uygulama oturumunda tutulmalıdır.
+`body.hasRemoteContent` HTML gövdede dış kaynaklı içerik bulunduğunu, `body.remoteImageHosts` uzak görsel hostlarını gösterir. Normal uzak görseller Junk veya `dmarc=fail` dışındaki postalarda varsayılan olarak açıktır (`body.remoteImagesAllowed: true`); açılma bilgisini göndericiye iletebilirler. Junk veya `dmarc=fail` postalarında `src` etkisizdir ve kullanıcı "Görselleri yükle" dediğinde aynı mail `GET /api/mails/{id}?remoteContent=allow` ile yeniden çekilir. Script, event handler, form, güvensiz şema ve görsel olmayan uzak kaynaklar her durumda engelli kalır. Manuel izin istemcide mail başına ve yalnızca açık uygulama oturumunda tutulmalıdır.
 `authentication`, yalnız alınan iletide saklanan en üst `Authentication-Results` başlığı geçerli bir SPF, DKIM veya DMARC sonucu taşıyorsa gelir; aksi halde `null` olur. Sonuçlar `pass`, `fail`, `softfail`, `neutral`, `none`, `temperror`, `permerror` veya `policy` değerlerinden biridir. Sunucu doğrulamayı yeniden çalıştırmaz; istemci `authservId` ile birlikte bu alanı yalnız bilgi amaçlı göstermeli, güven kararı olarak kullanmamalıdır.
 
 ### `GET /api/mails/{mailId}/attachments/{attachmentId}`### Mail kaynağı ve imza
@@ -881,7 +881,7 @@ Yazma ekranında gövdeye tek dokunuşla eklenen kısa hazır metinler ("Teşekk
 ### `GET/POST /api/trusted-senders`, `DELETE /api/trusted-senders/{id}`
 **Auth:** Bearer
 
-"Bu göndericiden / bu alan adından her zaman yükle" tercihi. Kayıtlıysa `GET /api/mails/{id}` uzak görselleri `remoteContent=allow` olmadan da açar ve `body.remoteImagesAllowed` `true` gelir; Junk klasöründeki ve `dmarc=fail` taşıyan postalar yine engelli kalır, temizleme kuralları değişmez.
+Kayıtlı gönderici/alan adı görsel tercihleri korunur; normal görseller artık bu kayıtlar olmadan da otomatik açılır. Junk ve `dmarc=fail` postaları varsayılan olarak engellidir; kullanıcı bir mail için `remoteContent=allow` ile manuel izin verebilir.
 
 ```json
 // GET 200 OK
