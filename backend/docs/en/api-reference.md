@@ -183,6 +183,8 @@ sanitized HTTP(S) `<img src>` values; scripts, event handlers, forms, unsafe URI
 schemes and non-image remote resources stay blocked. The response body includes
 `remoteImageHosts` and `remoteImagesAllowed` for client state.
 
+`trackingPixelHosts` lists hosts of remote images that look like tracking pixels (width or height of 1px or less, or hidden with `display:none`/`visibility:hidden`). These stay blocked even with `remoteContent=allow`, so clients can show that tracking content was blocked.
+
 Mail detail includes `authentication` when the topmost stored `Authentication-Results` header contains an SPF, DKIM, or DMARC result. It is otherwise `null`. Values are limited to `pass`, `fail`, `softfail`, `neutral`, `none`, `temperror`, `permerror`, and `policy`, together with the header's `authservId`. The server does not re-run authentication; clients must present these values as informational only.
 
 `/api/search` filters: `folderId`, `conversationId`, `isRead`, `flagged`,

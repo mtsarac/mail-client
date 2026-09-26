@@ -87,6 +87,32 @@ public sealed class MailBodySecurityTests
         Assert.Contains("images.example", contract.RemoteImageHosts);
     }
 
+    [Theory]
+    [InlineData("""<img src="https://t.example/o.gif?u=1&amp;m=2" width="1" height="1">""")]
+    [InlineData("""<img src="https://t.example/o.gif" style="display: none">""")]
+    [InlineData("""<img src="https://t.example/o.gif" style="width:0px;height:0px">""")]
+    public void Render_BlocksTrackingPixelsEvenWhenRemoteImagesAllowed(string trackingImage)
+    {
+        var mail = CreateMail();
+
+        var contract = HtmlMailBodyRenderer.Render(mail, $"""<img src="https://images.example/photo.jpg" width="600">{trackingImage}""", true);
+
+        Assert.Equal(["t.example"], contract.TrackingPixelHosts);
+        Assert.Contains("src=\"https://images.example/photo.jpg\"", contract.Html, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(" src=\"https://t.example", contract.Html, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("data-remote-src=\"https://t.example", contract.Html, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("""<img src="https://images.example/banner.png" width="600" height="2">""")]
+    [InlineData("""<img src="cid:LOGO" width="1" height="1">""")]
+    public void Render_DoesNotReportRegularImagesAsTracking(string image)
+    {
+        var contract = HtmlMailBodyRenderer.Render(CreateMail(), image);
+
+        Assert.Empty(contract.TrackingPixelHosts);
+    }
+
     [Fact]
     public void Sanitize_DetectsProtocolRelativeRemoteImages()
     {

@@ -187,6 +187,8 @@ handler, form, güvensiz URI şeması ve görsel olmayan uzak kaynaklar engelli
 kalır. Yanıt gövdesi istemci durumu için `remoteImageHosts` ve
 `remoteImagesAllowed` alanlarını içerir.
 
+`trackingPixelHosts`, takip pikseli gibi görünen uzak görsellerin hostlarını listeler (genişliği veya yüksekliği 1px ya da daha küçük olan veya `display:none`/`visibility:hidden` ile gizlenen görseller). Bunlar `remoteContent=allow` ile de engelli kalır; istemci takip içeriğinin engellendiğini gösterebilir.
+
 Posta detayı, saklanan en üst `Authentication-Results` başlığı SPF, DKIM veya DMARC sonucu içeriyorsa `authentication` döner; aksi halde alan `null` olur. Sonuçlar `authservId` ile birlikte `pass`, `fail`, `softfail`, `neutral`, `none`, `temperror`, `permerror` ve `policy` değerleriyle sınırlıdır. Sunucu doğrulamayı yeniden çalıştırmaz; istemciler bu değerleri yalnız bilgi amaçlı göstermelidir.
 
 `/api/search` filtreleri: `folderId`, `conversationId`, `isRead`, `flagged`,
