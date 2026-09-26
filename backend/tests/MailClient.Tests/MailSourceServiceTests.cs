@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using MailClient.Application.Mail;
 using MailClient.Domain.Entities;
@@ -7,6 +9,7 @@ using MailClient.Infrastructure.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using MimeKit;
+using MimeKit.Cryptography;
 
 namespace MailClient.Tests;
 
@@ -48,6 +51,35 @@ public sealed class MailSourceServiceTests
 
         Assert.Null(result.Value);
         Assert.Equal(MailOperationError.Conflict, result.Error);
+    }
+
+    [Fact]
+    public async Task VerifySignature_DistinguishesSelfSignedAndTamperedSMime()
+    {
+        using var key = RSA.Create(2048);
+        var request = new CertificateRequest("CN=Alice", key, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        request.CertificateExtensions.Add(new X509KeyUsageExtension(System.Security.Cryptography.X509Certificates.X509KeyUsageFlags.DigitalSignature, false));
+        var purposes = new OidCollection { new("1.3.6.1.5.5.7.3.4") };
+        request.CertificateExtensions.Add(new X509EnhancedKeyUsageExtension(purposes, false));
+        using var certificate = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(1));
+        using var context = new TemporarySecureMimeContext();
+        var signer = new CmsSigner(certificate);
+        var signed = new MimeMessage
+        {
+            Body = MultipartSigned.Create(context, signer, new TextPart("plain") { Text = "Original" })
+        };
+        await using var db = CreateDb();
+        var (accountId, mailId) = await SeedAsync(db);
+        var remote = new FakeRemoteMailFolder(7, new Dictionary<uint, Func<MimeMessage>> { [5] = () => signed });
+        var service = new MailSourceService(db, new FakeMailFolderClient(remote), NullLogger<MailSourceService>.Instance);
+
+        var original = await service.VerifySignatureAsync(accountId, mailId, CancellationToken.None);
+        Assert.Equal(MailCryptoStandard.SMime, original.Value?.Standard);
+        Assert.Equal(MailSignatureStatus.Untrusted, original.Value?.Status);
+
+        ((TextPart)((MultipartSigned)signed.Body)[0]).Text = "Altered";
+        var tampered = await service.VerifySignatureAsync(accountId, mailId, CancellationToken.None);
+        Assert.Equal(MailSignatureStatus.Invalid, tampered.Value?.Status);
     }
 
     private static async Task<(Guid AccountId, Guid MailId)> SeedAsync(AppDbContext db)
