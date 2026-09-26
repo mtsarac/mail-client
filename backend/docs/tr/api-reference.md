@@ -156,13 +156,19 @@ karakterdir; `sortOrder` 0-99999. Doğrulama hataları `text`, `title` veya
 | Metot | Yol | Yetki | Açıklama |
 |---|---|---|---|
 | GET | `/api/mails` | bearer | Posta listesi (`folderId`, `isRead`, `hasAttachments`, `search`, `page`, `pageSize` ≤ 100) |
-| GET | `/api/mails/{id}` | bearer | Posta detayı (`isFromMe`: Sent/Drafts postası ya da gönderen hesabın adresiyle büyük/küçük harf duyarsız aynıysa, klasörden bağımsız) |
+| GET | `/api/mails/{id}` | bearer | Posta detayı (`remoteContent=allow` yalnızca bu yanıtta temizlenmiş HTTP(S) görsellerine izin verir; `isFromMe`: Sent/Drafts postası ya da gönderen hesabın adresiyle büyük/küçük harf duyarsız aynıysa, klasörden bağımsız) |
 | GET | `/api/search` | bearer | Önbellekteki postada arama (tüm filtreler opsiyonel, AND; aşağıya bakın) |
 | GET | `/api/search/remote` | bearer | Kullanıcının başlattığı genel IMAP araması; eksik eşleşmeleri içeri alır, ardından `/api/search` tekrar çağrılır |
 | GET | `/api/mails/{mailId}/attachments/{attachmentId}` | bearer | Eki indirir (depolama aranabilirse Range/206) |
 | GET | `/api/compose/limits` | bearer | Güncel ek boyutu ve sayı sınırları |
 | POST | `/api/mails/send` | bearer + `Idempotency-Key` | Posta gönderir (multipart/form-data; opsiyonel `identityId` bir gönderici kimliği seçer, verilmezse hesap adresi) |
 | GET | `/api/mails/{id}/compose/reply · reply-all · forward` | bearer | Hazır doldurulmuş yazma bağlamı |
+
+Uzak görsel URL'leri varsayılan olarak etkisizleştirilir. `remoteContent=allow`
+yalnızca temizlenmiş HTTP(S) `<img src>` değerlerini geri açar; script, event
+handler, form, güvensiz URI şeması ve görsel olmayan uzak kaynaklar engelli
+kalır. Yanıt gövdesi istemci durumu için `remoteImageHosts` ve
+`remoteImagesAllowed` alanlarını içerir.
 
 `/api/search` filtreleri: `folderId`, `conversationId`, `isRead`, `flagged`,
 `hasAttachment`, `labelId` tam eşleşir; `from` = gönderen adresi veya görünen

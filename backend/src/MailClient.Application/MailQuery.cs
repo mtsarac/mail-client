@@ -22,7 +22,9 @@ public sealed record MailBodyResponse(
     string Html,
     bool HasRemoteContent,
     IReadOnlyList<string> RemoteContentHosts,
-    IReadOnlyList<string> TrackingPixelHosts);
+    IReadOnlyList<string> RemoteImageHosts,
+    IReadOnlyList<string> TrackingPixelHosts,
+    bool RemoteImagesAllowed);
 
 public sealed record MailListItemResponse(
     Guid Id,

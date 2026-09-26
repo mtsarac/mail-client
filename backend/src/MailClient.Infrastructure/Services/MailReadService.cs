@@ -21,7 +21,7 @@ public sealed class MailReadService(
     AuditLogger audit,
     ILogger<MailReadService> logger)
 {
-    public async Task<MailDetailResponse?> GetAsync(Guid accountId, Guid mailId, CancellationToken cancellationToken)
+    public async Task<MailDetailResponse?> GetAsync(Guid accountId, Guid mailId, CancellationToken cancellationToken, bool allowRemoteImages = false)
     {
         var mail = await db.Mails.AsNoTracking()
             .Include(item => item.Attachments)
@@ -36,8 +36,8 @@ public sealed class MailReadService(
                 && (folder.FolderType == MailFolderType.Sent || folder.FolderType == MailFolderType.Drafts), cancellationToken)
             || await db.MailAccounts.AnyAsync(account => account.Id == accountId
                 && account.NormalizedEmailAddress == normalizedFrom, cancellationToken);
-        var body = HtmlMailBodyRenderer.Render(mail, mail.BodyHtml);
-        var bodyContract = new MailBodyResponse(body.Html, body.HasRemoteContent, body.RemoteContentHosts, body.TrackingPixelHosts);
+        var body = HtmlMailBodyRenderer.Render(mail, mail.BodyHtml, allowRemoteImages);
+        var bodyContract = new MailBodyResponse(body.Html, body.HasRemoteContent, body.RemoteContentHosts, body.RemoteImageHosts, body.TrackingPixelHosts, body.RemoteImagesAllowed);
 
         return new MailDetailResponse(
             mail.Id,

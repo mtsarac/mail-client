@@ -154,13 +154,18 @@ are deleted with their account.
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | GET | `/api/mails` | bearer | List mail (`folderId`, `isRead`, `hasAttachments`, `search`, `page`, `pageSize` ≤ 100) |
-| GET | `/api/mails/{id}` | bearer | Mail detail (`isFromMe`: Sent/Drafts mail, or sender equals the account address case-insensitively, in any folder) |
+| GET | `/api/mails/{id}` | bearer | Mail detail (`remoteContent=allow` permits sanitized HTTP(S) image sources for this response; `isFromMe`: Sent/Drafts mail, or sender equals the account address case-insensitively, in any folder) |
 | GET | `/api/search` | bearer | Search cached mail (all filters optional, AND-combined; see below) |
 | GET | `/api/search/remote` | bearer | User-triggered generic IMAP search; imports missing matches before a follow-up `/api/search` |
 | GET | `/api/mails/{mailId}/attachments/{attachmentId}` | bearer | Download an attachment (Range/206 when storage is seekable) |
 | GET | `/api/compose/limits` | bearer | Current attachment size and count limits |
 | POST | `/api/mails/send` | bearer + `Idempotency-Key` | Send mail (multipart/form-data; optional `identityId` selects a sender identity, otherwise the account address) |
 | GET | `/api/mails/{id}/compose/reply · reply-all · forward` | bearer | Prefilled compose context |
+
+Remote image URLs are neutralized by default. `remoteContent=allow` restores only
+sanitized HTTP(S) `<img src>` values; scripts, event handlers, forms, unsafe URI
+schemes and non-image remote resources stay blocked. The response body includes
+`remoteImageHosts` and `remoteImagesAllowed` for client state.
 
 `/api/search` filters: `folderId`, `conversationId`, `isRead`, `flagged`,
 `hasAttachment`, `labelId` match exactly; `from` = case-insensitive contains

@@ -510,7 +510,7 @@ Tam mail içeriği: gövde, katılımcılar, header'lar, ekler.
   "from": [{ "id": "…", "type": "From", "address": "sender@example.com", "displayName": "Gönderen", "sortOrder": 0 }],
   "to": ["…"], "cc": [], "bcc": [], "replyTo": [],
   "bodyText": "…",
-  "body": { "html": "…", "hasRemoteContent": false, "remoteContentHosts": [], "trackingPixelHosts": [] },
+  "body": { "html": "…", "hasRemoteContent": false, "remoteContentHosts": [], "remoteImageHosts": [], "trackingPixelHosts": [], "remoteImagesAllowed": false },
   "isRead": true, "answered": false, "flagged": false, "draft": false,
   "deleted": false, "recent": false, "hasAttachments": true,
   "sentAt": "…", "receivedAt": "…", "internalDate": "…",
@@ -525,7 +525,7 @@ Tam mail içeriği: gövde, katılımcılar, header'lar, ekler.
 
 `conversationId` her zaman dolu gelir (tek mailse kendi konuşması); `isFromMe` Gönderilmiş/Taslak klasöründeki mailler için ya da gönderen adresi hesabın adresiyle (büyük/küçük harf duyarsız) aynıysa hangi klasörde olursa olsun `true`. HTML-only maillerde `bodyText` sunucuda HTML'den üretilir (yalnızca yeni senkronlanan mailler için). `body.html` sunucuda üretilen render edilebilir HTML'dir; yalnızca metin gerekirse `bodyText`. `isInline: true` ekler HTML içinde `cid:<contentId>` ile referanslanır — WebView'de bu URL'leri ek indirme ucuyla eşleştirmen gerekir. Bulunamazsa `404 mail_not_found`.
 
-`body.hasRemoteContent` true ise HTML gövdede dış kaynaklı içerik (izleme pikseli olabilir) var — `WebView`'de uzak içerik yüklemeden önce kullanıcıya sor.
+`body.hasRemoteContent` HTML gövdede dış kaynaklı içerik bulunduğunu, `body.remoteImageHosts` uzak görsel hostlarını gösterir. Varsayılan yanıtta bu görsellerin `src` değerleri etkisizdir ve `body.remoteImagesAllowed` false olur. Kullanıcı "Görselleri yükle" dediğinde aynı maili `GET /api/mails/{id}?remoteContent=allow` ile yeniden çek; yalnızca temizlenmiş HTTP(S) görselleri açılır. Script, event handler, form, `javascript:`/`data:` gibi şemalar ve görsel olmayan uzak kaynaklar yine engelli kalır. Bu izin istemcide mail başına ve yalnızca açık uygulama oturumunda tutulmalıdır.
 
 ### `GET /api/mails/{mailId}/attachments/{attachmentId}`
 **Auth:** Bearer
