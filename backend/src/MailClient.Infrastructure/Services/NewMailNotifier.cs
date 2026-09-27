@@ -20,7 +20,7 @@ public sealed partial class NewMailNotifier(AppDbContext db, IPushNotificationSe
         if (inboxOnly is null)
             return;
         var pending = await db.Mails.Include(x => x.MailFolder)
-            .Where(x => x.MailAccountId == accountId && x.NotificationPending && !x.RulePending)
+            .Where(x => x.MailAccountId == accountId && x.NotificationPending)
             .OrderBy(x => x.ReceivedAt)
             .ToListAsync(cancellationToken);
         if (pending.Count == 0)

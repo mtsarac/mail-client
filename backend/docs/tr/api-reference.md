@@ -54,9 +54,7 @@ varsayılan) veya `Private` (yalnız genel metin). Sunucu yöneticisi posta
 dışındaki tüm senkronize klasörlerdeki yeni postayı bildirir. `enabled: false`
 yalnız yeni posta, erteleme bitişi ve yanıt hatırlatıcı push'larını durdurur;
 hesap uyarıları (yeniden kimlik doğrulama) yine gönderilir.
-
-Yeni posta push'u sunucu kuralları çalıştıktan sonra gönderilir; kuralın
-bildirilen klasörlerden çıkardığı veya okundu yaptığı posta bildirilmez.
+Yeni posta push'u senkronizasyondan sonra gönderilir.
 `new_mail`, `snooze_expired` ve `reply_reminder` Android'de yalnız veri olarak
 gelir (uygulama hızlı eylemlerle gösterir), iOS'ta APNs uyarısı taşır. Süresi
 dolan ertelemeler sunucuda 30 saniyede bir sonlandırılır; her biri bir kez
@@ -96,27 +94,6 @@ reddedilir (`reply_reminder_already_replied`).
 | POST | `/api/folders/refresh` | bearer | Klasör listesini sunucudan yeniden okur |
 | POST | `/api/folders/{id}/sync` | bearer | Klasör sync'ini kuyruğa alır (202) |
 
-### Rules
-
-| Metot | Yol | Yetki | Açıklama |
-|---|---|---|---|
-| GET | `/api/rules` | bearer | Kuralları değerlendirme sırasıyla listeler (`priority`, sonra oluşturulma zamanı) |
-| POST | `/api/rules` | bearer | Kural oluşturur (201); `legacyId` ile tekrar çağrı taşınmış kuralı döner (200) |
-| PUT | `/api/rules/{id}` | bearer | Kuralı tümüyle günceller |
-| DELETE | `/api/rules/{id}` | bearer | Kuralı siler (204) |
-
-Gövde: `{name, enabled, priority, logic:"And"|"Or", conditions:[{type,value}], actions:[{type,folderId?,labelId?}], legacyId?}`.
-Koşullar: `senderContains`, `senderEquals`, `senderDomain`, `subjectContains`,
-`recipientContains` (To/Cc/Bcc), `hasAttachment` (değersiz), `folder` (klasör id).
-İşlemler: `markRead`, `markUnread`, `star`, `archive`, `move` (`folderId`),
-`trash`, `spam`, `addLabel` (`labelId`), `stopProcessing`. Klasör ve etiket id'leri
-oturumdaki hesaba ait olmalıdır. 1-16 koşul ve işlem; öncelik 0-99999.
-Kurallar yeni mail kaydedilip konuşmaya bağlandıktan sonra sunucuda çalışır;
-uygulama kapalı olsa da uygulanır, geriye dönük içe aktarılan eski mailler işlenmez.
-`folder` koşulu olmayan kural yalnız Gelen Kutusu'na uygulanır. Mail işlemleri
-remote-first işlem servisini kullanır; işlemler sırayla çalışır, `stopProcessing`
-sonraki kuralları atlar. Geçici hata maili sonraki sync için bekletir; bir mailin
-hatası diğerlerini engellemez.
 
 ### Templates
 
