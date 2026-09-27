@@ -37,8 +37,8 @@ public sealed record SendMailCommand(
     public string? TrustedInReplyToMessageId { get; init; }
     public string? TrustedReferences { get; init; }
     public Guid? IdentityId { get; init; }
+    /// <summary>Adds a <c>Disposition-Notification-To</c> (MDN) request. Opt-in; DSN is requested automatically regardless.</summary>
     public bool RequestReadReceipt { get; init; }
-    public bool RequestDeliveryReceipt { get; init; }
 }
 
 public enum PushEventType

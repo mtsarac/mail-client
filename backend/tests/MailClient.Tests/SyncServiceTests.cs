@@ -114,6 +114,29 @@ public sealed class SyncServiceTests
     }
 
     [Fact]
+    public async Task DeliveredReceiptReport_IsSkipped_WhileNormalMailAndBouncesImport()
+    {
+        await using var db = CreateDb();
+        var (accountId, folderId) = await SeedFolderAsync(db);
+        var remote = new FakeRemoteMailFolder(7, new Dictionary<uint, Func<MimeKit.MimeMessage>>
+        {
+            [1] = () => ReceiptReports.Dsn("delivered"),
+            [2] = () => SimpleMessage("normal"),
+            [3] = () => ReceiptReports.Dsn("failed")
+        });
+        var service = CreateService(db, Options(100));
+
+        await service.SyncFolderCoreAsync(accountId, folderId, remote, CancellationToken.None);
+
+        var imported = await db.Mails.OrderBy(mail => mail.Uid).Select(mail => mail.Uid).ToListAsync();
+        Assert.Equal([2u, 3u], imported);
+        var skipped = await db.SyncSkippedUids.SingleAsync();
+        Assert.Equal(1u, skipped.Uid);
+        Assert.StartsWith("receipt:", skipped.Reason);
+        Assert.Equal(3u, (await db.SyncStates.SingleAsync()).LastUid);
+    }
+
+    [Fact]
     public async Task ServerSeenFlag_ReconcilesLocalReadState()
     {
         await using var db = CreateDb();

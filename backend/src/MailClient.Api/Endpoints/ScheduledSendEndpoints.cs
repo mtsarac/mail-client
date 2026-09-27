@@ -22,7 +22,8 @@ public sealed record ScheduledSendListItemResponse(
     Guid? SentMailId,
     string? FailureReason,
     int AttemptCount,
-    DateTime? NextAttemptAtUtc);
+    DateTime? NextAttemptAtUtc,
+    bool RequestReadReceipt);
 
 public sealed record ScheduledSendListResponse(IReadOnlyList<ScheduledSendListItemResponse> Items);
 
@@ -51,10 +52,10 @@ public static class ScheduledSendEndpoints
                     new ScheduledSendResponse(result.Id, result.SendAtUtc, result.Status));
             })
             .DisableAntiforgery().WithName("CreateScheduledSend").WithSummary("Schedule a mail to send later")
-            .WithDescription("multipart/form-data: same fields as POST /api/mails/send, including optional identityId, plus sendAtUtc (ISO-8601, required, must be in the future). Idempotency-Key header is required; retrying with the same key never schedules twice.")
+            .WithDescription("multipart/form-data: same fields as POST /api/mails/send, including optional identityId and optional requestReadReceipt (default false; stored and applied at dispatch), plus sendAtUtc (ISO-8601, required, must be in the future). Idempotency-Key header is required; retrying with the same key never schedules twice.")
             .Accepts<IFormCollection>("multipart/form-data").Produces<ScheduledSendResponse>(201).ProducesValidationProblem()
             .ProblemCodes(400, "scheduled_send_in_past", "recipient_required", "invalid_recipient", "body_required", "body_too_large",
-                "too_many_attachments", "attachment_too_large", "idempotency_key_required", "idempotency_key_too_long")
+                "too_many_attachments", "attachment_too_large", "idempotency_key_required", "idempotency_key_too_long", "invalid_receipt_option")
             .ProblemCodes(404, "mail_account_not_found", "identity_not_found").ProblemCodes(409, "idempotency_conflict");
 
         api.MapGet("/scheduled-sends", async (ICurrentMailAccount current, ScheduledSendService scheduledSends, CancellationToken ct) =>
@@ -63,7 +64,8 @@ public static class ScheduledSendEndpoints
                 return Results.Ok(new ScheduledSendListResponse(items
                     .Select(item => new ScheduledSendListItemResponse(
                         item.Id, item.To, item.Cc, item.Bcc, item.Subject, item.SendAtUtc, item.Status,
-                        item.CreatedAtUtc, item.SentMailId, item.FailureReason, item.AttemptCount, item.NextAttemptAtUtc))
+                        item.CreatedAtUtc, item.SentMailId, item.FailureReason, item.AttemptCount, item.NextAttemptAtUtc,
+                        item.RequestReadReceipt))
                     .ToList()));
             })
             .WithName("ListScheduledSends").WithSummary("List scheduled sends")
@@ -100,16 +102,16 @@ public static class ScheduledSendEndpoints
                 var compose = MailEndpoints.ComposeForm.Read(form);
                 var result = await scheduledSends.UpdatePendingAsync(current.MailAccountId, id,
                     new ScheduledSendEdit(sendAtUtc, compose.To, compose.Cc, compose.Bcc, compose.Subject,
-                        compose.BodyHtml, compose.BodyText, keep, compose.Attachments),
+                        compose.BodyHtml, compose.BodyText, keep, compose.Attachments, compose.RequestReadReceipt),
                     correlation.CorrelationId, ct);
                 return Results.Ok(new ScheduledSendResponse(result.Id, result.SendAtUtc, result.Status));
             })
             .DisableAntiforgery().WithName("UpdateScheduledSend").WithSummary("Edit a pending scheduled send")
-            .WithDescription("multipart/form-data: to, cc, bcc, subject, bodyHtml/bodyText, sendAtUtc (required, future), keepAttachmentIds (repeated; staged attachments not listed are removed) and new files. Replaces the whole content atomically; only Pending sends can be edited and a send the dispatcher already claimed is never modified.")
+            .WithDescription("multipart/form-data: to, cc, bcc, subject, bodyHtml/bodyText, sendAtUtc (required, future), optional requestReadReceipt (absent keeps the stored value), keepAttachmentIds (repeated; staged attachments not listed are removed) and new files. Replaces the whole content atomically; only Pending sends can be edited and a send the dispatcher already claimed is never modified.")
             .Accepts<IFormCollection>("multipart/form-data").Produces<ScheduledSendResponse>().ProducesValidationProblem()
             .ProblemCodes(400, "scheduled_send_in_past", "recipient_required", "invalid_recipient", "body_required",
                 "body_too_large", "too_many_attachments", "attachment_too_large", "invalid_mail_header",
-                "message_not_constructible")
+                "message_not_constructible", "invalid_receipt_option")
             .ProblemCodes(404, "scheduled_send_not_found", "scheduled_send_attachment_not_found", "mail_account_not_found")
             .ProblemCodes(409, "scheduled_send_already_sent", "scheduled_send_not_pending", "scheduled_send_modified");
 
@@ -124,7 +126,7 @@ public static class ScheduledSendEndpoints
                     new ScheduledSendResponse(result.Id, result.SendAtUtc, result.Status));
             })
             .WithName("RescheduleFailedSend").WithSummary("Edit and explicitly reschedule a failed send")
-            .WithDescription("JSON: sendAtUtc, to, cc, bcc, subject, bodyHtml, bodyText; attachmentIds is optional (omitted preserves all staged attachments). Requires a NEW Idempotency-Key. Delivery-unknown sends cannot be rescheduled.")
+            .WithDescription("JSON: sendAtUtc, to, cc, bcc, subject, bodyHtml, bodyText; attachmentIds is optional (omitted preserves all staged attachments); requestReadReceipt is optional (null/omitted keeps the failed send's value). Requires a NEW Idempotency-Key. Delivery-unknown sends cannot be rescheduled.")
             .Produces<ScheduledSendResponse>(201)
             .ProblemCodes(400, "scheduled_send_in_past", "recipient_required", "invalid_recipient", "body_required",
                 "body_too_large", "too_many_attachments", "attachment_too_large", "idempotency_key_required",

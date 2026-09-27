@@ -100,11 +100,11 @@ public static class MailEndpoints
             await drafts.DeleteAsync(current.MailAccountId, id, correlation.CorrelationId, ct);
             return Results.NoContent();
         }).WithTags(DraftsTag).WithName("DeleteDraft").WithSummary("Delete draft").Produces(204).ProblemCodes(404, "draft_not_found").ProblemCodes(422, "trash_folder_unavailable", "mail_not_draft").ProblemCodes(502, "draft_delete_failed");
-        api.MapPost("/drafts/{id:guid}/send", async (Guid id, [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey, ICurrentMailAccount current, DraftService drafts, CorrelationContext correlation, CancellationToken ct) =>
-            Results.Ok(await drafts.SendAsync(current.MailAccountId, id, idempotencyKey ?? "", correlation.CorrelationId, ct)))
+        api.MapPost("/drafts/{id:guid}/send", async (Guid id, [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey, [FromQuery] string? requestReadReceipt, ICurrentMailAccount current, DraftService drafts, CorrelationContext correlation, CancellationToken ct) =>
+            Results.Ok(await drafts.SendAsync(current.MailAccountId, id, idempotencyKey ?? "", ParseReceiptOption(requestReadReceipt) ?? false, correlation.CorrelationId, ct)))
             .DisableAntiforgery().WithTags(DraftsTag).WithName("SendDraft").WithSummary("Send an existing draft")
-            .WithDescription("Sends the draft and removes it. Requires the Idempotency-Key header; retrying a successful send with the same key replays the result.")
-            .Produces<DraftSendResult>().ProblemCodes(400, "recipient_required", "body_required", "idempotency_key_required", "idempotency_key_too_long")
+            .WithDescription("Sends the draft and removes it. Optional query requestReadReceipt=true adds a Disposition-Notification-To (MDN) request; absent means false. Requires the Idempotency-Key header; retrying a successful send with the same key replays the result.")
+            .Produces<DraftSendResult>().ProblemCodes(400, "recipient_required", "body_required", "idempotency_key_required", "idempotency_key_too_long", "invalid_receipt_option")
             .ProblemCodes(404, "draft_not_found").ProblemCodes(409, "idempotency_conflict", "send_in_progress", "delivery_unknown").ProblemCodes(422, "mail_not_draft");
 
         api.MapPatch("/mails/{id:guid}/read", async (Guid id, ReadRequest request, ICurrentMailAccount current, CorrelationContext correlation, IMailOperationService operations, CancellationToken ct) =>
@@ -167,11 +167,10 @@ public static class MailEndpoints
             var command = ComposeForm.Read(form).ToSend(current.MailAccountId, idempotencyKey ?? "");
             var result = await sender.SendAsync(current.MailAccountId, command, correlation.CorrelationId, ct);
             return Results.Ok(new SendMailResponse(result.Sent, result.SentCopySaved, result.Warning, result.MailId, result.ConversationId));
-        }).WithTags(ComposeTag).WithName("SendMail").WithSummary("Send mail idempotently").WithDescription("multipart/form-data: to, subject, bodyHtml and/or bodyText, optional identityId, requestReadReceipt and requestDeliveryReceipt booleans, up to 20 attachments. Idempotency-Key header is required; retrying with the same key never sends twice.")
+        }).WithTags(ComposeTag).WithName("SendMail").WithSummary("Send mail idempotently").WithDescription("multipart/form-data: to, subject, bodyHtml and/or bodyText, optional identityId, optional requestReadReceipt boolean (default false; true adds a Disposition-Notification-To MDN request), up to 20 attachments. Delivery status notifications are requested automatically when the SMTP server supports DSN. Idempotency-Key header is required; retrying with the same key never sends twice.")
             .Accepts<IFormCollection>("multipart/form-data").Produces<SendMailResponse>()
             .ProblemCodes(400, "recipient_required", "invalid_recipient", "body_required", "body_too_large", "too_many_attachments", "attachment_too_large", "idempotency_key_required", "idempotency_key_too_long", "invalid_receipt_option")
             .ProblemCodes(401, "mail_smtp_authentication_failed").ProblemCodes(404, "identity_not_found").ProblemCodes(409, "idempotency_conflict", "send_in_progress", "delivery_unknown", "mail_account_needs_reauthentication")
-            .ProblemCodes(422, "delivery_receipt_not_supported")
             .ProblemCodes(502, "mail_provider_unavailable", "mail_server_unreachable", "mail_tls_failed").DisableAntiforgery();
     }
 
@@ -186,8 +185,7 @@ public static class MailEndpoints
         IReadOnlyList<SendMailAttachment> Attachments,
         Guid? ReplySourceMailId,
         Guid? IdentityId,
-        bool RequestReadReceipt,
-        bool RequestDeliveryReceipt)
+        bool? RequestReadReceipt)
     {
         public static ComposeForm Read(IFormCollection form) => new(
             Values(form, "to"),
@@ -199,14 +197,13 @@ public static class MailEndpoints
             form.Files.Select(file => new SendMailAttachment(file.FileName, file.ContentType, file.OpenReadStream())).ToList(),
             OptionalGuid(form, "replySourceMailId", "mail_not_found"),
             OptionalGuid(form, "identityId", "identity_not_found"),
-            OptionalBool(form, "requestReadReceipt"),
-            OptionalBool(form, "requestDeliveryReceipt"));
+            ParseReceiptOption(Optional(form, "requestReadReceipt")));
 
         public DraftCommand ToDraft(Guid accountId) =>
             new(accountId, To, Cc, Bcc, Subject, BodyHtml, BodyText, Attachments, ReplySourceMailId, IdentityId);
 
         public SendMailCommand ToSend(Guid accountId, string idempotencyKey) =>
-            new(accountId, To, Cc, Bcc, Subject, BodyHtml, BodyText, Attachments, ReplySourceMailId) { IdempotencyKey = idempotencyKey, IdentityId = IdentityId, RequestReadReceipt = RequestReadReceipt, RequestDeliveryReceipt = RequestDeliveryReceipt };
+            new(accountId, To, Cc, Bcc, Subject, BodyHtml, BodyText, Attachments, ReplySourceMailId) { IdempotencyKey = idempotencyKey, IdentityId = IdentityId, RequestReadReceipt = RequestReadReceipt ?? false };
 
         private static List<string> Values(IFormCollection form, string name) =>
             form[name].Where(value => !string.IsNullOrWhiteSpace(value)).Select(value => value!).ToList();
@@ -223,13 +220,13 @@ public static class MailEndpoints
             if (value is null) return null;
             return Guid.TryParse(value, out var id) ? id : throw new InvalidOperationException(error);
         }
-        private static bool OptionalBool(IFormCollection form, string name)
-        {
-            var value = Optional(form, name);
-            if (value is null) return false;
-            return bool.TryParse(value, out var enabled) ? enabled : throw new InvalidOperationException("invalid_receipt_option");
-        }
+    }
 
+    /// <summary>Parses the optional <c>requestReadReceipt</c> send option; null when absent, <c>invalid_receipt_option</c> when unparsable.</summary>
+    internal static bool? ParseReceiptOption(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        return bool.TryParse(value, out var enabled) ? enabled : throw new InvalidOperationException("invalid_receipt_option");
     }
 
     private static async Task<IResult> ComposeResult(Task<ComposeContextResponse?> response) =>

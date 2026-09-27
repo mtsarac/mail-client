@@ -331,7 +331,7 @@ public sealed class SignatureIdentityApiTests(AcceptingApiFactory factory) : ICl
             sendOperations, new FakeFileStorage(), audit, NullLogger<DraftService>.Instance);
 
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            service.SendAsync(accountId, draftId, "draft-identity", null, CancellationToken.None));
+            service.SendAsync(accountId, draftId, "draft-identity", false, null, CancellationToken.None));
 
         Assert.Equal("identity_not_found", error.Message);
     }
