@@ -13,16 +13,15 @@ namespace MailClient.Tests;
 public sealed class NotificationDeliveryTests
 {
     [Fact]
-    public async Task Notifier_InboxOnly_SkipsMailRulesMovedOrRead_AndWaitsForPendingRules()
+    public async Task Notifier_InboxOnly_SkipsReadAndNonInboxMail()
     {
         var dbName = Guid.NewGuid().ToString("N");
         await using var db = CreateDb(dbName);
         var seed = await SeedAsync(db, inboxOnly: true);
         var inbox = AddMail(db, seed, seed.Inbox, "inbox", body: "  first line\n\n  second   line  " + new string('x', 200));
-        AddMail(db, seed, seed.Archive, "moved by rule");
-        AddMail(db, seed, seed.Inbox, "marked read by rule", isRead: true);
+        AddMail(db, seed, seed.Archive, "archive");
+        AddMail(db, seed, seed.Inbox, "marked read", isRead: true);
         AddMail(db, seed, seed.Custom, "custom folder");
-        var waiting = AddMail(db, seed, seed.Inbox, "rules pending", rulePending: true);
         await db.SaveChangesAsync();
         var push = new FakePushNotificationService();
 
@@ -34,7 +33,7 @@ public sealed class NotificationDeliveryTests
         Assert.StartsWith("first line second line xxx", notification.BodyPreview);
         Assert.Equal(141, notification.BodyPreview!.Length);
         await using var check = CreateDb(dbName);
-        Assert.Equal([waiting.Id], await check.Mails.Where(x => x.NotificationPending).Select(x => x.Id).ToListAsync());
+        Assert.Empty(await check.Mails.Where(x => x.NotificationPending).Select(x => x.Id).ToListAsync());
     }
 
     [Fact]
@@ -127,7 +126,7 @@ public sealed class NotificationDeliveryTests
     }
 
     private static MailEntity AddMail(AppDbContext db, Seed seed, Guid folderId, string subject, string body = "",
-        bool isRead = false, bool rulePending = false, bool notificationPending = true)
+        bool isRead = false, bool notificationPending = true)
     {
         var mail = new MailEntity
         {
@@ -138,7 +137,6 @@ public sealed class NotificationDeliveryTests
             BodyText = body,
             FromAddress = "sender@example.test",
             IsRead = isRead,
-            RulePending = rulePending,
             NotificationPending = notificationPending,
             ReceivedAt = DateTime.UtcNow
         };

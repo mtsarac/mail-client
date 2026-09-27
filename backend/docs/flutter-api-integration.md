@@ -333,30 +333,6 @@ Hesabın posta bildirim tercihleri; hesaba oturum açmış tüm cihazlarda geçe
 
 `PUT` gövdesi: `{"enabled":true,"inboxOnly":false,"privacy":"Full"}`. `privacy`: `Full` (gönderen + konu + kısa metin önizlemesi), `Limited` (gönderen + konu, varsayılan), `Private` (yalnız "yeni posta"). Bilinmeyen `privacy` `400` validation problem döner. `previewsAllowedByServer: false` ise sunucu yöneticisi önizlemeyi kapatmıştır ve push'lar `Private` gider. `inboxOnly: false` Gönderilmiş/Taslaklar/Çöp/Spam dışındaki tüm senkronize klasörlerdeki yeni postayı bildirir. `enabled: false` yalnız `new_mail`, `snooze_expired` ve `reply_reminder` push'larını durdurur.
 
-### `GET/POST /api/rules`, `PUT/DELETE /api/rules/{id}`
-**Auth:** Bearer
-
-Hesap düzeyindeki sunucu tarafı mail kuralları; aynı hesaba bağlı tüm cihazlarda aynıdır ve uygulama kapalıyken de çalışır. Liste değerlendirme sırasıyla gelir (`priority` küçük olan önce, eşitlikte oluşturulma zamanı).
-
-```json
-{
-  "id": "…",
-  "name": "Bültenler",
-  "enabled": true,
-  "priority": 0,
-  "logic": "And",
-  "conditions": [{"type": "senderDomain", "value": "ornek.com"}, {"type": "hasAttachment", "value": null}],
-  "actions": [{"type": "addLabel", "labelId": "…"}, {"type": "move", "folderId": "…"}, {"type": "stopProcessing"}],
-  "createdAt": "…",
-  "updatedAt": "…"
-}
-```
-
-`POST`/`PUT` gövdesi `id`/tarih alanları hariç aynı şekildedir. Koşullar: `senderContains`, `senderEquals`, `senderDomain`, `subjectContains`, `recipientContains` (To/Cc/Bcc), `hasAttachment` (`value: null`), `folder` (`value`: klasör id). İşlemler: `markRead`, `markUnread`, `star`, `archive`, `move` (`folderId` zorunlu), `trash`, `spam`, `addLabel` (`labelId` zorunlu), `stopProcessing`. `logic`: `And` | `Or`. 1-16 koşul/işlem, `name` 1-100 karakter, `priority` 0-99999. Başka hesaba ait klasör/etiket veya geçersiz tanım `400` validation problem döner; başka hesabın kural id'si `404`.
-
-Eski cihaz içi kuralları taşırken `legacyId` gönderin: aynı hesap + `legacyId` tekrar gönderildiğinde yeni kayıt oluşmaz, taşınmış kural `200` ile döner. Bu nedenle taşıma yarıda kesilirse güvenle yeniden denenebilir.
-
-Değerlendirme: yalnızca yeni gelen mail (geriye dönük içe aktarılan eski mail değil), `folder` koşulu yoksa yalnız Gelen Kutusu. İşlemler sırayla, remote-first mail işlem servisiyle uygulanır; `stopProcessing` sonraki kuralları durdurur. Geçici hata maili sonraki sync'te yeniden denenmek üzere bekletir; silinmiş hedef klasör/etiket gibi kalıcı hatalarda o işlem atlanır.
 
 ### `DELETE /api/account`
 **Auth:** Bearer
@@ -1066,7 +1042,7 @@ Aynı `token` tekrar gönderilirse güncellenir (upsert) — her uygulama açıl
 ```
 
 - `new_mail`, `snooze_expired` ve `reply_reminder` Android'de **yalnız veri** mesajıdır (`notification` bloğu yok, yüksek öncelik): uygulama bildirimi kendisi çizer ve hızlı eylemleri (`POST /api/mails/{id}/read|archive|trash`, Yanıtla) ekler. iOS'ta aynı metin APNs uyarısı olarak gelir. Diğer tipler önceki gibi davranır.
-- `new_mail`, sunucu kuralları çalıştıktan sonra gönderilir; kuralın bildirilen klasörlerden çıkardığı veya okundu yaptığı posta bildirilmez.
+- `new_mail`, senkronizasyondan sonra gönderilir.
 - `snooze_expired`: süresi dolan erteleme sunucuda sonlandırılır (`GET /api/mails/snoozed` artık içermez) ve posta başına bir kez gönderilir; iptal edilen/ileri alınan erteleme uyanmaz. Çöp/Spam'deki posta için push gönderilmez.
 - `reply_reminder`: başlık "No reply yet"; limited/full gövdede `alıcı: konu` (full ise konu + kısa metin). Posta başına bir kez; yanıt gelirse/silinirse push gönderilmez, Çöp/Spam'deki posta için gönderilmez.
 - `mail_state_changed` `operation` read/archive/trash/spam/move/delete ise o mailin cihazda gösterilen bildirimini kaldır.

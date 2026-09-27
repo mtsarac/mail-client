@@ -54,8 +54,7 @@ subject, short text preview), `Limited` (sender and subject; default) or
 Drafts, Trash and Junk. `enabled: false` stops new-mail, snooze wake-up and
 reply-reminder pushes only; account alerts (reauthentication) are still sent.
 
-New-mail pushes are sent after server rules ran, so mail a rule moved out of
-the notified folders or marked read is not announced. `new_mail`,
+New-mail pushes are sent after sync. `new_mail`,
 `snooze_expired` and `reply_reminder` are data-only on Android (the app
 renders them with quick actions) and carry an APNs alert on iOS. Due snoozes
 are ended on the server every 30 seconds; each one wakes once, and a snooze
@@ -95,26 +94,6 @@ answered, moved to Trash/Junk, or cancelled. Past due times are rejected
 | POST | `/api/folders/refresh` | bearer | Re-read the folder list from the server |
 | POST | `/api/folders/{id}/sync` | bearer | Queue a folder sync (202) |
 
-### Rules
-
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| GET | `/api/rules` | bearer | List mail rules in evaluation order (`priority`, then creation time) |
-| POST | `/api/rules` | bearer | Create a rule (201); with `legacyId`, repeating returns the migrated rule (200) |
-| PUT | `/api/rules/{id}` | bearer | Replace a rule |
-| DELETE | `/api/rules/{id}` | bearer | Delete a rule (204) |
-
-Body: `{name, enabled, priority, logic:"And"|"Or", conditions:[{type,value}], actions:[{type,folderId?,labelId?}], legacyId?}`.
-Condition types: `senderContains`, `senderEquals`, `senderDomain`, `subjectContains`,
-`recipientContains` (To/Cc/Bcc), `hasAttachment` (no value), `folder` (folder id).
-Action types: `markRead`, `markUnread`, `star`, `archive`, `move` (`folderId`),
-`trash`, `spam`, `addLabel` (`labelId`), `stopProcessing`. Folder and label ids must
-belong to the authenticated account. 1-16 conditions and actions; priority 0-99999.
-Rules run on the server after new mail is persisted and threaded, even when no app
-is open; backfilled older mail is not processed. Without a `folder` condition a rule
-applies only to Inbox. Mail actions reuse the remote-first mail operation service;
-actions run in order and `stopProcessing` skips later rules. A transient failure
-leaves the mail pending for the next sync; one mail's failure never blocks the rest.
 
 ### Templates
 

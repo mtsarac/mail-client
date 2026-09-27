@@ -146,7 +146,6 @@ public sealed class SyncServiceTests
         Assert.Empty(push.Notifications);
         var stored = await db.Mails.SingleAsync();
         Assert.Equal(accountId, stored.MailAccountId);
-        Assert.True(stored.RulePending);
         Assert.True(stored.NotificationPending);
     }
 

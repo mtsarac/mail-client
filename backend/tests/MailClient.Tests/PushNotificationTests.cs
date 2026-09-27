@@ -270,8 +270,6 @@ public sealed class PushNotificationTests
         await service.SyncFolderCoreAsync(accountId, folderId, remote, CancellationToken.None);
         Assert.Empty(push.Notifications);
         var stored = await db.Mails.SingleAsync();
-        stored.RulePending = false;
-        await db.SaveChangesAsync();
 
         var notifier = new NewMailNotifier(db, push, NullLogger<NewMailNotifier>.Instance);
         await notifier.NotifyPendingAsync(accountId, CancellationToken.None);
@@ -326,8 +324,6 @@ public sealed class PushNotificationTests
             [1] = () => SimpleMessage("push-down")
         });
         await CreateSyncService(db, new ThrowingPush()).SyncFolderCoreAsync(accountId, folderId, remote, CancellationToken.None);
-        (await db.Mails.SingleAsync()).RulePending = false;
-        await db.SaveChangesAsync();
 
         await new NewMailNotifier(db, new ThrowingPush(), NullLogger<NewMailNotifier>.Instance).NotifyPendingAsync(accountId, CancellationToken.None);
 

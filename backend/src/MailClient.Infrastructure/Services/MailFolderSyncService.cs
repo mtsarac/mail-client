@@ -586,7 +586,6 @@ public sealed class MailFolderSyncService(
             }
 
             mail.HasAttachments = mail.Attachments.Count > 0;
-            mail.RulePending = isNewMail;
             mail.NotificationPending = isNewMail;
 
             db.Mails.Add(mail);
