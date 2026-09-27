@@ -38,6 +38,18 @@ public sealed class MailSourceService(
             return buffer.ToArray();
         }, cancellationToken);
 
+    public async Task<MailSourceResult<MimePart>> GetAttachmentAsync(Guid accountId, Guid mailId, string remotePartId, CancellationToken cancellationToken)
+    {
+        var fetched = await FetchAsync(accountId, mailId, cancellationToken);
+        if (fetched.Value is not { } message)
+            return new(null, fetched.Error);
+        if (!int.TryParse(remotePartId, out var index))
+            return new(null, MailOperationError.NotFound);
+        return message.BodyParts.OfType<MimePart>().ElementAtOrDefault(index) is { } part
+            ? new(part)
+            : new(null, MailOperationError.NotFound);
+    }
+
     public async Task<MailSourceResult<MailSignatureResponse>> VerifySignatureAsync(Guid accountId, Guid mailId, CancellationToken cancellationToken)
     {
         var fetched = await FetchAsync(accountId, mailId, cancellationToken);

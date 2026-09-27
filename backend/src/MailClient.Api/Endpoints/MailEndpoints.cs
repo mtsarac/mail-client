@@ -145,13 +145,20 @@ public static class MailEndpoints
         }).WithTags(OperationsTag).WithName("BulkMailOperation").WithSummary("Apply a mail operation to multiple mails")
             .WithDescription("action: read, unread, star, unstar, archive, trash, restore, spam, not-spam, delete (Trash/Junk only, permanent), or move (move requires folderId). 1-100 ids. Each mail is applied independently, so one failure does not block the rest of the batch — always 200 for a valid request; check per-item `success`/`code`.")
             .Produces<BulkMailOperationResponse>().ProducesValidationProblem().Produces(404);
-        api.MapGet("/mails/{mailId:guid}/attachments/{attachmentId:guid}", async (Guid mailId, Guid attachmentId, ICurrentMailAccount current, AppDbContext db, IFileStorage storage, CancellationToken ct) =>
+        api.MapGet("/mails/{mailId:guid}/attachments/{attachmentId:guid}", async (Guid mailId, Guid attachmentId, ICurrentMailAccount current, AppDbContext db, IFileStorage storage, MailSourceService source, CancellationToken ct) =>
         {
             var attachment = await db.Attachments.SingleOrDefaultAsync(x => x.Id == attachmentId && x.MailId == mailId && x.MailAccountId == current.MailAccountId, ct);
-            return attachment is null ? Results.NotFound() : Results.File(await storage.OpenReadAsync(attachment.StoragePath, ct), attachment.ContentType, attachment.FileName, enableRangeProcessing: true);
+            if (attachment is null)
+                return Results.NotFound();
+            if (!string.IsNullOrEmpty(attachment.StoragePath))
+                return Results.File(await storage.OpenReadAsync(attachment.StoragePath, ct), attachment.ContentType, attachment.FileName, enableRangeProcessing: true);
+            var fetched = await source.GetAttachmentAsync(current.MailAccountId, mailId, attachment.RemotePartId, ct);
+            return fetched.Value?.Content is { } content
+                ? Results.File(content.Open(), attachment.ContentType, attachment.FileName, enableRangeProcessing: false)
+                : SourceError(fetched.Error);
         }).WithTags(MailTag).WithName("DownloadAttachment").WithSummary("Download account-owned attachment")
-            .WithDescription("Streams the stored file. Supports Range requests (206) when the storage is seekable; otherwise answers 200 with the full body.")
-            .Produces(200, contentType: "application/octet-stream").Produces(206, contentType: "application/octet-stream").Produces(404);
+            .WithDescription("Streams cached files or retrieves uncached attachment content from the account-owned source.")
+            .Produces(200, contentType: "application/octet-stream").Produces(206, contentType: "application/octet-stream").Produces(404).WithOperationProblems();
         api.MapGet("/compose/limits", async (RuntimeOperationSettings settings, CancellationToken ct) =>
         {
             var limits = (await settings.GetAsync(ct)).Settings.Limits;

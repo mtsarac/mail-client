@@ -75,8 +75,9 @@ public sealed class MailSendService(
             ? new ReplyThreading(command.TrustedInReplyToMessageId, command.TrustedReferences)
             : await ResolveThreadingAsync(account.Id, command.ReplySourceMailId, cancellationToken);
         var hashed = await ComposeMailValidator.HashAttachmentsAsync(command.Attachments, cancellationToken);
-        var fingerprintRecipients = string.Join(',', to.Select(x => x.Address).Concat(cc.Select(x => x.Address)).Concat(bcc.Select(x => x.Address)));
-        var fingerprint = SendOperationStore.Fingerprint(account.Id, $"{fingerprintRecipients}|{command.ReplySourceMailId}|{command.TrustedMessageId}|{command.IdentityId}|{command.RequestReadReceipt}", subject, command.BodyHtml, command.BodyText, hashed);
+        var fingerprint = SendOperationStore.Fingerprint(
+            account.Id, to, cc, bcc, subject, command.BodyHtml, command.BodyText, hashed,
+            [command.ReplySourceMailId?.ToString() ?? "", command.TrustedMessageId ?? "", command.IdentityId?.ToString() ?? "", command.RequestReadReceipt.ToString()]);
         var claim = await operations.ClaimAsync(account.Id, command.IdempotencyKey, fingerprint, cancellationToken);
         return claim switch
         {

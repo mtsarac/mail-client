@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using MimeKit;
 using MailClient.Domain.Entities;
 using MailClient.Domain.Enums;
 using MailClient.Infrastructure.Email;
@@ -190,13 +191,30 @@ public sealed class SendOperationStore(AppDbContext db, ILogger<SendOperationSto
         string subject,
         string? bodyHtml,
         string? bodyText,
-        IReadOnlyList<(string FileName, string ContentType, long SizeBytes, string ContentHash)> attachments)
+        IReadOnlyList<(string FileName, string ContentType, long SizeBytes, string ContentHash)> attachments) =>
+        Fingerprint(accountId, [MailboxAddress.Parse(toAddress)], [], [], subject, bodyHtml, bodyText, attachments);
+    internal static string Fingerprint(
+        Guid accountId,
+        IReadOnlyList<MailboxAddress> to,
+        IReadOnlyList<MailboxAddress> cc,
+        IReadOnlyList<MailboxAddress> bcc,
+        string subject,
+        string? bodyHtml,
+        string? bodyText,
+        IReadOnlyList<(string FileName, string ContentType, long SizeBytes, string ContentHash)> attachments,
+        IReadOnlyList<string>? extraFields = null)
     {
         var fields = new List<string>
         {
-            accountId.ToString("N"), toAddress, subject, bodyHtml ?? string.Empty, bodyText ?? string.Empty,
+            accountId.ToString("N"),
+            subject, bodyHtml ?? string.Empty, bodyText ?? string.Empty,
             attachments.Count.ToString()
         };
+        AddRecipients(fields, to);
+        AddRecipients(fields, cc);
+        AddRecipients(fields, bcc);
+        if (extraFields is not null)
+            fields.AddRange(extraFields);
         fields.AddRange(attachments.SelectMany(attachment =>
             new[]
             {
@@ -207,6 +225,16 @@ public sealed class SendOperationStore(AppDbContext db, ILogger<SendOperationSto
         foreach (var field in fields)
             joined.Append(field.Length).Append(':').Append(field).Append('\0');
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(joined.ToString())));
+    }
+
+    private static void AddRecipients(List<string> fields, IReadOnlyList<MailboxAddress> recipients)
+    {
+        fields.Add(recipients.Count.ToString());
+        foreach (var recipient in recipients)
+        {
+            fields.Add(recipient.Name ?? string.Empty);
+            fields.Add(recipient.Address);
+        }
     }
 
     private static DateTime TruncateToMicroseconds(DateTime value) =>
