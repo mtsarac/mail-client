@@ -29,7 +29,8 @@ public sealed record ScheduledSendListItem(
     Guid? SentMailId,
     string? FailureReason,
     int AttemptCount,
-    DateTime? NextAttemptAtUtc);
+    DateTime? NextAttemptAtUtc,
+    bool RequestReadReceipt);
 
 public sealed record ScheduledSendAttachmentInfo(Guid Id, string FileName, string ContentType, long SizeBytes);
 
@@ -46,6 +47,7 @@ public sealed record ScheduledSendDetail(
     string? FailureReason,
     int AttemptCount,
     DateTime? NextAttemptAtUtc,
+    bool RequestReadReceipt,
     IReadOnlyList<ScheduledSendAttachmentInfo> Attachments);
 
 public sealed record RescheduleFailedSend(
@@ -56,7 +58,8 @@ public sealed record RescheduleFailedSend(
     string Subject,
     string? BodyHtml,
     string? BodyText,
-    IReadOnlyList<Guid>? AttachmentIds);
+    IReadOnlyList<Guid>? AttachmentIds,
+    bool? RequestReadReceipt = null);
 
 public sealed record ScheduledSendEdit(
     DateTime SendAtUtc,
@@ -67,7 +70,8 @@ public sealed record ScheduledSendEdit(
     string? BodyHtml,
     string? BodyText,
     IReadOnlyList<Guid> KeepAttachmentIds,
-    IReadOnlyList<SendMailAttachment> NewAttachments);
+    IReadOnlyList<SendMailAttachment> NewAttachments,
+    bool? RequestReadReceipt = null);
 
 /// <summary>
 /// Creates, lists, edits and cancels scheduled sends. The actual delivery at <see cref="ScheduledSend.SendAtUtc"/> is
@@ -110,7 +114,7 @@ public sealed class ScheduledSendService(
         var fingerprintRecipients = string.Join(',', command.To.Concat(command.Cc).Concat(command.Bcc));
         var fingerprint = SendOperationStore.Fingerprint(
             account.Id,
-            $"{fingerprintRecipients}|{command.ReplySourceMailId}|{command.IdentityId}|{sendAtUtc:O}",
+            $"{fingerprintRecipients}|{command.ReplySourceMailId}|{command.IdentityId}|{sendAtUtc:O}|{command.RequestReadReceipt}",
             subject, command.BodyHtml, command.BodyText, hashed);
 
         var existing = await db.ScheduledSends.SingleOrDefaultAsync(
@@ -148,6 +152,7 @@ public sealed class ScheduledSendService(
             Fingerprint = fingerprint,
             ReplySourceMailId = command.ReplySourceMailId,
             IdentityId = command.IdentityId,
+            RequestReadReceipt = command.RequestReadReceipt,
             Attachments = attachmentRows
         };
         db.ScheduledSends.Add(entity);
@@ -166,7 +171,7 @@ public sealed class ScheduledSendService(
         return rows.Select(x => new ScheduledSendListItem(
             x.Id, Deserialize(x.ToAddressesJson), Deserialize(x.CcAddressesJson), Deserialize(x.BccAddressesJson),
             x.Subject, x.SendAtUtc, x.Status, x.CreatedAtUtc, x.SentMailId, x.FailureReason,
-            x.AttemptCount, x.NextAttemptAtUtc))
+            x.AttemptCount, x.NextAttemptAtUtc, x.RequestReadReceipt))
             .ToList();
     }
 
@@ -178,7 +183,7 @@ public sealed class ScheduledSendService(
         return new ScheduledSendDetail(entity.Id,
             Deserialize(entity.ToAddressesJson), Deserialize(entity.CcAddressesJson), Deserialize(entity.BccAddressesJson),
             entity.Subject, entity.BodyHtml, entity.BodyText, entity.SendAtUtc, entity.Status, entity.FailureReason,
-            entity.AttemptCount, entity.NextAttemptAtUtc,
+            entity.AttemptCount, entity.NextAttemptAtUtc, entity.RequestReadReceipt,
             entity.Attachments.Select(x => new ScheduledSendAttachmentInfo(x.Id, x.FileName, x.ContentType, x.SizeBytes)).ToList());
     }
 
@@ -210,7 +215,7 @@ public sealed class ScheduledSendService(
                     await storage.OpenReadAsync(attachment.StoragePath, cancellationToken)));
             var command = new SendMailCommand(accountId, request.To, request.Cc, request.Bcc, request.Subject,
                 request.BodyHtml, request.BodyText, opened, source.ReplySourceMailId)
-            { IdempotencyKey = newKey, IdentityId = source.IdentityId };
+            { IdempotencyKey = newKey, IdentityId = source.IdentityId, RequestReadReceipt = request.RequestReadReceipt ?? source.RequestReadReceipt };
             return await CreateAsync(accountId, command, request.SendAtUtc.UtcDateTime, correlationId, cancellationToken);
         }
         finally
@@ -279,6 +284,8 @@ public sealed class ScheduledSendService(
         entity.BodyHtml = edit.BodyHtml;
         entity.BodyText = edit.BodyText;
         entity.SendAtUtc = edit.SendAtUtc;
+        if (edit.RequestReadReceipt is { } requestReadReceipt)
+            entity.RequestReadReceipt = requestReadReceipt;
         entity.AttemptCount = 0;
         entity.NextAttemptAtUtc = null;
         entity.FailureReason = null;

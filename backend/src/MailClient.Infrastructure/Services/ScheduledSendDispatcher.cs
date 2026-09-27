@@ -116,7 +116,8 @@ public sealed class ScheduledSendDispatcher(
                 entity.Subject, entity.BodyHtml, entity.BodyText, attachments, entity.ReplySourceMailId)
             {
                 IdempotencyKey = dispatchKey,
-                IdentityId = entity.IdentityId
+                IdentityId = entity.IdentityId,
+                RequestReadReceipt = entity.RequestReadReceipt
             };
 
             sendStarted = true;

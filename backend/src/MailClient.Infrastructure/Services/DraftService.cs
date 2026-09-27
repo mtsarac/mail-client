@@ -68,7 +68,7 @@ public sealed class DraftService(
         return new(await reader.GetAsync(accountId, draftId, cancellationToken), DraftLookupError.None);
     }
 
-    public async Task<DraftSendResult> SendAsync(Guid accountId, Guid draftId, string idempotencyKey, string? correlationId, CancellationToken cancellationToken)
+    public async Task<DraftSendResult> SendAsync(Guid accountId, Guid draftId, string idempotencyKey, bool requestReadReceipt, string? correlationId, CancellationToken cancellationToken)
     {
         // A retry after a successful send must replay the outcome even though the draft has already moved to Trash.
         if (await sendOperations.FindCompletedAsync(accountId, idempotencyKey, cancellationToken) is { } completed)
@@ -105,7 +105,8 @@ public sealed class DraftService(
                 TrustedMessageId = draft.MessageId,
                 TrustedInReplyToMessageId = draft.InReplyToMessageId,
                 TrustedReferences = draft.References,
-                IdentityId = identity?.Id
+                IdentityId = identity?.Id,
+                RequestReadReceipt = requestReadReceipt
             };
             result = await sender.SendAsync(accountId, command, correlationId, cancellationToken);
         }

@@ -1,3 +1,6 @@
+using System.Net;
+using System.Net.Sockets;
+using System.Text;
 using MailClient.Application.Mail;
 using MailClient.Application.Sync;
 using MailClient.Domain.Entities;
@@ -182,25 +185,93 @@ public sealed class SendServiceTests
     }
 
     [Fact]
-    public async Task SendAsync_RequestsReceiptsOnlyWhenOptedIn()
+    public async Task SendAsync_RequestsReadReceiptOnlyWhenOptedIn()
     {
         await using var db = CreateDb();
         var accountId = await SeedAccountAsync(db, saveSentCopy: false);
         var transport = new FakeMailTransport();
         var service = CreateService(db, transport);
-        var command = new SendMailCommand(accountId, "friend@example.test", "Receipt", null, "body", [])
-        {
-            IdempotencyKey = "receipts-1",
-            RequestReadReceipt = true,
-            RequestDeliveryReceipt = true
-        };
+        var plain = new SendMailCommand(accountId, "friend@example.test", "Plain", null, "body", []) { IdempotencyKey = "receipts-0" };
+        var requested = new SendMailCommand(accountId, "friend@example.test", "Receipt", null, "body", []) { IdempotencyKey = "receipts-1", RequestReadReceipt = true };
 
-        var result = await service.SendAsync(accountId, command, null, CancellationToken.None);
-
-        Assert.True(result.Sent);
-        Assert.True(transport.DeliveryReceiptRequested);
+        Assert.True((await service.SendAsync(accountId, plain, null, CancellationToken.None)).Sent);
+        Assert.False(transport.Message!.Headers.Contains("Disposition-Notification-To"));
+        Assert.True((await service.SendAsync(accountId, requested, null, CancellationToken.None)).Sent);
         Assert.Equal("me@example.test", InternetAddressList.Parse(transport.Message!.Headers["Disposition-Notification-To"]!).Mailboxes.Single().Address);
-        await Assert.ThrowsAsync<InvalidOperationException>(() => service.SendAsync(accountId, command with { RequestReadReceipt = false }, null, CancellationToken.None));
+        var conflict = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.SendAsync(accountId, requested with { RequestReadReceipt = false }, null, CancellationToken.None));
+        Assert.Equal("idempotency_conflict", conflict.Message);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ReceiptSmtpClient_RequestsDsnOnlyWhenAdvertised_AndAlwaysSends(bool advertisesDsn)
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        var server = RunScriptedSmtpServerAsync(listener, advertisesDsn);
+        var message = new MimeMessage();
+        message.From.Add(MailboxAddress.Parse("me@example.test"));
+        message.To.Add(MailboxAddress.Parse("friend@example.test"));
+        message.Subject = "Receipt";
+        message.Body = new TextPart("plain") { Text = "body" };
+
+        using (var client = new ReceiptSmtpClient())
+        {
+            await client.ConnectAsync("127.0.0.1", port, MailKit.Security.SecureSocketOptions.None);
+            await client.SendAsync(message);
+            await client.DisconnectAsync(true);
+        }
+
+        var (recipientCommands, delivered) = await server.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.True(delivered);
+        var rcpt = Assert.Single(recipientCommands);
+        if (advertisesDsn)
+            Assert.Contains("NOTIFY=SUCCESS,FAILURE", rcpt);
+        else
+            Assert.DoesNotContain("NOTIFY", rcpt);
+    }
+
+    /// <summary>Minimal plaintext SMTP peer: records RCPT commands and whether DATA was accepted.</summary>
+    private static async Task<(List<string> RecipientCommands, bool Delivered)> RunScriptedSmtpServerAsync(TcpListener listener, bool advertisesDsn)
+    {
+        using var connection = await listener.AcceptTcpClientAsync();
+        await using var stream = connection.GetStream();
+        using var reader = new StreamReader(stream, Encoding.ASCII);
+        await using var writer = new StreamWriter(stream, Encoding.ASCII) { NewLine = "\r\n", AutoFlush = true };
+        var recipients = new List<string>();
+        var delivered = false;
+        await writer.WriteLineAsync("220 test ESMTP");
+        while (await reader.ReadLineAsync() is { } line)
+        {
+            var verb = line.Split(' ')[0].ToUpperInvariant();
+            switch (verb)
+            {
+                case "EHLO":
+                    await writer.WriteAsync(advertisesDsn ? "250-test\r\n250 DSN\r\n" : "250 test\r\n");
+                    break;
+                case "RCPT":
+                    recipients.Add(line);
+                    await writer.WriteLineAsync("250 OK");
+                    break;
+                case "DATA":
+                    await writer.WriteLineAsync("354 go ahead");
+                    while (await reader.ReadLineAsync() is { } data && data != ".") { }
+                    delivered = true;
+                    await writer.WriteLineAsync("250 queued");
+                    break;
+                case "QUIT":
+                    await writer.WriteLineAsync("221 bye");
+                    return (recipients, delivered);
+                default:
+                    await writer.WriteLineAsync("250 OK");
+                    break;
+            }
+        }
+
+        return (recipients, delivered);
     }
 
     [Fact]

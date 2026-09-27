@@ -159,12 +159,34 @@ public sealed class DraftServiceTests
         var transport = new FakeMailTransport();
         var service = CreateService(db, new UidPlusRemoteMailFolder(), new RecordingSyncExecutor(), transport);
 
-        var first = await service.SendAsync(accountId, draftId, "draft-send-1", null, CancellationToken.None);
-        var retry = await service.SendAsync(accountId, draftId, "draft-send-1", null, CancellationToken.None);
+        var first = await service.SendAsync(accountId, draftId, "draft-send-1", false, null, CancellationToken.None);
+        var retry = await service.SendAsync(accountId, draftId, "draft-send-1", false, null, CancellationToken.None);
 
         Assert.True(first is { Sent: true, DraftRemoved: true });
         Assert.True(retry is { Sent: true, DraftRemoved: true });
         Assert.Equal(1, transport.SentCount);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SendAsync_RequestsReadReceiptOnlyWhenOptedIn(bool requestReadReceipt)
+    {
+        await using var db = CreateDb();
+        var (accountId, draftsId) = await SeedAsync(db);
+        db.MailFolders.Add(new MailFolder { Id = Guid.NewGuid(), MailAccountId = accountId, Name = "Trash", FullName = "Trash", FolderType = MailFolderType.Trash, IsAvailable = true, UidValidity = 40 });
+        var draftId = await SeedDraftAsync(db, accountId, draftsId);
+        db.Participants.Add(new MailParticipant { Id = Guid.NewGuid(), MailId = draftId, Type = ParticipantType.To, Address = "to@example.test", NormalizedAddress = "to@example.test" });
+        var draft = await db.Mails.SingleAsync(x => x.Id == draftId);
+        draft.BodyText = "body";
+        await db.SaveChangesAsync();
+        var transport = new FakeMailTransport();
+        var service = CreateService(db, new UidPlusRemoteMailFolder(), new RecordingSyncExecutor(), transport);
+
+        var result = await service.SendAsync(accountId, draftId, "draft-receipt", requestReadReceipt, null, CancellationToken.None);
+
+        Assert.True(result.Sent);
+        Assert.Equal(requestReadReceipt, transport.Message!.Headers.Contains("Disposition-Notification-To"));
     }
 
     private static DraftCommand Command(Guid accountId) => new(

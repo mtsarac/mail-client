@@ -99,7 +99,7 @@ public class MailConnectionHelper(
             logger.LogInformation(ex, "Mail operation {Operation} cancelled for host {Host}.", operation, LogSafe(endpoint.Host));
             throw;
         }
-        catch (Exception ex) when (ex is MailConnectionException or SmtpDeliveryException or DeliveryReceiptNotSupportedException)
+        catch (Exception ex) when (ex is MailConnectionException or SmtpDeliveryException)
         {
             throw;
         }
@@ -138,10 +138,9 @@ public class MailConnectionHelper(
     };
 }
 
+/// <summary>Requests a success/failure DSN for every recipient whenever the server advertises DSN; otherwise sends plainly.</summary>
 public sealed class ReceiptSmtpClient : SmtpClient
 {
-    public bool RequestDeliveryReceipt { get; set; }
-
     protected override DeliveryStatusNotification? GetDeliveryStatusNotifications(MimeKit.MimeMessage message, MimeKit.MailboxAddress mailbox) =>
-        RequestDeliveryReceipt ? DeliveryStatusNotification.Success | DeliveryStatusNotification.Failure : null;
+        Capabilities.HasFlag(SmtpCapabilities.Dsn) ? DeliveryStatusNotification.Success | DeliveryStatusNotification.Failure : null;
 }

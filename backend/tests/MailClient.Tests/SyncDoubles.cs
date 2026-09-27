@@ -329,13 +329,10 @@ internal sealed class FakeMailTransport : MailClient.Infrastructure.Mail.IMailTr
     public int AppendCount { get; private set; }
     public Exception? SendFailure { get; init; }
     public MimeMessage? Message { get; private set; }
-    public bool DeliveryReceiptRequested { get; private set; }
-
-    public Task SendAsync(MailAccount account, MimeMessage message, CancellationToken cancellationToken, bool requestDeliveryReceipt = false)
+    public Task SendAsync(MailAccount account, MimeMessage message, CancellationToken cancellationToken)
     {
         if (SendFailure is not null) throw SendFailure;
         Message = message;
-        DeliveryReceiptRequested = requestDeliveryReceipt;
         SentCount++;
         return Task.CompletedTask;
     }

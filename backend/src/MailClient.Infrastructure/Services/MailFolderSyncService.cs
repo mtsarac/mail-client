@@ -484,6 +484,13 @@ public sealed class MailFolderSyncService(
             }
 
             var message = await remote.GetMessageAsync(uid, cancellationToken);
+            if (ReceiptReportDetector.IsHiddenReceipt(message))
+            {
+                await SkipAndAdvanceAsync(state, folderId, uid.Id, "receipt", "Read or delivery receipt report.",
+                    accountId, cancellationToken);
+                return null;
+            }
+
             var incomingMessageId = MailFieldNormalizer.MessageId(message.MessageId);
             if (await reconciliations.ReconcileAsync(accountId, folderId, incomingMessageId, uid.Id, remote.UidValidity, cancellationToken))
             {

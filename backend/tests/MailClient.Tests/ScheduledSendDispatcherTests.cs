@@ -30,10 +30,26 @@ public sealed class ScheduledSendDispatcherTests
 
         Assert.Equal(1, transport.SentCount);
         Assert.Equal("Due now", transport.Message!.Subject);
+        Assert.False(transport.Message.Headers.Contains("Disposition-Notification-To"));
         var dueRow = await db.ScheduledSends.AsNoTracking().SingleAsync(x => x.Id == due);
         Assert.Equal(ScheduledSendStatus.Sent, dueRow.Status);
         var futureRow = await db.ScheduledSends.AsNoTracking().SingleAsync(x => x.Id == future);
         Assert.Equal(ScheduledSendStatus.Pending, futureRow.Status);
+    }
+
+    [Fact]
+    public async Task ProcessDueAsync_StoredReadReceiptRequest_AddsDispositionNotificationHeader()
+    {
+        await using var db = CreateDb();
+        var accountId = await SeedAccountAsync(db);
+        await SeedScheduledSendAsync(db, accountId, DateTime.UtcNow.AddMinutes(-5), "Receipt", requestReadReceipt: true);
+        var transport = new FakeMailTransport();
+        await using var provider = BuildProvider(db, transport, new FakeFileStorage());
+
+        await ScheduledSendDispatcher.ProcessDueAsync(provider, CancellationToken.None);
+
+        Assert.Equal(1, transport.SentCount);
+        Assert.True(transport.Message!.Headers.Contains("Disposition-Notification-To"));
     }
 
     [Fact]
@@ -110,7 +126,7 @@ public sealed class ScheduledSendDispatcherTests
     {
         await using var db = CreateDb();
         var accountId = await SeedAccountAsync(db);
-        var due = await SeedScheduledSendAsync(db, accountId, DateTime.UtcNow.AddMinutes(-1), "Original");
+        var due = await SeedScheduledSendAsync(db, accountId, DateTime.UtcNow.AddMinutes(-1), "Original", requestReadReceipt: true);
         var storage = new FakeFileStorage();
         var transport = new OnceUnavailableTransport();
         await using var provider = BuildProvider(db, transport, storage);
@@ -132,6 +148,7 @@ public sealed class ScheduledSendDispatcherTests
         Assert.Equal(2, transport.Attempts);
         Assert.Equal("Edited", transport.Message!.Subject);
         Assert.Equal("edited body", transport.Message.TextBody);
+        Assert.True(transport.Message.Headers.Contains("Disposition-Notification-To"));
         Assert.Equal(ScheduledSendStatus.Sent, (await db.ScheduledSends.SingleAsync(x => x.Id == due)).Status);
         Assert.Equal(2, await db.SendOperations.CountAsync());
     }
@@ -216,7 +233,7 @@ public sealed class ScheduledSendDispatcherTests
         await storage.SaveAsync(accountId, Guid.NewGuid(), Guid.NewGuid(),
             (stream, ct) => stream.WriteAsync("hi"u8.ToArray(), ct).AsTask(), 1024, CancellationToken.None);
         var source = await SeedScheduledSendAsync(db, accountId, DateTime.UtcNow.AddMinutes(-1), "Original",
-            attachmentPath: storage.Saved.Single());
+            attachmentPath: storage.Saved.Single(), requestReadReceipt: true);
         var failure = new FakeMailTransport { SendFailure = new MailConnectionException(MailConnectionFailure.Authentication, "bad auth") };
         await using (var first = BuildProvider(db, failure, storage))
             await ScheduledSendDispatcher.ProcessDueAsync(first, CancellationToken.None);
@@ -238,6 +255,7 @@ public sealed class ScheduledSendDispatcherTests
         Assert.Equal(1, success.SentCount);
         Assert.Equal("Edited subject", success.Message!.Subject);
         Assert.Equal("new body", success.Message.TextBody);
+        Assert.True(success.Message.Headers.Contains("Disposition-Notification-To"));
         Assert.Equal(ScheduledSendStatus.Sent, (await db.ScheduledSends.SingleAsync(x => x.Id == rescheduled.Id)).Status);
         Assert.Equal(ScheduledSendStatus.Failed, (await db.ScheduledSends.SingleAsync(x => x.Id == source)).Status);
         Assert.Equal(2, await db.SendOperations.CountAsync());
@@ -320,7 +338,7 @@ public sealed class ScheduledSendDispatcherTests
 
     private static async Task<Guid> SeedScheduledSendAsync(
         AppDbContext db, Guid accountId, DateTime sendAtUtc, string subject,
-        ScheduledSendStatus status = ScheduledSendStatus.Pending, string? attachmentPath = null)
+        ScheduledSendStatus status = ScheduledSendStatus.Pending, string? attachmentPath = null, bool requestReadReceipt = false)
     {
         var id = Guid.NewGuid();
         var entity = new ScheduledSend
@@ -336,7 +354,8 @@ public sealed class ScheduledSendDispatcherTests
             Status = status,
             CreatedAtUtc = DateTime.UtcNow,
             IdempotencyKey = $"disp-{id:N}",
-            Fingerprint = "fingerprint"
+            Fingerprint = "fingerprint",
+            RequestReadReceipt = requestReadReceipt
         };
         if (attachmentPath is not null)
             entity.Attachments = [new ScheduledSendAttachment
@@ -413,7 +432,7 @@ public sealed class ScheduledSendDispatcherTests
         public int Attempts { get; private set; }
         public MimeKit.MimeMessage? Message { get; private set; }
 
-        public Task SendAsync(MailAccount account, MimeKit.MimeMessage message, CancellationToken cancellationToken, bool requestDeliveryReceipt = false)
+        public Task SendAsync(MailAccount account, MimeKit.MimeMessage message, CancellationToken cancellationToken)
         {
             Attempts++;
             Message = message;

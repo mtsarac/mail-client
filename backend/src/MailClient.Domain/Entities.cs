@@ -235,6 +235,7 @@ public sealed class ScheduledSend
     public Guid? ReplySourceMailId { get; set; }
     public int Revision { get; set; }
     public Guid? IdentityId { get; set; }
+    public bool RequestReadReceipt { get; set; }
     public MailAccount? MailAccount { get; set; }
     public ICollection<ScheduledSendAttachment> Attachments { get; set; } = [];
 }

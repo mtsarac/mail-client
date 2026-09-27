@@ -516,7 +516,7 @@ Tam mail içeriği: gövde, katılımcılar, header'lar, ekler.
 
 Bu uçlar hesap kapsamında ve UIDVALIDITY kontrolüyle çalışır; sunucu çevrimdışıysa 502 `mail_provider_unavailable`, UID değişmişse 409 `mail_operation_conflict`, mail bulunamazsa 404 `mail_not_found`, hesap yeniden giriş istiyorsa 409 `mail_account_needs_reauthentication` döner. Mail detayı `security: { "signed": "SMime" | "OpenPgp" | null, "encrypted": "SMime" | "OpenPgp" | null }` veya `null` içerir; algılama doğrulama ya da şifre çözme demek değildir. Kaynak yalnız kullanıcı isteğiyle indirilmelidir.
 
-`POST /api/mails/send` formu isteğe bağlı `requestReadReceipt=true` ve `requestDeliveryReceipt=true` kabul eder. İlki hesap/seçilen kimlik adresinden MDN başlığı ekler; ikincisi SMTP DSN başarı/hata ister. Sunucu DSN desteklemiyorsa göndermeden 422 `delivery_receipt_not_supported`; hatalı boolean 400 `invalid_receipt_option`. Alıcının istemi karşılayacağı garantisi yoktur; bu seçenekleri "iste" olarak adlandır. Idempotency fingerprint bunları içerir.
+Okundu bilgisi (MDN) kullanıcı seçimidir, varsayılanı kapalıdır: `POST /api/mails/send` ve `POST /api/scheduled-sends` isteğe bağlı `requestReadReceipt` form alanını, `POST /api/drafts/{id}/send` ise `?requestReadReceipt=true|false` sorgu parametresini kabul eder (yoksa `false`; `true`/`false` dışı değer `400 invalid_receipt_option`). Yalnız `true` olduğunda backend hesap/seçilen kimlik adresiyle `Disposition-Notification-To` başlığı ekler. Bayrak idempotency parmak izine dahildir: aynı `Idempotency-Key` ile farklı değer `409 idempotency_conflict` döner, retry'da aynı değeri gönder. Zamanlanmış gönderimler bayrağı saklar ve dispatch'te uygular; liste/detay `requestReadReceipt: bool` döner, `PUT /api/scheduled-sends/{id}` ve `POST .../reschedule` alan yoksa kayıtlı değeri korur. `requestDeliveryReceipt` yoktur: teslim bilgisi (DSN) otomatiktir, sunucu DSN destekliyorsa her gönderimde SMTP DSN başarı/hata istenir; DSN desteklemeyen sunucu gönderimi başarısız kılmaz veya uyarı üretmez. Ortaya çıkan okundu bilgileri ve tamamen başarılı teslim raporları senkronizasyonda içe aktarılmaz; listede, sayaçlarda, aramada ve bildirimlerde görünmezler. Geri dönen mailler (`failed`/`delayed`) normal mail olarak görünmeye devam eder.
 
 
 **Auth:** Bearer
@@ -676,7 +676,7 @@ Taslağı siler, `204` döner. Hatalar: `404 draft_not_found`, `422 trash_folder
 ### `POST /api/drafts/{id}/send`
 **Auth:** Bearer
 
-Taslağı olduğu gibi gönderir, gövde yok. `Idempotency-Key` header'ı **zorunlu** (bkz. [Hızlı başlangıç, kural 2](#bilmen-gereken-dört-kural)). Hatalar `/mails/send` tablosuyla aynıdır (+ `404 draft_not_found`, `422 mail_not_draft`). `draftRemoved: false` ise mail gitmiştir ama taslak silinememiştir — kullanıcıya "gönderildi" göster, hata gösterme. Başarılı bir gönderimi aynı `Idempotency-Key` ile tekrar çağırırsan (ör. yanıt ağda kaybolduysa) `422 mail_not_draft` yerine kayıtlı sonuç tekrar döner (`sent: true`, `draftRemoved: true`; `mailId` / `conversationId` `null`).
+Taslağı olduğu gibi gönderir, gövde yok. Opsiyonel sorgu parametresi `?requestReadReceipt=true|false` okundu bilgisi (MDN) ister; yoksa `false`, geçersiz değer `400 invalid_receipt_option`. `Idempotency-Key` header'ı **zorunlu** (bkz. [Hızlı başlangıç, kural 2](#bilmen-gereken-dört-kural)). Hatalar `/mails/send` tablosuyla aynıdır (+ `404 draft_not_found`, `422 mail_not_draft`). `draftRemoved: false` ise mail gitmiştir ama taslak silinememiştir — kullanıcıya "gönderildi" göster, hata gösterme. Başarılı bir gönderimi aynı `Idempotency-Key` ile tekrar çağırırsan (ör. yanıt ağda kaybolduysa) `422 mail_not_draft` yerine kayıtlı sonuç tekrar döner (`sent: true`, `draftRemoved: true`; `mailId` / `conversationId` `null`).
 
 ```json
 // 200 OK
@@ -689,7 +689,7 @@ Taslağı olduğu gibi gönderir, gövde yok. `Idempotency-Key` header'ı **zoru
 ### `POST /api/mails/send`
 **Auth:** Bearer · **Gövde:** `multipart/form-data`
 
-Taslaksız doğrudan gönderim. Form alanları: `To` (çoklu, en az bir tane), `Cc`, `Bcc`, `subject`, `bodyHtml` ve/veya `bodyText`, en fazla 20 dosya eki, `replySourceMailId` (yanıtlarken), `identityId` (opsiyonel gönderici kimliği — bilinmeyen id `404 identity_not_found` döner). `Idempotency-Key` header'ı zorunlu.
+Taslaksız doğrudan gönderim. Form alanları: `To` (çoklu, en az bir tane), `Cc`, `Bcc`, `subject`, `bodyHtml` ve/veya `bodyText`, en fazla 20 dosya eki, `replySourceMailId` (yanıtlarken), `identityId` (opsiyonel gönderici kimliği — bilinmeyen id `404 identity_not_found` döner), `requestReadReceipt` (opsiyonel `true`/`false`, varsayılan `false`; `true` okundu bilgisi ister). `Idempotency-Key` header'ı zorunlu.
 
 ```json
 // 200 OK
@@ -706,6 +706,7 @@ Kopya kaydedildiyse sunucu Gönderilmiş klasörünü hemen senkronlar; `mailId`
 | 400 | `idempotency_key_required` | Header eksik. |
 | 400 | `idempotency_key_too_long` | Header 200 karakterden uzun. |
 | 400 | `recipient_required` / `body_required` / `body_too_large` / `invalid_recipient` / `invalid_mail_header` / `message_not_constructible` | Form doğrulaması (alıcı yok, gövde boş/çok büyük, adres ya da konu başlık enjeksiyonu içeriyor…). |
+| 400 | `invalid_receipt_option` | `requestReadReceipt` `true`/`false` değil. |
 | 400 | `attachment_too_large` / `too_many_attachments` | Sunucu limitleri (varsayılan tekil ek 25 MB, mail toplamı 50 MB; en fazla 20 ek — sunucuda runtime'da değişebilir, istemcide sabit kodlama, ekleri seçerken önden 25 MB kontrolü yap). |
 | 409 | `idempotency_conflict` | Aynı key farklı bir gövdeyle tekrar gönderildi — aynı key'i yeni bir gönderimde kullanma. |
 | 401 | `mail_smtp_authentication_failed` | SMTP şifreyi reddetti → reconnect. |
@@ -723,7 +724,7 @@ Bir maili şimdi değil, belirli bir zamanda göndermek için. Sunucu arka pland
 ### `POST /api/scheduled-sends`
 **Auth:** Bearer · **Gövde:** `multipart/form-data`
 
-`POST /api/mails/send` ile aynı alanlar (`To`, `Cc`, `Bcc`, `subject`, `bodyHtml`/`bodyText`, en fazla 20 dosya eki, `replySourceMailId`, `identityId`) artı **`sendAtUtc`** (ISO-8601, zorunlu, gelecekte bir zaman olmalı). `Idempotency-Key` header'ı zorunlu.
+`POST /api/mails/send` ile aynı alanlar (`To`, `Cc`, `Bcc`, `subject`, `bodyHtml`/`bodyText`, en fazla 20 dosya eki, `replySourceMailId`, `identityId`, `requestReadReceipt`) artı **`sendAtUtc`** (ISO-8601, zorunlu, gelecekte bir zaman olmalı). `requestReadReceipt` kayıtla saklanır ve gönderim anında uygulanır. `Idempotency-Key` header'ı zorunlu.
 
 ```json
 // 201 Created
@@ -733,7 +734,7 @@ Bir maili şimdi değil, belirli bir zamanda göndermek için. Sunucu arka pland
 | Durum | code | Anlamı |
 |---|---|---|
 | 400 | `scheduled_send_in_past` | `sendAtUtc` şu andan ileride değil. |
-| 400 | `recipient_required` / `invalid_recipient` / `body_required` / `body_too_large` / `too_many_attachments` / `attachment_too_large` / `invalid_mail_header` / `message_not_constructible` / `idempotency_key_required` / `idempotency_key_too_long` | Form doğrulaması — `/mails/send` ile aynı kurallar. |
+| 400 | `recipient_required` / `invalid_recipient` / `body_required` / `body_too_large` / `too_many_attachments` / `attachment_too_large` / `invalid_mail_header` / `message_not_constructible` / `idempotency_key_required` / `idempotency_key_too_long` / `invalid_receipt_option` | Form doğrulaması — `/mails/send` ile aynı kurallar. |
 | 404 | `mail_account_not_found` | Hesap yok/aktif değil. |
 | 409 | `idempotency_conflict` | Aynı key farklı bir gövdeyle tekrar gönderildi. |
 
@@ -757,7 +758,8 @@ Hesabın tüm zamanlanmış gönderimlerini döner (dizi, sayfalama yok), `sendA
     "sentMailId": null,
     "failureReason": null,
     "attemptCount": 0,
-    "nextAttemptAtUtc": null
+    "nextAttemptAtUtc": null,
+    "requestReadReceipt": false
   }]
 }
 ```
@@ -765,6 +767,7 @@ Hesabın tüm zamanlanmış gönderimlerini döner (dizi, sayfalama yok), `sendA
 `status`: `Pending · Sent · Cancelled · Failed · DeliveryUnknown`. `attemptCount`
 SMTP deneme sayısıdır; `nextAttemptAtUtc` geçici hata sonrası otomatik retry
 zamanını verir. `failureReason`, Failed veya DeliveryUnknown durumunu açıklar.
+`requestReadReceipt` gönderimde okundu bilgisi istenip istenmeyeceğini gösterir.
 
 ### `GET /api/scheduled-sends/{id}`
 **Auth:** Bearer
@@ -778,7 +781,9 @@ Başka hesabın kaydı dahil bulunmayan id için 404 `scheduled_send_not_found`.
 
 Pending kaydın içeriğini tek işlemde değiştirir. `To`, `Cc`, `Bcc`, `subject`,
 `bodyHtml`/`bodyText`, gelecekte `sendAtUtc`, korunacak her mevcut ek için
-tekrarlanan `keepAttachmentIds` ve yeni dosya parçaları gönderilir. Listedeki
+tekrarlanan `keepAttachmentIds` ve yeni dosya parçaları gönderilir. Opsiyonel
+`requestReadReceipt` (`true`/`false`) kayıtlı değeri değiştirir; alan yoksa
+kayıtlı değer korunur. Listedeki
 mevcut ek korunur; listelenmeyen mevcut ek silinir. Yeni ve korunan ekler
 birlikte oluşturmayla aynı sayı/boyut sınırlarına tabidir. Başarı: 200
 `{ id, sendAtUtc, status }`.
@@ -797,6 +802,8 @@ birlikte oluşturmayla aynı sayı/boyut sınırlarına tabidir. Başarı: 200
 Yalnız Failed kaydı yeni Pending kayıt olarak tekrar zamanlar. Alanlar:
 `sendAtUtc`, `to`, `cc`, `bcc`, `subject`, `bodyHtml`, `bodyText`; opsiyonel
 `attachmentIds` verilmezse tüm bekletilen ekler, verilirse seçilenler kopyalanır.
+Opsiyonel `requestReadReceipt` (`bool` veya `null`) verilmezse Failed kaydın
+değeri korunur.
 DeliveryUnknown otomatik/manuel retry edilmez: 409
 `scheduled_send_already_sent`.
 

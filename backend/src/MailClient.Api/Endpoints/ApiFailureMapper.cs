@@ -30,7 +30,7 @@ internal static class ApiFailureMapper
             or "oauth_code_exchange_failed" or "oauth_state_invalid" => 422,
         "mail_account_not_found" or "mail_not_found" or "draft_not_found" or "scheduled_send_not_found"
             or "scheduled_send_attachment_not_found" or "identity_not_found" or "signature_not_found" => 404,
-        "drafts_folder_unavailable" or "trash_folder_unavailable" or "mail_not_draft" or "delivery_receipt_not_supported" => 422,
+        "drafts_folder_unavailable" or "trash_folder_unavailable" or "mail_not_draft" => 422,
         "draft_delete_failed" => 502,
         "mail_account_already_exists" or "idempotency_conflict" or "send_in_progress" or "delivery_unknown"
             or "credential_missing" or "mail_account_needs_reauthentication" or "scheduled_send_already_sent"
