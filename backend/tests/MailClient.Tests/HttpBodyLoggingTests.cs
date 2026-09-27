@@ -301,13 +301,20 @@ public sealed class HttpBodyLoggingTests : IDisposable
             context.Response.StatusCode = 200;
             await Task.CompletedTask;
         });
-        var context = JsonContext("GET", "/api/accounts/discover", "");
+        var context = new DefaultHttpContext();
+        context.Request.Method = "GET";
+        context.Request.Path = "/api/accounts/discover";
+        context.RequestServices = new ServiceCollection().BuildServiceProvider();
 
         await middleware.InvokeAsync(context);
 
         var evt = SingleEvent();
         Assert.DoesNotContain("QueryString", Render(evt));
         Assert.DoesNotContain("MailAccountId", Render(evt));
+        Assert.DoesNotContain("CorrelationId", evt.Properties.Keys);
+        Assert.DoesNotContain("ResponseContentType", evt.Properties.Keys);
+        Assert.DoesNotContain("RequestBody", evt.Properties.Keys);
+        Assert.DoesNotContain("ResponseBody", evt.Properties.Keys);
     }
 
     [Fact]

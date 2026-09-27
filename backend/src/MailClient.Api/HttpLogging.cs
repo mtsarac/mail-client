@@ -68,7 +68,7 @@ public sealed class HttpBodyLoggingMiddleware(
 
     private static async Task<CapturedBody> CaptureRequestAsync(HttpRequest request, HttpLoggingOptions config)
     {
-        if (request.ContentLength == 0)
+        if (request.ContentLength == 0 || (HttpMethods.IsGet(request.Method) || HttpMethods.IsHead(request.Method)) && !request.Headers.ContainsKey("Transfer-Encoding"))
             return CapturedBody.Empty;
         var contentType = request.ContentType;
         if (contentType is not null && contentType.StartsWith("multipart/", StringComparison.OrdinalIgnoreCase))
@@ -124,14 +124,24 @@ public sealed class HttpBodyLoggingMiddleware(
             .ForContext("Method", method)
             .ForContext("StatusCode", context.Response.StatusCode)
             .ForContext("ElapsedMs", elapsedMs)
-            .ForContext("CorrelationId", Sanitize(correlationId))
             .ForContext("TimestampUtc", DateTime.UtcNow)
             .ForContext("RequestBodyTruncated", requestBody.Truncated)
-            .ForContext("ResponseBodyTruncated", responseBody.Truncated)
-            .ForContext("RequestContentType", Sanitize(context.Request.ContentType))
-            .ForContext("ResponseContentType", Sanitize(context.Response.ContentType))
-            .ForContext("RequestBody", SanitizeBody(requestBody.Value), destructureObjects: true)
-            .ForContext("ResponseBody", SanitizeBody(responseBody.Value), destructureObjects: true);
+            .ForContext("ResponseBodyTruncated", responseBody.Truncated);
+        var sanitizedCorrelationId = Sanitize(correlationId);
+        var requestContentType = Sanitize(context.Request.ContentType);
+        var responseContentType = Sanitize(context.Response.ContentType);
+        var sanitizedRequestBody = SanitizeBody(requestBody.Value);
+        var sanitizedResponseBody = SanitizeBody(responseBody.Value);
+        if (!string.IsNullOrEmpty(sanitizedCorrelationId))
+            log = log.ForContext("CorrelationId", sanitizedCorrelationId);
+        if (!string.IsNullOrEmpty(requestContentType))
+            log = log.ForContext("RequestContentType", requestContentType);
+        if (!string.IsNullOrEmpty(responseContentType))
+            log = log.ForContext("ResponseContentType", responseContentType);
+        if (sanitizedRequestBody is not null)
+            log = log.ForContext("RequestBody", sanitizedRequestBody, destructureObjects: true);
+        if (sanitizedResponseBody is not null)
+            log = log.ForContext("ResponseBody", sanitizedResponseBody, destructureObjects: true);
         if (!string.IsNullOrEmpty(query))
             log = log.ForContext("QueryString", Sanitize(query));
         log.Information(
