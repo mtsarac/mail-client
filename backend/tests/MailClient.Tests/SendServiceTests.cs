@@ -33,6 +33,21 @@ public sealed class SendServiceTests
     }
 
     [Fact]
+    public void Fingerprint_PreservesRecipientCategoriesAndDisplayNames()
+    {
+        var accountId = Guid.NewGuid();
+        var toAndCc = SendOperationStore.Fingerprint(accountId,
+            [new MailboxAddress("Alice", "a@example.test")], [new MailboxAddress("Bob", "b@example.test")], [], "Hi", null, "x", []);
+        var toOnly = SendOperationStore.Fingerprint(accountId,
+            [new MailboxAddress("Alice", "a@example.test"), new MailboxAddress("Bob", "b@example.test")], [], [], "Hi", null, "x", []);
+        var differentName = SendOperationStore.Fingerprint(accountId,
+            [new MailboxAddress("Alicia", "a@example.test")], [new MailboxAddress("Bob", "b@example.test")], [], "Hi", null, "x", []);
+
+        Assert.NotEqual(toAndCc, toOnly);
+        Assert.NotEqual(toAndCc, differentName);
+    }
+
+    [Fact]
     public async Task Claim_Replay_AndConflict_StateMachine()
     {
         await using var db = CreateDb();

@@ -111,11 +111,13 @@ public sealed class ScheduledSendService(
             : null;
 
         var hashed = await ComposeMailValidator.HashAttachmentsAsync(command.Attachments, cancellationToken);
-        var fingerprintRecipients = string.Join(',', command.To.Concat(command.Cc).Concat(command.Bcc));
         var fingerprint = SendOperationStore.Fingerprint(
             account.Id,
-            $"{fingerprintRecipients}|{command.ReplySourceMailId}|{command.IdentityId}|{sendAtUtc:O}|{command.RequestReadReceipt}",
-            subject, command.BodyHtml, command.BodyText, hashed);
+            recipients.To.Select(x => new MailboxAddress(x.DisplayName, x.Address)).ToList(),
+            recipients.Cc.Select(x => new MailboxAddress(x.DisplayName, x.Address)).ToList(),
+            recipients.Bcc.Select(x => new MailboxAddress(x.DisplayName, x.Address)).ToList(),
+            subject, command.BodyHtml, command.BodyText, hashed,
+            [command.ReplySourceMailId?.ToString() ?? "", command.IdentityId?.ToString() ?? "", sendAtUtc.ToString("O"), command.RequestReadReceipt.ToString()]);
 
         var existing = await db.ScheduledSends.SingleOrDefaultAsync(
             x => x.MailAccountId == accountId && x.IdempotencyKey == command.IdempotencyKey, cancellationToken);

@@ -114,6 +114,24 @@ public sealed class SyncServiceTests
     }
 
     [Fact]
+    public async Task OversizedAttachment_PreservesMetadataForLazyDownload()
+    {
+        await using var db = CreateDb();
+        var (accountId, folderId) = await SeedFolderAsync(db);
+        var remote = new FakeRemoteMailFolder(7, new() { [1] = () => MessageWithAttachment(new string('x', 1000)) });
+
+        await CreateService(db, Options(100)).SyncFolderCoreAsync(accountId, folderId, remote, CancellationToken.None);
+
+        var mail = await db.Mails.SingleAsync();
+        var attachment = await db.Attachments.SingleAsync();
+        Assert.True(mail.HasAttachments);
+        Assert.Equal("note.txt", attachment.FileName);
+        Assert.Equal("text/plain", attachment.ContentType);
+        Assert.Empty(attachment.StoragePath);
+        Assert.NotEmpty(attachment.RemotePartId);
+    }
+
+    [Fact]
     public async Task DeliveredReceiptReport_IsSkipped_WhileNormalMailAndBouncesImport()
     {
         await using var db = CreateDb();
@@ -294,11 +312,11 @@ public sealed class SyncServiceTests
         Assert.Equal(2u, (await db.SyncStates.SingleAsync()).LastUid);
     }
 
-    private static MimeKit.MimeMessage MessageWithAttachment(string subject)
+    private static MimeKit.MimeMessage MessageWithAttachment(string content)
     {
-        var message = SimpleMessage(subject);
+        var message = SimpleMessage("with file");
         var body = new MimeKit.BodyBuilder { TextBody = "hello" };
-        body.Attachments.Add("note.txt", System.Text.Encoding.UTF8.GetBytes("file"));
+        body.Attachments.Add("note.txt", System.Text.Encoding.UTF8.GetBytes(content));
         message.Body = body.ToMessageBody();
         return message;
     }

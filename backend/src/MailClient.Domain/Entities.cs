@@ -170,6 +170,7 @@ public sealed class Attachment
     public string FileName { get; set; } = "";
     public string ContentType { get; set; } = "";
     public string StoragePath { get; set; } = "";
+    public string RemotePartId { get; set; } = "";
     public long SizeBytes { get; set; }
     public bool IsInline { get; set; }
     public string ContentId { get; set; } = "";

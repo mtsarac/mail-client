@@ -170,6 +170,24 @@ public sealed class ConversationThreadTests
     }
 
     [Fact]
+    public async Task CopiesOfSameMessage_ShareOneConversation_EvenWithoutThreadingHeaders()
+    {
+        await using var db = CreateDb();
+        var (accountId, service) = await SeedAsync(db);
+        // A self-send lands in both Sent and Inbox: same Message-ID, only the owner as participant, so the
+        // subject fallback cannot link them.
+        var sentCopy = await AddMailAsync(db, accountId, "Fwd: Re: Plan", "owner@client.test", messageId: "self@x", to: "owner@client.test");
+        await service.AssignAsync(sentCopy.Id, CancellationToken.None);
+        var inboxCopy = await AddMailAsync(db, accountId, "Fwd: Re: Plan", "owner@client.test", messageId: "self@x", to: "owner@client.test");
+        await service.AssignAsync(inboxCopy.Id, CancellationToken.None);
+
+        var (sentAfter, inboxAfter) = await LoadTwoAsync(db, sentCopy.Id, inboxCopy.Id);
+        Assert.NotNull(sentAfter.ConversationId);
+        Assert.Equal(sentAfter.ConversationId, inboxAfter.ConversationId);
+        Assert.Single(await db.Conversations.AsNoTracking().Where(item => item.MailAccountId == accountId).ToListAsync());
+    }
+
+    [Fact]
     public async Task Reassigning_IsIdempotent()
     {
         await using var db = CreateDb();

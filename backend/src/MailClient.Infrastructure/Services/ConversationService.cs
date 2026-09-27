@@ -101,11 +101,13 @@ public sealed class ConversationService(AppDbContext db)
         var scope = db.Mails.Where(item => item.MailAccountId == mail.MailAccountId
             && item.Id != mail.Id
             && item.ConversationId != null);
+        // Another copy of the same message (Sent + Inbox on a self-send, a draft rewritten in place, a mail
+        // re-imported after a move) is the same thread node; without this match each copy opened its own thread.
         IQueryable<MailEntity> matches = keys is not null && hasChildLookup
-            ? scope.Where(item => keys.Contains(item.MessageId) || item.InReplyToMessageId == normalizedMessageId)
+            ? scope.Where(item => keys.Contains(item.MessageId) || item.MessageId == normalizedMessageId || item.InReplyToMessageId == normalizedMessageId)
             : keys is not null
                 ? scope.Where(item => keys.Contains(item.MessageId))
-                : scope.Where(item => item.InReplyToMessageId == normalizedMessageId);
+                : scope.Where(item => item.MessageId == normalizedMessageId || item.InReplyToMessageId == normalizedMessageId);
         var candidateIds = await matches
             .Select(item => item.ConversationId!.Value)
             .Distinct()

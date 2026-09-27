@@ -86,6 +86,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         model.Entity<Attachment>().Property(x => x.FileName).HasMaxLength(255);
         model.Entity<Attachment>().Property(x => x.ContentType).HasMaxLength(150);
         model.Entity<Attachment>().Property(x => x.ContentId).HasMaxLength(998);
+        model.Entity<Attachment>().Property(x => x.RemotePartId).HasMaxLength(20);
         model.Entity<Attachment>().Property(x => x.ContentDisposition).HasMaxLength(20);
         model.Entity<Attachment>().HasOne(x => x.Mail).WithMany(x => x.Attachments).HasForeignKey(x => x.MailId).OnDelete(DeleteBehavior.Cascade);
         model.Entity<Attachment>().HasOne<MailAccount>().WithMany().HasForeignKey(x => x.MailAccountId).OnDelete(DeleteBehavior.Cascade);

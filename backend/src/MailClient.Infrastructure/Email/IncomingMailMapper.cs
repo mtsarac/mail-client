@@ -41,7 +41,8 @@ public sealed record IncomingAttachment(
     string ContentType,
     bool IsInline,
     string ContentId,
-    string ContentDisposition);
+    string ContentDisposition,
+    string RemotePartId);
 
 public sealed record IncomingFlags(bool IsRead, bool Answered, bool Flagged, bool Draft, bool Deleted, bool Recent);
 
@@ -59,7 +60,7 @@ public static class IncomingMailMapper
         var participants = MapParticipants(message);
         var attachments = message.BodyParts
             .OfType<MimePart>()
-            .Select(MapAttachment)
+            .Select((part, index) => MapAttachment(part, index))
             .OfType<IncomingAttachment>()
             .ToList();
 
@@ -175,7 +176,7 @@ public static class IncomingMailMapper
         ContentDisposition.Inline,
         StringComparison.OrdinalIgnoreCase);
 
-    private static IncomingAttachment? MapAttachment(MimePart part)
+    private static IncomingAttachment? MapAttachment(MimePart part, int index)
     {
         if (part.Content is not { } content
             || !(part.IsAttachment || IsInline(part) || !string.IsNullOrEmpty(part.ContentId)))
@@ -189,7 +190,8 @@ public static class IncomingMailMapper
             MailFieldNormalizer.ContentType(part.ContentType.MimeType),
             inline,
             MailFieldNormalizer.ContentId(part.ContentId),
-            inline ? ContentDisposition.Inline : ContentDisposition.Attachment);
+            inline ? ContentDisposition.Inline : ContentDisposition.Attachment,
+            index.ToString());
     }
 
     private static string HtmlToPlainText(string html)

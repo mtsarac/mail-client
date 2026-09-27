@@ -131,7 +131,8 @@ public sealed class MailFolderSyncService(
         else if (SyncStateDecision.RequiresReset(state.UidValidity, remote.UidValidity))
         {
             var obsoletePaths = await db.Attachments
-                .Where(attachment => db.Mails.Any(mail => mail.Id == attachment.MailId && mail.MailFolderId == folderId))
+                .Where(attachment => db.Mails.Any(mail => mail.Id == attachment.MailId && mail.MailFolderId == folderId)
+                    && attachment.StoragePath != "")
                 .Select(attachment => attachment.StoragePath)
                 .ToListAsync(cancellationToken);
             db.Mails.RemoveRange(db.Mails.Where(mail => mail.MailFolderId == folderId));
@@ -548,48 +549,49 @@ public sealed class MailFolderSyncService(
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var remaining = operationSettings.Current.Limits.MaxMessageAttachmentBytes - messageAttachmentBytes;
-                if (remaining <= 0)
-                {
-                    logger.LogWarning("Skipped an oversized attachment.");
-                    continue;
-                }
-
                 var attachmentId = Guid.NewGuid();
-                StoredFile stored;
-                try
-                {
-                    stored = await storage.SaveAsync(
-                        accountId,
-                        mail.Id,
-                        attachmentId,
-                        (destination, ct) => attachment.Content.DecodeToAsync(destination, ct),
-                        Math.Min(operationSettings.Current.Limits.MaxAttachmentBytes, remaining),
-                        cancellationToken);
-                }
-                catch (OperationCanceledException)
-                {
-                    throw;
-                }
-                catch (AttachmentLimitExceededException)
-                {
-                    logger.LogWarning("Skipped an oversized attachment.");
-                    continue;
-                }
-
-                createdPaths.Add(stored.RelativePath);
-                mail.Attachments.Add(new Attachment
+                var entity = new Attachment
                 {
                     Id = attachmentId,
                     MailAccountId = accountId,
                     MailId = mail.Id,
                     FileName = attachment.FileName,
                     ContentType = attachment.ContentType,
-                    SizeBytes = stored.SizeBytes,
-                    StoragePath = stored.RelativePath,
                     IsInline = attachment.IsInline,
-                    ContentId = attachment.ContentId
-                });
-                messageAttachmentBytes += stored.SizeBytes;
+                    ContentId = attachment.ContentId,
+                    ContentDisposition = attachment.ContentDisposition,
+                    RemotePartId = attachment.RemotePartId
+                };
+                if (remaining > 0)
+                {
+                    try
+                    {
+                        var stored = await storage.SaveAsync(
+                            accountId,
+                            mail.Id,
+                            attachmentId,
+                            (destination, ct) => attachment.Content.DecodeToAsync(destination, ct),
+                            Math.Min(operationSettings.Current.Limits.MaxAttachmentBytes, remaining),
+                            cancellationToken);
+                        createdPaths.Add(stored.RelativePath);
+                        entity.SizeBytes = stored.SizeBytes;
+                        entity.StoragePath = stored.RelativePath;
+                        messageAttachmentBytes += stored.SizeBytes;
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        throw;
+                    }
+                    catch (AttachmentLimitExceededException)
+                    {
+                        logger.LogWarning("Deferred oversized attachment download.");
+                    }
+                }
+                else
+                {
+                    logger.LogWarning("Deferred oversized attachment download.");
+                }
+                mail.Attachments.Add(entity);
             }
 
             mail.HasAttachments = mail.Attachments.Count > 0;
