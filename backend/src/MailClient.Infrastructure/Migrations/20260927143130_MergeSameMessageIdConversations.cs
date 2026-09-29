@@ -58,6 +58,7 @@ namespace MailClient.Infrastructure.Migrations
                         UPDATE "ReplyReminders" r SET "ConversationId" = x.survivor
                         FROM conversation_merge x WHERE r."ConversationId" = x.loser;
 
+
                         DELETE FROM "Conversations" c USING conversation_merge x WHERE c."Id" = x.loser;
                         DROP TABLE conversation_merge;
                     END LOOP;

@@ -149,7 +149,6 @@ builder.Services.AddScoped<IRemoteFolderManager, MailKitRemoteFolderManager>();
 builder.Services.AddScoped<FolderManagementService>();
 builder.Services.AddScoped<MailFolderSyncService>();
 builder.Services.AddScoped<NewMailNotifier>();
-builder.Services.AddScoped<ReplyReminderService>();
 builder.Services.AddScoped<ISyncExecutor, NewMailSyncExecutor>();
 builder.Services.AddScoped<InlineFolderSync>();
 builder.Services.AddScoped<MailReadService>();
@@ -204,7 +203,6 @@ if (!builder.Environment.IsEnvironment("Test"))
     builder.Services.AddHostedService<AllowlistReconciliationService>();
     builder.Services.AddHostedService<ScheduledSendDispatcher>();
     builder.Services.AddHostedService<SnoozeWakeupService>();
-    builder.Services.AddHostedService<ReplyReminderDispatcher>();
 }
 var storageOptions = builder.Configuration.GetSection("Storage").Get<StorageOptions>() ?? new StorageOptions();
 storageOptions.Validate();
@@ -362,7 +360,6 @@ app.MapTrustedSenderEndpoints();
 app.MapSignatureEndpoints();
 app.MapIdentityEndpoints();
 app.MapScheduledSendEndpoints();
-app.MapReplyReminderEndpoints();
 app.MapConversationEndpoints();
 app.MapDeviceEndpoints();
 app.MapManagementEndpoints();

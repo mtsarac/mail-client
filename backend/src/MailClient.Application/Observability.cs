@@ -82,7 +82,6 @@ public static class MailClientTelemetry
         PushEventType.AccountReauthenticationRequired => "account_reauthentication_required",
         PushEventType.SyncError => "sync_error",
         PushEventType.SnoozeExpired => "snooze_expired",
-        PushEventType.ReplyReminder => "reply_reminder",
         _ => "unknown"
     };
 

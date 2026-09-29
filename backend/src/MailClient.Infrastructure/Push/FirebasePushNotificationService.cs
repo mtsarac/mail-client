@@ -100,12 +100,11 @@ public sealed class FirebasePushNotificationService(
         PushEventType.AccountReauthenticationRequired => push.ReauthenticationEnabled,
         PushEventType.SyncError => push.SyncErrorEnabled,
         PushEventType.SnoozeExpired => push.SnoozeExpiredEnabled,
-        PushEventType.ReplyReminder => push.ReplyReminderEnabled,
         _ => false
     };
 
     private static bool IsMailNotification(PushEventType type) =>
-        type is PushEventType.NewMail or PushEventType.SnoozeExpired or PushEventType.ReplyReminder;
+        type is PushEventType.NewMail or PushEventType.SnoozeExpired;
 
     private static (string? Title, string? Body) NotificationText(PushEvent pushEvent, NotificationPrivacy privacy)
     {
@@ -123,10 +122,6 @@ public sealed class FirebasePushNotificationService(
                 "Snoozed mail is back",
                 sender is null ? details : $"{sender}: {details}"),
             PushEventType.SnoozeExpired => ("Snoozed mail is back", "A snoozed message is back in your inbox."),
-            PushEventType.ReplyReminder when privacy != NotificationPrivacy.Private => (
-                "No reply yet",
-                recipient is null ? details : $"{recipient}: {details}"),
-            PushEventType.ReplyReminder => ("No reply yet", "A sent message has not received a reply."),
             PushEventType.MailStateChanged => (null, null),
             PushEventType.AccountReauthenticationRequired => ("Mail account needs attention", "Reconnect your mail account to continue syncing."),
             PushEventType.SyncError => ("Mail sync delayed", "Mail synchronization is having trouble. Open the app for details."),
@@ -145,7 +140,6 @@ public sealed class FirebasePushNotificationService(
                 PushEventType.AccountReauthenticationRequired => "account_reauthentication_required",
                 PushEventType.SyncError => "sync_error",
                 PushEventType.SnoozeExpired => "snooze_expired",
-                PushEventType.ReplyReminder => "reply_reminder",
                 _ => throw new InvalidOperationException("Unknown push event type.")
             },
             ["accountId"] = pushEvent.MailAccountId.ToString()
