@@ -4,13 +4,11 @@ namespace MailClient.Infrastructure.Services;
 
 public sealed class NewMailSyncExecutor(
     MailFolderSyncService sync,
-    NewMailNotifier notifier,
-    ReplyReminderService replyReminders) : ISyncExecutor
+    NewMailNotifier notifier) : ISyncExecutor
 {
     public async Task SyncFolderAsync(Guid accountId, Guid folderId, CancellationToken cancellationToken)
     {
         await sync.SyncFolderAsync(accountId, folderId, cancellationToken);
         await notifier.NotifyPendingAsync(accountId, cancellationToken);
-        await replyReminders.MarkRepliedAsync(accountId, cancellationToken);
     }
 }

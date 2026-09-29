@@ -49,8 +49,7 @@ public enum PushEventType
     /// <summary>Contract-reserved. Not emitted yet: nothing can reliably distinguish
     /// persistent sync failure from transient errors before Phase 9 retry classification.</summary>
     SyncError,
-    SnoozeExpired,
-    ReplyReminder
+    SnoozeExpired
 }
 
 /// <summary>
