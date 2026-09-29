@@ -1,3 +1,4 @@
+using MailClient.Infrastructure.Security;
 using MailClient.Application;
 using MailClient.Application.Accounts;
 using MailClient.Application.Conversations;
@@ -55,7 +56,7 @@ public static class ConversationEndpoints
             return Results.Ok(new ConversationListResponse(items, number, size, total));
         }).WithName("ListConversations").WithSummary("List account conversations").WithDescription("Newest first. pageSize is capped at 100.").Produces<ConversationListResponse>();
 
-        api.MapGet("/conversations/{id:guid}", async (Guid id, bool? includeTrash, string? include, ICurrentMailAccount current, AppDbContext db, CancellationToken ct) =>
+        api.MapGet("/conversations/{id:guid}", async (Guid id, bool? includeTrash, string? include, ICurrentMailAccount current, AppDbContext db, MailContentCipher? contentCipher, CancellationToken ct) =>
         {
             var accountId = current.MailAccountId;
             var conversation = await db.Conversations
@@ -117,7 +118,7 @@ public static class ConversationEndpoints
                 messages = messages.Select(m =>
                 {
                     var mail = entities[m.Id];
-                    var body = MailClient.Infrastructure.Email.HtmlMailBodyRenderer.Render(mail, mail.BodyHtml);
+                    var body = MailClient.Infrastructure.Email.HtmlMailBodyRenderer.Render(mail, contentCipher.UnprotectContent(mail.BodyHtml));
                     return m with
                     {
                         BodyText = mail.BodyText,

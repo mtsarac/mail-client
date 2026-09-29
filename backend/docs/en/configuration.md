@@ -30,6 +30,8 @@ read by Docker Compose only — `dotnet run` does not load it (see
 | `Storage__Provider` | `Local` (`<content root>/data/attachments`, `/app/data/attachments` in Docker) or `S3` | `Local` |
 | `Storage__S3__Bucket/Region/ServiceUrl/Prefix/ForcePathStyle` | S3 target; empty key pair uses the ambient AWS credential chain | — |
 | `Storage__S3__AccessKeyId/SecretAccessKey` | Optional explicit S3 credentials | unset |
+| `Storage__EncryptMailBodies` | Encrypt stored HTML bodies (`Mails.BodyHtml`) with the Data Protection key ring; existing rows are rewritten once at startup. `Subject` and `BodyText` stay readable to PostgreSQL because full-text search and list previews use them — protect those with database or volume encryption. Losing the key ring makes encrypted HTML bodies unreadable (they show as empty until re-synced). | `true` |
+| `Sync__Idle__Enabled` / `Sync__Idle__MaxConnections` | Keep an IMAP IDLE connection on each active account's INBOX so new mail is synced immediately instead of at the next poll. Polling stays as the fallback (servers without IDLE, accounts beyond the connection cap, dropped connections). One long-lived connection per watched account. | `true` / `100` |
 | `Firebase__Enabled`, `Firebase__ProjectId`, `Firebase__CredentialsPath` | Push notifications (FCM); `Enabled=false`/unset uses a no-op sender. See [Production](production.md#5-firebase-cloud-messaging-optional) / [Development](development.md#firebase-cloud-messaging) for setup | disabled |
 | `OAuth__Google__ClientId/ClientSecret/RedirectUris__N` | Google OAuth; unset disables it | unset |
 | `OAuth__Microsoft__ClientId/ClientSecret/Tenant/RedirectUris__N` | Microsoft OAuth | tenant `organizations` |
