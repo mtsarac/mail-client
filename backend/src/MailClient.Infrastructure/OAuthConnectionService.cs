@@ -182,28 +182,32 @@ public sealed class OAuthConnectionService(
                 var row = existing.SingleOrDefault(item => string.Equals(item.FullName, folder.FullName, StringComparison.OrdinalIgnoreCase));
                 if (row is null)
                 {
-                    db.MailFolders.Add(new MailFolder
+                    var added = new MailFolder
                     {
                         Id = Guid.NewGuid(),
                         MailAccountId = account.Id,
                         Name = folder.Name,
                         FullName = folder.FullName,
                         FolderType = folder.FolderType,
+                        DetectedFolderType = folder.FolderType,
                         UidValidity = folder.UidValidity,
                         IsSyncEnabled = MailFolder.SyncedByDefault(account.FolderSyncScope, folder.FolderType),
                         IsAvailable = true
-                    });
+                    };
+                    db.MailFolders.Add(added);
+                    existing.Add(added);
                 }
                 else
                 {
                     row.Name = folder.Name;
-                    row.FolderType = folder.FolderType;
+                    row.DetectedFolderType = folder.FolderType;
                     row.UidValidity = folder.UidValidity;
                     row.IsAvailable = true;
                 }
             }
             foreach (var row in existing.Where(item => !seen.Contains(item.FullName)))
                 row.IsAvailable = false;
+            MailFolder.ApplyRoles(existing);
             await db.SaveChangesAsync(cancellationToken);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

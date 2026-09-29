@@ -33,6 +33,7 @@ mobile client: [Flutter guide](../flutter-api-integration.md) (Turkish).
 | GET | `/api/account/sessions` | bearer | List signed-in devices/sessions |
 | DELETE | `/api/account/sessions/{sessionId}` | bearer | Revoke a session remotely |
 | GET | `/api/account/sync-status` | bearer | Per-folder sync/backfill state (last successful sync, last failure, backfill progress) |
+| GET | `/api/account/quota` | bearer | INBOX storage quota via IMAP QUOTA: `{available, usedBytes, limitBytes}` in bytes (server KiB × 1024); `available: false` with null sizes when the server lacks QUOTA, rejects it, or the account cannot connect |
 | GET / PUT | `/api/account/sync-scope` | bearer | Read or update account-scoped background folder coverage (InboxAndSent, AllFolders, SelectedFolders) |
 | GET / PUT | `/api/account/notification-settings` | bearer | Read or update account-scoped mail notification preferences (enabled, inbox only, privacy) |
 
@@ -82,6 +83,7 @@ cancelled or moved to a later time before it is claimed never wakes.
 | POST | `/api/folders` | bearer | Create a folder on the server (`name`, optional `parentId`) |
 | PATCH | `/api/folders/{id}` | bearer | Rename a custom folder on the server; ids are kept |
 | DELETE | `/api/folders/{id}` | bearer | Delete an empty custom folder without children |
+| PUT | `/api/folders/{id}/role` | bearer | Override the folder role: `{"role":"Sent"\|"Drafts"\|"Trash"\|"Junk"}` or `{"role":null}` to restore detection. Clears the same role from other folders of the account; `folderType` becomes the effective role and survives refresh. `400 invalid_folder_role`, `404` for another account's folder |
 | POST | `/api/folders/refresh` | bearer | Re-read the folder list from the server |
 | POST | `/api/folders/{id}/sync` | bearer | Queue a folder sync (202) |
 

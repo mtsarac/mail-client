@@ -183,6 +183,63 @@ public sealed class FolderManagementApiTests(FolderManagementApiFactory factory)
         Assert.Equal(bytes, decoded.ToArray());
     }
 
+    [Fact]
+    public async Task SetFolderRole_OverridesDetectedRole_MovesBetweenFolders_ResetsAndStaysInsideTheAccount()
+    {
+        var (accountId, inbox, custom) = await SeedAsync();
+        var (otherAccountId, _, otherCustom) = await SeedAsync();
+        var detectedSent = Guid.NewGuid();
+        var sentItems = Guid.NewGuid();
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            db.MailFolders.Add(new Domain.Entities.MailFolder { Id = detectedSent, MailAccountId = accountId, Name = "Sent", FullName = "INBOX.Sent", Delimiter = ".", FolderType = MailFolderType.Sent, DetectedFolderType = MailFolderType.Sent, IsAvailable = true });
+            db.MailFolders.Add(new Domain.Entities.MailFolder { Id = sentItems, MailAccountId = accountId, Name = "Sent Items", FullName = "INBOX.Sent Items", Delimiter = ".", FolderType = MailFolderType.Custom, DetectedFolderType = MailFolderType.Custom, IsAvailable = true });
+            await db.SaveChangesAsync();
+        }
+        var client = Client(accountId);
+
+        var assigned = await ReadFolderAsync(await client.PutAsJsonAsync($"/api/folders/{sentItems}/role", new { role = "Sent" }), HttpStatusCode.OK);
+        Assert.Equal("Sent", assigned.GetProperty("folderType").GetString());
+        Assert.Equal("Sent", assigned.GetProperty("folderRoleOverride").GetString());
+        var folders = (await client.GetFromJsonAsync<JsonElement>("/api/folders")).EnumerateArray().ToDictionary(f => f.GetProperty("id").GetGuid());
+        Assert.Equal("Custom", folders[detectedSent].GetProperty("folderType").GetString());
+        Assert.Equal("Inbox", folders[inbox].GetProperty("folderType").GetString());
+
+        var moved = await ReadFolderAsync(await client.PutAsJsonAsync($"/api/folders/{custom}/role", new { role = "Sent" }), HttpStatusCode.OK);
+        Assert.Equal("Sent", moved.GetProperty("folderType").GetString());
+        folders = (await client.GetFromJsonAsync<JsonElement>("/api/folders")).EnumerateArray().ToDictionary(f => f.GetProperty("id").GetGuid());
+        Assert.Equal(JsonValueKind.Null, folders[sentItems].GetProperty("folderRoleOverride").ValueKind);
+        Assert.Equal("Custom", folders[sentItems].GetProperty("folderType").GetString());
+
+        var reset = await ReadFolderAsync(await client.PutAsJsonAsync($"/api/folders/{custom}/role", new { role = (string?)null }), HttpStatusCode.OK);
+        Assert.Equal("Custom", reset.GetProperty("folderType").GetString());
+        folders = (await client.GetFromJsonAsync<JsonElement>("/api/folders")).EnumerateArray().ToDictionary(f => f.GetProperty("id").GetGuid());
+        Assert.Equal("Sent", folders[detectedSent].GetProperty("folderType").GetString());
+
+        await ExpectProblemAsync(await client.PutAsJsonAsync($"/api/folders/{custom}/role", new { role = "Inbox" }), HttpStatusCode.BadRequest, "invalid_folder_role");
+        Assert.Equal(HttpStatusCode.NotFound, (await client.PutAsJsonAsync($"/api/folders/{otherCustom}/role", new { role = "Trash" })).StatusCode);
+        using var verify = factory.Services.CreateScope();
+        var verifyDb = verify.ServiceProvider.GetRequiredService<AppDbContext>();
+        Assert.Null(verifyDb.MailFolders.Single(f => f.Id == otherCustom).FolderRoleOverride);
+        Assert.All(verifyDb.MailFolders.Where(f => f.MailAccountId == otherAccountId).ToList(), f => Assert.Null(f.FolderRoleOverride));
+    }
+
+    [Fact]
+    public void ApplyRoles_KeepsOverrideWhenRediscoveryReportsAnotherSentFolder()
+    {
+        var sent = new Domain.Entities.MailFolder { FullName = "INBOX.Sent", DetectedFolderType = MailFolderType.Sent };
+        var sentItems = new Domain.Entities.MailFolder { FullName = "INBOX.Sent Items", DetectedFolderType = MailFolderType.Custom, FolderRoleOverride = MailFolderType.Sent };
+        var trash = new Domain.Entities.MailFolder { FullName = "INBOX.Trash", DetectedFolderType = MailFolderType.Trash };
+
+        Domain.Entities.MailFolder.ApplyRoles([sent, sentItems, trash]);
+
+        Assert.Equal(MailFolderType.Sent, sentItems.FolderType);
+        Assert.Equal(MailFolderType.Sent, sentItems.FolderRoleOverride);
+        Assert.Equal(MailFolderType.Custom, sent.FolderType);
+        Assert.Equal(MailFolderType.Trash, trash.FolderType);
+    }
+
     private HttpClient Client(Guid accountId)
     {
         var client = factory.CreateClient();
@@ -209,8 +266,8 @@ public sealed class FolderManagementApiTests(FolderManagementApiFactory factory)
             SmtpPort = 465,
             Status = MailAccountStatus.Active
         });
-        db.MailFolders.Add(new Domain.Entities.MailFolder { Id = inbox, MailAccountId = accountId, Name = "INBOX", FullName = "INBOX", Delimiter = "/", FolderType = MailFolderType.Inbox, IsAvailable = true });
-        db.MailFolders.Add(new Domain.Entities.MailFolder { Id = custom, MailAccountId = accountId, Name = "Eski", FullName = "Eski", Delimiter = "/", FolderType = MailFolderType.Custom, IsAvailable = true });
+        db.MailFolders.Add(new Domain.Entities.MailFolder { Id = inbox, MailAccountId = accountId, Name = "INBOX", FullName = "INBOX", Delimiter = "/", FolderType = MailFolderType.Inbox, DetectedFolderType = MailFolderType.Inbox, IsAvailable = true });
+        db.MailFolders.Add(new Domain.Entities.MailFolder { Id = custom, MailAccountId = accountId, Name = "Eski", FullName = "Eski", Delimiter = "/", FolderType = MailFolderType.Custom, DetectedFolderType = MailFolderType.Custom, IsAvailable = true });
         await db.SaveChangesAsync();
         return (accountId, inbox, custom);
     }

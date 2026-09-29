@@ -222,23 +222,26 @@ public sealed class AccountConnectionService(
             var row = existing.SingleOrDefault(item => string.Equals(item.FullName, folder.FullName, StringComparison.OrdinalIgnoreCase));
             if (row is null)
             {
-                db.MailFolders.Add(new MailFolder
+                var added = new MailFolder
                 {
                     Id = Guid.NewGuid(),
                     MailAccountId = account.Id,
                     Name = folder.Name,
                     FullName = folder.FullName,
                     FolderType = folder.FolderType,
+                    DetectedFolderType = folder.FolderType,
                     UidValidity = folder.UidValidity,
                     Delimiter = folder.Delimiter,
                     IsSyncEnabled = MailFolder.SyncedByDefault(account.FolderSyncScope, folder.FolderType),
                     IsAvailable = true
-                });
+                };
+                db.MailFolders.Add(added);
+                existing.Add(added);
             }
             else
             {
                 row.Name = folder.Name;
-                row.FolderType = folder.FolderType;
+                row.DetectedFolderType = folder.FolderType;
                 row.UidValidity = folder.UidValidity;
                 row.Delimiter = folder.Delimiter;
                 row.IsAvailable = true;
@@ -247,6 +250,7 @@ public sealed class AccountConnectionService(
 
         foreach (var row in existing.Where(item => !seen.Contains(item.FullName)))
             row.IsAvailable = false;
+        MailFolder.ApplyRoles(existing);
         await db.SaveChangesAsync(cancellationToken);
         return discovered.Count;
     }

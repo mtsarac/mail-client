@@ -9,6 +9,7 @@ using MailClient.Domain;
 using MailClient.Infrastructure.Accounts;
 using MailClient.Infrastructure.Authentication;
 using MailClient.Infrastructure.Discovery;
+using MailClient.Infrastructure.Mail;
 using MailClient.Infrastructure.Observability;
 using MailClient.Infrastructure.Persistence;
 using MailClient.Infrastructure.Services;
@@ -22,6 +23,7 @@ public sealed record AccountSyncScopeRequest(MailClient.Domain.Enums.FolderSyncS
 public sealed record AccountSyncScopeResponse(MailClient.Domain.Enums.FolderSyncScope Scope, IReadOnlyList<Guid> SyncedFolderIds);
 public sealed record AccountNotificationSettingsRequest(bool Enabled, bool InboxOnly, MailClient.Domain.Enums.NotificationPrivacy Privacy);
 public sealed record AccountNotificationSettingsResponse(bool Enabled, bool InboxOnly, MailClient.Domain.Enums.NotificationPrivacy Privacy, bool PreviewsAllowedByServer);
+public sealed record AccountQuotaResponse(bool Available, long? UsedBytes, long? LimitBytes);
 
 public sealed record FolderSyncStatusResponse(
     Guid FolderId,
@@ -119,6 +121,17 @@ public static class AccountEndpoints
         }).WithTags("Account").WithName("GetCurrentAccount").WithSummary("Get current mailbox account")
             .WithDescription("The legacy `signature` field is the plain-text body of the default new-mail signature, or null when no new-mail default is selected.")
             .Produces<AccountResponse>().Produces(404);
+        api.MapGet("/account/quota", async (ICurrentMailAccount current, AppDbContext db, IMailQuotaService quotaService, CancellationToken ct) =>
+        {
+            var account = await db.MailAccounts.AsNoTracking().SingleOrDefaultAsync(x => x.Id == current.MailAccountId, ct);
+            if (account is null) return Results.NotFound();
+            var quota = await quotaService.GetAsync(account, ct);
+            return Results.Ok(quota is null
+                ? new AccountQuotaResponse(false, null, null)
+                : new AccountQuotaResponse(true, quota.UsedBytes, quota.LimitBytes));
+        }).WithTags("Account").WithName("GetAccountQuota").WithSummary("Get current mailbox storage quota")
+            .WithDescription("Returns available=false when the IMAP server does not expose QUOTA or rejects access.")
+            .Produces<AccountQuotaResponse>().Produces(404);
         api.MapGet("/account/sync-status", async (ICurrentMailAccount current, AppDbContext db, CancellationToken ct) =>
         {
             var statuses = await db.MailFolders.AsNoTracking()

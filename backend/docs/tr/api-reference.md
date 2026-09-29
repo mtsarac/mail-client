@@ -33,6 +33,7 @@ arayüzüne bakın (`/swagger`, yalnızca Development). Mobil istemci için örn
 | GET | `/api/account/sessions` | bearer | Oturum açmış cihazları/oturumları listeler |
 | DELETE | `/api/account/sessions/{sessionId}` | bearer | Bir oturumu uzaktan kapatır |
 | GET | `/api/account/sync-status` | bearer | Klasör başına sync/backfill durumu (son başarılı sync, son hata, backfill ilerlemesi) |
+| GET | `/api/account/quota` | bearer | IMAP QUOTA ile INBOX depolama kotası: `{available, usedBytes, limitBytes}` bayt cinsinden (sunucunun KiB değeri × 1024); sunucu QUOTA desteklemiyor, reddediyor veya hesap bağlanamıyorsa `available: false` ve boyutlar null |
 | GET / PUT | `/api/account/sync-scope` | bearer | Hesabın arka planda senkronize edilen klasör kapsamını okur veya günceller (InboxAndSent, AllFolders, SelectedFolders) |
 | GET / PUT | `/api/account/notification-settings` | bearer | Hesabın posta bildirim tercihlerini okur veya günceller (açık/kapalı, yalnız Gelen Kutusu, gizlilik) |
 
@@ -83,6 +84,7 @@ uyanmaz.
 | POST | `/api/folders` | bearer | Sunucuda klasör oluşturur (`name`, isteğe bağlı `parentId`) |
 | PATCH | `/api/folders/{id}` | bearer | Özel klasörü sunucuda yeniden adlandırır; id'ler korunur |
 | DELETE | `/api/folders/{id}` | bearer | Alt klasörü olmayan boş özel klasörü siler |
+| PUT | `/api/folders/{id}/role` | bearer | Klasör rolünü elle atar: `{"role":"Sent"\|"Drafts"\|"Trash"\|"Junk"}`, otomatik tespite dönmek için `{"role":null}`. Aynı hesapta aynı rolü taşıyan diğer atamayı kaldırır; `folderType` etkin rolü döner ve refresh sonrası korunur. `400 invalid_folder_role`, başka hesabın klasörü için `404` |
 | POST | `/api/folders/refresh` | bearer | Klasör listesini sunucudan yeniden okur |
 | POST | `/api/folders/{id}/sync` | bearer | Klasör sync'ini kuyruğa alır (202) |
 
