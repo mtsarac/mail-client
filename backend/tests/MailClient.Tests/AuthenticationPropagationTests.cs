@@ -164,7 +164,9 @@ public sealed class AuthenticationPropagationTests
             TestServices.Credentials(db, protector),
             new DefaultRuntimePolicyProvider(),
             new DefaultEmailAllowlistService(),
-            NullLogger<AccountConnectionService>.Instance);
+            NullLogger<AccountConnectionService>.Instance,
+            FixedRuntimeSettingsStore.Operation(),
+            new AuthenticationAttemptCache());
     }
 
     private static async Task<(Guid AccountId, Guid FolderId)> SeedAccountAsync(AppDbContext db, AuthenticationMethod method)

@@ -69,7 +69,8 @@ Bölümler:
 | Bölüm | Kontrol ettiği |
 |-------|----------------|
 | `Providers` | Sağlayıcı başına (Google, Microsoft, iCloud, Yahoo, Custom): açık/kapalı, yeni/mevcut hesap, şifre / uygulama şifresi / OAuth2 |
-| `Sync` | Açık/kapalı, yoklama aralığı (30 sn), flag sync (120 sn), çalıştırma başına en fazla posta (100), hesap/host başına eşzamanlılık, kuyruk kapasitesi, retry sayısı/gecikmeleri, hata eşiği |
+| `Sync` | Açık/kapalı, yoklama aralığı (varsayılan 180 sn; yapılandırılabilir), flag sync (120 sn), çalıştırma başına en fazla posta (100), hesap/host başına eşzamanlılık, kuyruk kapasitesi, retry sayısı/gecikmeleri, hata eşiği |
+| `Authentication` | Reddedilen şifre için bekleme: başlangıç (30 sn), üstel ikiye katlama, üst sınır (300 sn); eşzamanlı aynı kimlik bilgisi API örneği başına bir kez doğrulanır |
 | `Limits` | En büyük ek (25 MiB), posta başına ekler (50 MiB), posta (100 MiB), gönderim gövde karakteri |
 | `Search` | En büyük sayfa boyutu (100), en uzun sorgu (200) |
 | `Push` | Ana anahtar ve olay bazlı anahtarlar, posta önizlemesi |

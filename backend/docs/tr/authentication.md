@@ -35,6 +35,14 @@ bağlanmaktır. Bir `MailAccount` (posta kutusu başına bir tane) cihaz başın
 Dördü de aynı `TokenResponse`'u (access + refresh + bitiş) döner. `connect*` yalnızca
 *oluşturur*; hesap zaten varsa `login` kullanın.
 
+Aynı hesap ve sunucu için aynı şifrenin eşzamanlı doğrulamaları, API örneği
+başına tek IMAP/SMTP denemesini paylaşır. Reddedilen şifre için üstel bekleme
+uygulanır (varsayılan 30 saniyeden başlayıp iki katına çıkarak en fazla 300
+saniyeye ulaşır; runtime `Authentication` ayarlarından yönetilir). Tekrarlarda
+yanıt yine `mail_authentication_failed` olur. Düzeltilen şifre hemen denenir.
+Ağ/TLS hataları önbelleğe alınmaz. Başarısız doğrulamadan sonra keşif kimliği
+süresi dolana dek kullanılabilir.
+
 ## Oturumlar ve cihazlar
 
 - `GET /api/account/sessions` oturumları listeler; `DELETE /api/account/sessions/{id}`

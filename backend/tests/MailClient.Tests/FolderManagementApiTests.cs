@@ -225,6 +225,18 @@ public sealed class FolderManagementApiTests(FolderManagementApiFactory factory)
         Assert.All(verifyDb.MailFolders.Where(f => f.MailAccountId == otherAccountId).ToList(), f => Assert.Null(f.FolderRoleOverride));
     }
 
+    [Theory]
+    [InlineData("Sent Items", MailFolderType.Sent)]
+    [InlineData("Drafts", MailFolderType.Drafts)]
+    [InlineData("Deleted Items", MailFolderType.Trash)]
+    [InlineData("Spam", MailFolderType.Junk)]
+    [InlineData("Archive", MailFolderType.Archive)]
+    [InlineData("INBOX/Projects", MailFolderType.Custom)]
+    public void Classify_UsesTopLevelNamesWithoutSpecialUse(string name, MailFolderType expected)
+    {
+        Assert.Equal(expected, MailClient.Infrastructure.Services.MailFolderDiscovery.Classify(MailKit.FolderAttributes.None, name));
+    }
+
     [Fact]
     public void ApplyRoles_KeepsOverrideWhenRediscoveryReportsAnotherSentFolder()
     {

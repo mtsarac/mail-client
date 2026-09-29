@@ -33,6 +33,14 @@ pair; reusing an old token fails with `invalid_refresh_token`.
 All four return the same `TokenResponse` (access + refresh + expiry).
 `connect*` only *creates*; use `login` for an account that already exists.
 
+Concurrent checks of the same password for the same mailbox and server share one
+IMAP/SMTP validation per API instance. A rejected password has an exponential
+cooldown (30 seconds initially, doubling up to 300 seconds by default; managed
+under runtime `Authentication` settings). Repeats still return the usual
+`mail_authentication_failed` response. A corrected password is checked immediately.
+Network/TLS failures are not cached. Discovery IDs remain usable after failed
+authentication until they expire.
+
 ## Sessions and devices
 
 - `GET /api/account/sessions` lists sessions; `DELETE /api/account/sessions/{id}`
