@@ -36,15 +36,20 @@ public sealed class MailKitFolderExplorer(MailConnectionHelper connections)
 
         foreach (var ns in imap.PersonalNamespaces)
         {
-            var folders = await imap.GetFoldersAsync(ns, false, cancellationToken);
-            foreach (var folder in folders)
-                await CollectFolderAsync(folder, discovered, seen, cancellationToken);
-        }
-
-        if (discovered.Count == 0)
-        {
-            foreach (var folder in await imap.Inbox.GetSubfoldersAsync(false, cancellationToken))
-                await CollectFolderAsync(folder, discovered, seen, cancellationToken);
+            try
+            {
+                var folders = await imap.GetFoldersAsync(ns, false, cancellationToken);
+                foreach (var folder in folders)
+                    await CollectFolderAsync(folder, discovered, seen, cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (MailKit.CommandException)
+            {
+                // Some classic servers reject namespace LIST; INBOX descendants can still be listed.
+            }
         }
 
         return discovered;

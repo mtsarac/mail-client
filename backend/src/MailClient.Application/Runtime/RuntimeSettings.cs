@@ -6,6 +6,7 @@ public sealed class RuntimeSettings
 {
     public RuntimeProviderSettings Providers { get; init; } = new();
     public RuntimeSyncSettings Sync { get; init; } = new();
+    public RuntimeAuthenticationSettings Authentication { get; init; } = new();
     public RuntimeLimitSettings Limits { get; init; } = new();
     public RuntimeSearchSettings Search { get; init; } = new();
     public RuntimePushSettings Push { get; init; } = new();
@@ -14,6 +15,7 @@ public sealed class RuntimeSettings
     public void Validate()
     {
         Sync.Validate();
+        Authentication.Validate();
         Whitelist.Validate();
         if (Limits.MaxAttachmentBytes <= 0
             || Limits.MaxMessageAttachmentBytes < Limits.MaxAttachmentBytes
@@ -59,10 +61,22 @@ public sealed class RuntimeProviderPolicySettings
     public static RuntimeProviderPolicySettings Default(bool oAuth2Enabled = true) => new() { OAuth2Enabled = oAuth2Enabled };
 }
 
+public sealed class RuntimeAuthenticationSettings
+{
+    public int RetryBaseDelaySeconds { get; init; } = 30;
+    public int RetryMaxDelaySeconds { get; init; } = 300;
+
+    public void Validate()
+    {
+        if (RetryBaseDelaySeconds <= 0 || RetryMaxDelaySeconds < RetryBaseDelaySeconds)
+            throw new InvalidOperationException(RuntimePolicyErrors.RuntimeSettingsInvalid);
+    }
+}
+
 public sealed class RuntimeSyncSettings
 {
     public bool Enabled { get; init; } = true;
-    public int PollIntervalSeconds { get; init; } = 30;
+    public int PollIntervalSeconds { get; init; } = 180;
     public int FlagSyncIntervalSeconds { get; init; } = 120;
     public int MaxMessagesPerRun { get; init; } = 100;
     public int MaxConcurrentAccounts { get; init; } = 4;

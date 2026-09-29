@@ -14,7 +14,15 @@ public static class MailFolderDiscovery
         var value when value.HasFlag(FolderAttributes.Junk) => MailFolderType.Junk,
         var value when value.HasFlag(FolderAttributes.Archive) => MailFolderType.Archive,
         _ when string.Equals(fullName, "INBOX", StringComparison.OrdinalIgnoreCase) => MailFolderType.Inbox,
-        _ when string.Equals(fullName, "Sent", StringComparison.OrdinalIgnoreCase) => MailFolderType.Sent,
+        _ when string.Equals(fullName, "Sent", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(fullName, "Sent Items", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(fullName, "Sent Messages", StringComparison.OrdinalIgnoreCase) => MailFolderType.Sent,
+        _ when string.Equals(fullName, "Drafts", StringComparison.OrdinalIgnoreCase) => MailFolderType.Drafts,
+        _ when string.Equals(fullName, "Trash", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(fullName, "Deleted Items", StringComparison.OrdinalIgnoreCase) => MailFolderType.Trash,
+        _ when string.Equals(fullName, "Junk", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(fullName, "Spam", StringComparison.OrdinalIgnoreCase) => MailFolderType.Junk,
+        _ when string.Equals(fullName, "Archive", StringComparison.OrdinalIgnoreCase) => MailFolderType.Archive,
         _ => MailFolderType.Custom
     };
 }

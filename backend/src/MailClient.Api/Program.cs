@@ -141,6 +141,7 @@ builder.Services.AddSingleton<IMailConnectionValidator, MailKitConnectionValidat
 builder.Services.AddSingleton<IMailServerCandidateValidator>(sp => (MailKitConnectionValidator)sp.GetRequiredService<IMailConnectionValidator>());
 builder.Services.AddScoped<ICredentialProtector, DataProtectionCredentialProtector>();
 builder.Services.AddScoped<MailSessionService>();
+builder.Services.AddSingleton<AuthenticationAttemptCache>();
 builder.Services.AddScoped<AccountConnectionService>();
 builder.Services.AddScoped<AccountDeletionService>();
 builder.Services.AddScoped<IMailTransport, MailKitMailTransport>();

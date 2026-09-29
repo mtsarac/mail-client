@@ -20,7 +20,7 @@ public sealed class MailSyncService(
     {
         while (!stoppingToken.IsCancellationRequested)
         {
-            var pollIntervalSeconds = 30;
+            var pollIntervalSeconds = 180;
             try
             {
                 await using var scope = scopes.CreateAsyncScope();

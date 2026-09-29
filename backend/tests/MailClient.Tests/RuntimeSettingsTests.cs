@@ -6,12 +6,12 @@ namespace MailClient.Tests;
 public sealed class RuntimeSettingsTests
 {
     [Fact]
-    public void Defaults_ReproduceCurrentOperationalBehavior()
+    public void Defaults_LimitPeriodicSyncLoad()
     {
         var settings = new RuntimeSettings();
 
         Assert.True(settings.Sync.Enabled);
-        Assert.Equal(30, settings.Sync.PollIntervalSeconds);
+        Assert.Equal(180, settings.Sync.PollIntervalSeconds);
         Assert.Equal(120, settings.Sync.FlagSyncIntervalSeconds);
         Assert.Equal(100, settings.Sync.MaxMessagesPerRun);
         Assert.Equal(25 * 1024 * 1024, settings.Limits.MaxAttachmentBytes);
@@ -41,6 +41,17 @@ public sealed class RuntimeSettingsTests
         var exception = Assert.Throws<InvalidOperationException>(settings.Validate);
 
         Assert.Equal("runtime_settings_invalid", exception.Message);
+    }
+
+    [Fact]
+    public void Validate_RejectsInvalidAuthenticationCooldown()
+    {
+        var settings = new RuntimeSettings
+        {
+            Authentication = new RuntimeAuthenticationSettings { RetryBaseDelaySeconds = 60, RetryMaxDelaySeconds = 30 }
+        };
+
+        Assert.Equal("runtime_settings_invalid", Assert.Throws<InvalidOperationException>(settings.Validate).Message);
     }
 
     [Fact]

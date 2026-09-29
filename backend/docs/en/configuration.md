@@ -69,7 +69,8 @@ rejected. Sections:
 | Section | Controls |
 |---------|----------|
 | `Providers` | Per provider (Google, Microsoft, iCloud, Yahoo, Custom): enabled, new/existing accounts, password / app-password / OAuth2 |
-| `Sync` | Enabled, poll interval (30 s), flag sync (120 s), max messages per run (100), concurrency per account/host, queue capacity, retry attempts/delays, failure threshold |
+| `Sync` | Enabled, poll interval (180 s default; configurable), flag sync (120 s), max messages per run (100), concurrency per account/host, queue capacity, retry attempts/delays, failure threshold |
+| `Authentication` | Rejected password cooldown: base delay (30 s), exponential doubling, maximum delay (300 s); same credential checked once concurrently per API instance |
 | `Limits` | Max attachment (25 MiB), per-message attachments (50 MiB), message (100 MiB), send body chars |
 | `Search` | Max page size (100), max query length (200) |
 | `Push` | Master switch and per-event toggles, mail preview |

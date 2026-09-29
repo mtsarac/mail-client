@@ -26,7 +26,9 @@ public sealed class AccountConnectionService(
     MailCredentialResolver credentialResolver,
     IRuntimePolicyProvider runtimePolicy,
     IEmailAllowlistService allowlist,
-    ILogger<AccountConnectionService> logger)
+    ILogger<AccountConnectionService> logger,
+    MailClient.Infrastructure.Runtime.RuntimeOperationSettings operationSettings,
+    AuthenticationAttemptCache attempts)
 {
     public async Task<TokenResponse> ConnectAsync(DiscoveryState state, AuthenticationInput authentication, string? deviceIdentifier, CancellationToken cancellationToken) =>
         await ConnectCoreAsync(state.Email, state.Email, null, state.Candidate, authentication, deviceIdentifier, cancellationToken);
@@ -56,7 +58,8 @@ public sealed class AccountConnectionService(
         {
             try
             {
-                await connections.ValidateCredentialsAsync(candidate, candidateUsername, authentication.Password, cancellationToken);
+                await attempts.ValidateAsync(connections, candidate, email, candidateUsername, authentication.Password,
+                    (await operationSettings.GetAsync(cancellationToken)).Settings.Authentication, cancellationToken);
                 working = candidateUsername;
                 break;
             }
@@ -123,7 +126,8 @@ public sealed class AccountConnectionService(
             new MailEndpoint(account.SmtpHost, account.SmtpPort, account.SmtpSecurity),
             [AuthenticationMethod.Password, AuthenticationMethod.AppSpecificPassword],
             account.DiscoverySource);
-        await connections.ValidateCredentialsAsync(candidate, account.Username, password, cancellationToken);
+        await attempts.ValidateAsync(connections, candidate, email, account.Username, password,
+            (await operationSettings.GetAsync(cancellationToken)).Settings.Authentication, cancellationToken);
 
         var now = DateTime.UtcNow;
         account.Status = MailAccountStatus.Active;
@@ -162,7 +166,8 @@ public sealed class AccountConnectionService(
             account.Provider, imap, smtp,
             [AuthenticationMethod.Password, AuthenticationMethod.AppSpecificPassword],
             request.Imap is null && request.Smtp is null ? account.DiscoverySource : DiscoverySource.Manual);
-        await connections.ValidateCredentialsAsync(candidate, account.Username, request.Authentication.Password, cancellationToken);
+        await attempts.ValidateAsync(connections, candidate, account.EmailAddress, account.Username, request.Authentication.Password,
+            (await operationSettings.GetAsync(cancellationToken)).Settings.Authentication, cancellationToken);
 
         var now = DateTime.UtcNow;
         account.AuthenticationMethod = request.Authentication.Type;
