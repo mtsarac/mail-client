@@ -94,8 +94,9 @@ public sealed class MailSearchService(AppDbContext db, RuntimeOperationSettings 
 
         var total = await query.CountAsync(cancellationToken);
         var ordered = useTs
-            ? query.OrderByDescending(mail => EF.Property<NpgsqlTsVector>(mail, "SearchVector").Rank(EF.Functions.WebSearchToTsQuery("simple", queryText!)))
-                .ThenByDescending(mail => mail.ReceivedAt).ThenByDescending(mail => mail.Uid).ThenByDescending(mail => mail.Id)
+            ? query.OrderByDescending(mail => mail.ReceivedAt)
+                .ThenByDescending(mail => EF.Property<NpgsqlTsVector>(mail, "SearchVector").Rank(EF.Functions.WebSearchToTsQuery("simple", queryText!)))
+                .ThenByDescending(mail => mail.Uid).ThenByDescending(mail => mail.Id)
             : query.OrderByDescending(mail => mail.ReceivedAt).ThenByDescending(mail => mail.Uid).ThenByDescending(mail => mail.Id);
         var skip = (int)Math.Min((long)(page - 1) * pageSize, int.MaxValue);
         var items = await ordered.Skip(skip).Take(pageSize)
