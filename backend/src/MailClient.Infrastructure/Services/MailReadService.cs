@@ -139,7 +139,7 @@ public sealed class MailReadService(
         }
         catch (MailboxStateChangedException)
         {
-            logger.LogWarning("Read flag not applied for mail {MailId}: UIDVALIDITY changed on folder {FullName}.", mailId, fullName);
+            logger.LogWarning("Read flag not applied for mail {MailId}: UIDVALIDITY changed on folder {FullName}.", mailId, LogSanitizer.Safe(fullName));
             return new MailReadOutcome(true, false, true, false);
         }
         catch (OperationCanceledException)
