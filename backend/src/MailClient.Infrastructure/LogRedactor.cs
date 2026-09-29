@@ -37,3 +37,14 @@ public static class LogRedactor
         }
     }
 }
+
+/// <summary>Neutralises line breaks and control characters so a remote- or user-controlled value cannot forge log entries.</summary>
+public static class LogSanitizer
+{
+    public static string Safe(string? value) =>
+        value is null ? "" : string.Create(value.Length, value, static (span, source) =>
+        {
+            for (var i = 0; i < source.Length; i++)
+                span[i] = char.IsControl(source[i]) ? ' ' : source[i];
+        });
+}

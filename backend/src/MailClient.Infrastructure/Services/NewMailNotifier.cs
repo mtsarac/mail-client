@@ -66,6 +66,6 @@ public sealed partial class NewMailNotifier(AppDbContext db, IPushNotificationSe
         return collapsed.Length <= PreviewLength ? collapsed : collapsed[..PreviewLength].TrimEnd() + "…";
     }
 
-    [GeneratedRegex(@"\s+")]
+    [GeneratedRegex(@"\s+", RegexOptions.None, matchTimeoutMilliseconds: 1000)]
     private static partial Regex Whitespace();
 }

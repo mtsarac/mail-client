@@ -199,6 +199,6 @@ public static class IncomingMailMapper
         var document = new AngleSharp.Html.Parser.HtmlParser().ParseDocument(html);
         foreach (var element in document.QuerySelectorAll("script,style,head").ToList())
             element.Remove();
-        return System.Text.RegularExpressions.Regex.Replace(document.Body?.TextContent ?? "", @"[ \t]*\r?\n\s*", "\n").Trim();
+        return System.Text.RegularExpressions.Regex.Replace(document.Body?.TextContent ?? "", @"[ \t]*\r?\n\s*", "\n", System.Text.RegularExpressions.RegexOptions.None, TimeSpan.FromSeconds(1)).Trim();
     }
 }

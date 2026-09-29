@@ -20,3 +20,14 @@ public sealed class LogRedactorTests
         Assert.Contains("visible", redacted);
     }
 }
+
+public sealed class LogSanitizerTests
+{
+    [Fact]
+    public void Safe_ReplacesLineBreaksAndControlCharacters()
+    {
+        Assert.Equal("a  b c", MailClient.Infrastructure.Observability.LogSanitizer.Safe("a\r\nb\tc"));
+        Assert.Equal("", MailClient.Infrastructure.Observability.LogSanitizer.Safe(null));
+        Assert.Equal("INBOX/Sub", MailClient.Infrastructure.Observability.LogSanitizer.Safe("INBOX/Sub"));
+    }
+}

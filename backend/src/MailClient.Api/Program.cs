@@ -330,7 +330,7 @@ app.UseExceptionHandler(new ExceptionHandlerOptions
         var exception = context.Features.Get<Microsoft.AspNetCore.Diagnostics.IExceptionHandlerFeature>()?.Error;
         var (code, status) = ApiFailureMapper.MapFailure(exception);
         if (status >= 500)
-            app.Logger.LogError(exception, "Request failed with {Code} for {Method} {Path}.", code, context.Request.Method, context.Request.Path);
+            app.Logger.LogError(exception, "Request failed with {Code} for {Method} {Path}.", code, LogSanitizer.Safe(context.Request.Method), LogSanitizer.Safe(context.Request.Path.Value));
         var correlationId = context.RequestServices.GetRequiredService<CorrelationContext>().CorrelationId;
         var extensions = new Dictionary<string, object?> { ["code"] = code, ["correlationId"] = correlationId };
         if (app.Environment.IsDevelopment() && exception is not null)
