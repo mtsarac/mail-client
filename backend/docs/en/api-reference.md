@@ -79,9 +79,10 @@ cancelled or moved to a later time before it is claimed never wakes.
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| GET | `/api/folders` | bearer | List cached folders (with `delimiter` and `parentId`) |
-| POST | `/api/folders` | bearer | Create a folder on the server (`name`, optional `parentId`) |
+| GET | `/api/folders` | bearer | List cached folders with `delimiter`, effective `parentId`, and `isLocalParentOverride` (true for a local-only fallback). `fullName` always remains the actual IMAP name. |
+| POST | `/api/folders` | bearer | Create a folder on the server (`name`, optional `parentId`); if nested create is rejected, create at remote root and link locally only if root creation succeeds |
 | PATCH | `/api/folders/{id}` | bearer | Rename a custom folder on the server; ids are kept |
+| PUT | `/api/folders/{id}/parent` | bearer | Move a Custom folder with `{"parentId":"<guid>"}` beneath an available folder in the same account (standard or Custom), or `{"parentId":null}` to the root. Tries IMAP RENAME first; on server rejection, retains the remote folder and its mail in place and persists a local-only parent (response `isLocalParentOverride: true`). Refresh retains that override. No copy/delete fallback. Cycles return 409 `mail_folder_cycle`; name collisions 409 `mail_folder_exists`; missing/cross-account parent 404 `mail_folder_not_found`; moving standard folders 422 `mail_folder_protected`. PATCH remains rename-only. |
 | DELETE | `/api/folders/{id}` | bearer | Delete an empty custom folder without children |
 | PUT | `/api/folders/{id}/role` | bearer | Override the folder role: `{"role":"Sent"\|"Drafts"\|"Trash"\|"Junk"}` or `{"role":null}` to restore detection. Clears the same role from other folders of the account; `folderType` becomes the effective role and survives refresh. `400 invalid_folder_role`, `404` for another account's folder |
 | POST | `/api/folders/refresh` | bearer | Re-read the folder list from the server |
@@ -273,7 +274,7 @@ Identities are deleted with their account.
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | GET | `/api/conversations` | bearer | List threads, newest first (`page`, `pageSize` ≤ 100); `participants` = distinct sender names (display name, else address), alphabetical, max 10 |
-| GET | `/api/conversations/{id}` | bearer | Thread with its messages (`includeTrash`, `include=body`); `isFromMe` as in mail detail |
+| GET | `/api/conversations/{id}` | bearer | Thread with its messages (`includeTrash`, `include=body`); each message includes ordered `to`, `cc`, `bcc` recipient arrays (`id`, `type`, `address`, `displayName`, `sortOrder`), as in mail detail; `isFromMe` as in mail detail |
 
 ### Devices
 

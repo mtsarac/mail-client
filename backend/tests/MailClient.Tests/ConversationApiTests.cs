@@ -73,6 +73,62 @@ public sealed class ConversationApiTests(AcceptingApiFactory factory) : IClassFi
     }
 
     [Fact]
+    public async Task Detail_WithBody_ReturnsEachMessagesOrderedToCcBccRecipients()
+    {
+        var (client, accountId) = await ConnectAsync();
+        var convId = Guid.NewGuid();
+        await SeedConversationAsync(accountId, convId, "Recipients", mails:
+        [
+            new SeedMail("first@example.test", "First", DateTime.UtcNow.AddMinutes(-2), true, false),
+            new SeedMail("second@example.test", "Second", DateTime.UtcNow.AddMinutes(-1), true, false)
+        ]);
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var mails = await db.Mails.Where(mail => mail.ConversationId == convId).OrderBy(mail => mail.SentAt).ToListAsync();
+            void Add(Guid mailId, ParticipantType type, string address, string name, int order) => db.Participants.Add(new MailParticipant
+            {
+                Id = Guid.NewGuid(),
+                MailId = mailId,
+                Type = type,
+                Address = address,
+                NormalizedAddress = address,
+                DisplayName = name,
+                SortOrder = order
+            });
+            Add(mails[0].Id, ParticipantType.To, "later@example.test", "Later", 1);
+            Add(mails[0].Id, ParticipantType.To, "earlier@example.test", "Earlier", 0);
+            Add(mails[0].Id, ParticipantType.Cc, "copy@example.test", "Copy", 0);
+            Add(mails[0].Id, ParticipantType.Bcc, "hidden@example.test", "Hidden", 0);
+            Add(mails[1].Id, ParticipantType.To, "other@example.test", "Other", 0);
+            await db.SaveChangesAsync();
+        }
+
+        foreach (var suffix in new[] { "", "?include=body" })
+        {
+            var response = await client.GetAsync($"/api/conversations/{convId}{suffix}");
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            using var body = await response.Content.ReadFromJsonAsync<JsonDocument>();
+            Assert.NotNull(body);
+            var messages = body!.RootElement.GetProperty("messages");
+            Assert.Equal(2, messages.GetArrayLength());
+            var first = messages[0];
+            Assert.Equal(["earlier@example.test", "later@example.test"], first.GetProperty("to").EnumerateArray().Select(item => item.GetProperty("address").GetString()));
+            Assert.Equal("To", first.GetProperty("to")[0].GetProperty("type").GetString());
+            Assert.Equal("Earlier", first.GetProperty("to")[0].GetProperty("displayName").GetString());
+            Assert.Equal(0, first.GetProperty("to")[0].GetProperty("sortOrder").GetInt32());
+            Assert.Equal("copy@example.test", first.GetProperty("cc")[0].GetProperty("address").GetString());
+            Assert.Equal("hidden@example.test", first.GetProperty("bcc")[0].GetProperty("address").GetString());
+            var second = messages[1];
+            Assert.Equal("other@example.test", second.GetProperty("to")[0].GetProperty("address").GetString());
+            Assert.Empty(second.GetProperty("cc").EnumerateArray());
+            Assert.Empty(second.GetProperty("bcc").EnumerateArray());
+            if (suffix.Length > 0)
+                Assert.True(first.TryGetProperty("body", out _));
+        }
+    }
+
+    [Fact]
     public async Task Detail_UnknownId_Returns404()
     {
         var (client, _) = await ConnectAsync();

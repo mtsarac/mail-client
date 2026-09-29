@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using MailClient.Api.Auth;
 using MailClient.Api.OpenApi;
 using MailClient.Application;
@@ -17,9 +18,10 @@ namespace MailClient.Api.Endpoints;
 public sealed record RefreshFoldersResponse(int Folders);
 
 /// <summary>Documented shape of a folder item; the response may carry additional null/empty navigation fields.</summary>
-public sealed record MailFolderResponse(Guid Id, Guid MailAccountId, string Name, string FullName, MailClient.Domain.Enums.MailFolderType FolderType, uint UidValidity, bool IsSyncEnabled, bool IsAvailable, int UnreadCount = 0, int TotalCount = 0, string? Delimiter = null, Guid? ParentId = null, MailClient.Domain.Enums.MailFolderType? FolderRoleOverride = null);
+public sealed record MailFolderResponse(Guid Id, Guid MailAccountId, string Name, string FullName, MailClient.Domain.Enums.MailFolderType FolderType, uint UidValidity, bool IsSyncEnabled, bool IsAvailable, int UnreadCount = 0, int TotalCount = 0, string? Delimiter = null, Guid? ParentId = null, MailClient.Domain.Enums.MailFolderType? FolderRoleOverride = null, bool IsLocalParentOverride = false);
 public sealed record CreateFolderRequest(string? Name, Guid? ParentId);
 public sealed record RenameFolderRequest(string? Name);
+public sealed record MoveFolderRequest([property: JsonRequired] Guid? ParentId);
 public sealed record SetFolderRoleRequest(MailClient.Domain.Enums.MailFolderType? Role);
 
 public static class FolderEndpoints
@@ -49,6 +51,18 @@ public static class FolderEndpoints
             .WithDescription("Renames the folder in place on the mail server. Ids are kept; child folders get their new fullName. Only Custom folders can be renamed.")
             .Produces<MailFolderResponse>().ProblemCodes(400, "invalid_folder_name").ProblemCodes(404, "mail_folder_not_found")
             .ProblemCodes(409, "mail_folder_exists", "mail_account_needs_reauthentication").ProblemCodes(422, "mail_folder_protected", "mail_folder_rejected")
+            .ProblemCodes(502, "mail_provider_unavailable", "mail_server_unreachable", "mail_tls_failed");
+        api.MapPut("/folders/{id:guid}/parent", async (Guid id, MoveFolderRequest request, ICurrentMailAccount current, FolderManagementService folders, AppDbContext db, CorrelationContext correlation, CancellationToken ct) =>
+        {
+            var result = await folders.MoveAsync(current.MailAccountId, id, request.ParentId, correlation.CorrelationId, ct);
+            return result.Error is { } error
+                ? FolderProblem(error, correlation.CorrelationId)
+                : Results.Ok(await DescribeAsync(db, current.MailAccountId, id, ct));
+        }).WithName("MoveFolder").WithSummary("Move a custom folder beneath another folder or to the root")
+            .WithDescription("Supply {\"parentId\":null} for the personal namespace root, or an available same-account folder id (including standard folders). Attempts server-side IMAP RENAME first, preserving all ids, messages and descendants; if IMAP rejects nesting, stores a local-only parent instead without copying or deleting mail. isLocalParentOverride distinguishes the fallback.")
+            .Produces<MailFolderResponse>().ProblemCodes(404, "mail_folder_not_found")
+            .ProblemCodes(409, "mail_folder_cycle", "mail_folder_exists", "mail_account_needs_reauthentication")
+            .ProblemCodes(422, "mail_folder_protected", "mail_folder_rejected")
             .ProblemCodes(502, "mail_provider_unavailable", "mail_server_unreachable", "mail_tls_failed");
         api.MapDelete("/folders/{id:guid}", async (Guid id, ICurrentMailAccount current, FolderManagementService folders, CorrelationContext correlation, CancellationToken ct) =>
             await folders.DeleteAsync(current.MailAccountId, id, correlation.CorrelationId, ct) is { } error
@@ -130,7 +144,7 @@ public static class FolderEndpoints
         {
             var count = counts.GetValueOrDefault(x.Id);
             return new MailFolderResponse(x.Id, x.MailAccountId, x.Name, x.FullName, x.FolderType, x.UidValidity, x.IsSyncEnabled, x.IsAvailable,
-                count?.Unread ?? 0, count?.Total ?? 0, x.Delimiter, parents[x.Id], x.FolderRoleOverride);
+                count?.Unread ?? 0, count?.Total ?? 0, x.Delimiter, parents[x.Id], x.FolderRoleOverride, x.HasLocalParentOverride);
         }).ToList();
     }
 
@@ -142,7 +156,7 @@ public static class FolderEndpoints
         {
             "invalid_folder_name" => 400,
             "mail_folder_not_found" => 404,
-            "mail_folder_exists" or "mail_folder_has_children" or "mail_folder_not_empty" => 409,
+            "mail_folder_exists" or "mail_folder_has_children" or "mail_folder_not_empty" or "mail_folder_cycle" => 409,
             _ => 422
         },
         extensions: new Dictionary<string, object?> { ["code"] = code, ["correlationId"] = correlationId });

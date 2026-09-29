@@ -390,17 +390,22 @@ Hesabın tüm klasörlerini döner (dizi, sayfalama yok).
 
 `folderType` filtrelemede kullanışlı: `Inbox · Sent · Drafts · Trash · Junk · Archive · Custom`. `isAvailable: false` olan klasörler sunucudan silinmiş demektir, UI'da gizle.
 
-`delimiter` sunucunun IMAP hiyerarşi ayracıdır (`/`, `.` veya bilinmiyorsa `null`). `parentId` bir üst klasörün id'sidir, en üstte `null`. Üst klasör `Custom` olmayabilir (her şeyi `INBOX` altında tutan sunucular); yalnızca özel klasörlerden ağaç kuruyorsan listede olmayan üstü kök say. Bu alanlar eklenmeden önce keşfedilmiş klasörlerde `delimiter`, bir sonraki `POST /api/folders/refresh`'e kadar `null` kalır.
+`delimiter` sunucunun IMAP hiyerarşi ayracıdır (`/`, `.` veya bilinmiyorsa `null`). `parentId` ekranda gösterilecek üst klasörün id'sidir, en üstte `null`. Üst klasör `Custom` olmayabilir (her şeyi `INBOX` altında tutan sunucular). `isLocalParentOverride: true` ise sunucu hiyerarşi işlemini reddetmiştir; `fullName` gerçek uzak IMAP yolunda kalırken `parentId` yerel düzeni gösterir. Ağacı mutlaka `parentId` üzerinden kur; `fullName`'den türetme. Önceden keşfedilmiş klasörlerde `delimiter`, bir sonraki refresh'e kadar `null` kalabilir.
 
 ### `POST /api/folders`
 **Auth:** Bearer · **Gövde:** `{ "name": "Mobil", "parentId": "<guid>" | null }`
 
-Klasörü önce mail sunucusunda oluşturur (üst klasörün altında ya da kişisel ad alanının en üstünde), sonra önbelleğe ekler. `201 Created` + klasör nesnesi (`GET /api/folders` elemanıyla aynı şekil). Ad kırpılır; boş, 200 karakterden uzun, kontrol karakteri ya da ayraç içeren ad reddedilir.
+Klasörü önce mail sunucusunda üst klasörün altında (ya da kişisel ad alanının kökünde) oluşturur. Sunucu alt klasör oluşturmayı reddederse kökte oluşturmayı dener; yalnızca başarılıysa yerel `parentId` bağını saklar, yanıt `isLocalParentOverride: true` döner. Her iki uzaktan oluşturma başarısızsa önbellek değişmez. `201 Created` + klasör nesnesi (`GET /api/folders` elemanıyla aynı şekil). Ad kırpılır; boş, 200 karakterden uzun, kontrol karakteri ya da ayraç içeren ad reddedilir.
 
 ### `PATCH /api/folders/{id}`
 **Auth:** Bearer · **Gövde:** `{ "name": "Yeni ad" }`
 
 Yalnızca `Custom` klasörü aynı üst klasör içinde sunucuda yeniden adlandırır. Id'ler korunur; alt klasörlerin `fullName`'i değişir. `200 OK` + güncel klasör.
+
+### `PUT /api/folders/{id}/parent`
+**Auth:** Bearer · **Gövde:** `{ "parentId": "<guid>" | null }`
+
+`Custom` klasörü aynı hesaptaki kullanılabilir standart veya özel klasörün altına taşır; açık `null` kişisel ad alanının köküne taşır. Bu işlem adı değiştirmez (`PATCH` yalnızca ad değiştirir). Sunucu önce IMAP RENAME dener: başarılıysa klasör ve alt klasörlerin `fullName` alanlarını günceller. Sunucu bu isteği reddederse uzak klasörün ve maillerin yerini değiştirmeden yerel üst klasör seçimini saklar (`isLocalParentOverride: true`); `fullName` gerçek uzak IMAP yoludur. Refresh sonrasında da yerel seçim korunur. Her iki durumda klasör id'leri, mailler ve ekler korunur, `200 OK` + güncel klasör döner. Sunucuya bağlanılamazsa veya hedef sunucuda yoksa yerel düzen değiştirilmez. Kopyalama/silme yapılmaz.
 
 ### `DELETE /api/folders/{id}`
 **Auth:** Bearer
@@ -412,6 +417,7 @@ Yalnızca `Custom` klasörü sunucudan siler, `204`. Alt klasörü varsa ya da s
 | 400 | `invalid_folder_name` | Ad boş/çok uzun/ayraç içeriyor. |
 | 404 | `mail_folder_not_found` | Klasör ya da üst klasör yok / başka hesaba ait. |
 | 409 | `mail_folder_exists` | Aynı yerde aynı adda klasör var (büyük/küçük harf duyarsız). |
+| 409 | `mail_folder_cycle` | Klasör kendi altına veya kendi içine taşınamaz. |
 | 409 | `mail_folder_has_children` | Silmeden önce alt klasörleri sil. |
 | 409 | `mail_folder_not_empty` | Klasörde mail var. |
 | 422 | `mail_folder_protected` | Standart klasör (Gelen, Gönderilen…) değiştirilemez. |
@@ -961,7 +967,7 @@ Query: `page`, `pageSize` (üst sınır 100). `participants` konuşmadaki gönde
 ### `GET /api/conversations/{id}`
 **Auth:** Bearer
 
-Query: `includeTrash=false` Çöp ve Spam klasörlerindeki mesajları dışarıda bırakır (varsayılan: tüm klasörler). `include=body` her mesaja `bodyText` ve `body` (`GET /api/mails/{id}` ile aynı şekil) ekler — thread'i N istek yerine tek istekte çekmek için. `isFromMe`, `GET /api/mails/{id}` ile aynı kuralla hesaplanır.
+Query: `includeTrash=false` Çöp ve Spam klasörlerindeki mesajları dışarıda bırakır (varsayılan: tüm klasörler). `include=body` her mesaja `bodyText` ve `body` (`GET /api/mails/{id}` ile aynı şekil) ekler — thread'i N istek yerine tek istekte çekmek için. Her mesajda, `include` değerinden bağımsız olarak, `GET /api/mails/{id}` ile aynı `to`, `cc`, `bcc` alıcı dizileri bulunur (`id`, `type`, `address`, `displayName`, `sortOrder`; `sortOrder` sırasıyla). `isFromMe`, `GET /api/mails/{id}` ile aynı kuralla hesaplanır.
 
 ```json
 // 200 OK
@@ -970,6 +976,8 @@ Query: `includeTrash=false` Çöp ve Spam klasörlerindeki mesajları dışarıd
   "messages": [{
     "id": "…", "folderId": "…", "subject": "…",
     "fromAddress": "…", "fromDisplayName": "…",
+    "to": [{"id": "…", "type": "To", "address": "alici@example.com", "displayName": "Alıcı", "sortOrder": 0}],
+    "cc": [], "bcc": [],
     "sentAt": "…", "receivedAt": "…",
     "isRead": true, "hasAttachments": false,
     "isFromMe": false
