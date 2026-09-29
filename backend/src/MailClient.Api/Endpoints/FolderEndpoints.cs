@@ -17,9 +17,10 @@ namespace MailClient.Api.Endpoints;
 public sealed record RefreshFoldersResponse(int Folders);
 
 /// <summary>Documented shape of a folder item; the response may carry additional null/empty navigation fields.</summary>
-public sealed record MailFolderResponse(Guid Id, Guid MailAccountId, string Name, string FullName, MailClient.Domain.Enums.MailFolderType FolderType, uint UidValidity, bool IsSyncEnabled, bool IsAvailable, int UnreadCount = 0, int TotalCount = 0, string? Delimiter = null, Guid? ParentId = null);
+public sealed record MailFolderResponse(Guid Id, Guid MailAccountId, string Name, string FullName, MailClient.Domain.Enums.MailFolderType FolderType, uint UidValidity, bool IsSyncEnabled, bool IsAvailable, int UnreadCount = 0, int TotalCount = 0, string? Delimiter = null, Guid? ParentId = null, MailClient.Domain.Enums.MailFolderType? FolderRoleOverride = null);
 public sealed record CreateFolderRequest(string? Name, Guid? ParentId);
 public sealed record RenameFolderRequest(string? Name);
+public sealed record SetFolderRoleRequest(MailClient.Domain.Enums.MailFolderType? Role);
 
 public static class FolderEndpoints
 {
@@ -58,6 +59,30 @@ public static class FolderEndpoints
             .Produces(204).ProblemCodes(404, "mail_folder_not_found")
             .ProblemCodes(409, "mail_folder_has_children", "mail_folder_not_empty", "mail_account_needs_reauthentication").ProblemCodes(422, "mail_folder_protected", "mail_folder_rejected")
             .ProblemCodes(502, "mail_provider_unavailable", "mail_server_unreachable", "mail_tls_failed");
+        api.MapPut("/folders/{id:guid}/role", async (Guid id, SetFolderRoleRequest request, ICurrentMailAccount current, AppDbContext db, CancellationToken ct) =>
+        {
+            if (request.Role is { } requested && !MailClient.Domain.Entities.MailFolder.IsOverridableRole(requested))
+                return Results.Problem(statusCode: 400, extensions: new Dictionary<string, object?> { ["code"] = "invalid_folder_role" });
+            var folders = await db.MailFolders.Where(x => x.MailAccountId == current.MailAccountId).ToListAsync(ct);
+            var folder = folders.SingleOrDefault(x => x.Id == id);
+            if (folder is null) return Results.NotFound();
+            // The in-memory test store rejects transactions; relational stores clear and claim the role atomically.
+            await using var transaction = db.Database.ProviderName == "Microsoft.EntityFrameworkCore.InMemory" ? null : await db.Database.BeginTransactionAsync(ct);
+            if (request.Role is { } role)
+            {
+                foreach (var other in folders.Where(x => x.Id != id && x.FolderRoleOverride == role))
+                    other.FolderRoleOverride = null;
+                // Release the unique (account, role) slot before claiming it for this folder.
+                await db.SaveChangesAsync(ct);
+            }
+            folder.FolderRoleOverride = request.Role;
+            MailClient.Domain.Entities.MailFolder.ApplyRoles(folders);
+            await db.SaveChangesAsync(ct);
+            if (transaction is not null) await transaction.CommitAsync(ct);
+            return Results.Ok(await DescribeAsync(db, current.MailAccountId, id, ct));
+        }).WithName("SetFolderRole").WithSummary("Override a mailbox folder role")
+            .WithDescription("Assigns Sent, Drafts, Trash, or Junk to this account's folder. Assigning a role clears that role from any other folder in the same account; null restores automatic discovery.")
+            .Produces<MailFolderResponse>().Produces(404).ProblemCodes(400, "invalid_folder_role");
         api.MapPost("/folders/refresh", async (ICurrentMailAccount current, AccountConnectionService connector, AuditLogger audit, CorrelationContext correlation, CancellationToken ct) =>
         {
             var count = await connector.RefreshFoldersAsync(current.MailAccountId, ct);
@@ -105,7 +130,7 @@ public static class FolderEndpoints
         {
             var count = counts.GetValueOrDefault(x.Id);
             return new MailFolderResponse(x.Id, x.MailAccountId, x.Name, x.FullName, x.FolderType, x.UidValidity, x.IsSyncEnabled, x.IsAvailable,
-                count?.Unread ?? 0, count?.Total ?? 0, x.Delimiter, parents[x.Id]);
+                count?.Unread ?? 0, count?.Total ?? 0, x.Delimiter, parents[x.Id], x.FolderRoleOverride);
         }).ToList();
     }
 

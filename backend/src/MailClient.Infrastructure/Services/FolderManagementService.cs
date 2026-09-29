@@ -82,14 +82,16 @@ public sealed class FolderManagementService(
                 IsSyncEnabled = MailFolder.SyncedByDefault(account.FolderSyncScope, created.FolderType)
             };
             db.MailFolders.Add(row);
+            folders.Add(row);
         }
 
         row.Name = created.Name;
         row.FullName = created.FullName;
-        row.FolderType = created.FolderType;
+        row.DetectedFolderType = created.FolderType;
         row.UidValidity = created.UidValidity;
         row.Delimiter = created.Delimiter;
         row.IsAvailable = true;
+        MailFolder.ApplyRoles(folders);
         await db.SaveChangesAsync(cancellationToken);
         await audit.WriteAsync(accountId, AuditActions.MailFolderCreated, "MailFolder", row.Id.ToString(), null, correlationId, cancellationToken);
         return new(row, null);

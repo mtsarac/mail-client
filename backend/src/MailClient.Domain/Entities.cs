@@ -77,7 +77,12 @@ public sealed class MailFolder
     public string Name { get; set; } = "";
     public string FullName { get; set; } = "";
     public string? Delimiter { get; set; }
+    /// <summary>Effective role used by sync, send, drafts, trash and spam: the override, else the detected role.</summary>
     public MailFolderType FolderType { get; set; } = MailFolderType.Unknown;
+    /// <summary>Role reported by the mail server at the last folder discovery.</summary>
+    public MailFolderType DetectedFolderType { get; set; } = MailFolderType.Unknown;
+    /// <summary>User-chosen Sent/Drafts/Trash/Junk role; survives folder refresh. Null means automatic discovery.</summary>
+    public MailFolderType? FolderRoleOverride { get; set; }
     public uint UidValidity { get; set; }
     public bool IsSyncEnabled { get; set; } = true;
     public bool IsAvailable { get; set; } = true;
@@ -91,6 +96,22 @@ public sealed class MailFolder
         FolderSyncScope.SelectedFolders => false,
         _ => folderType is MailFolderType.Inbox or MailFolderType.Sent
     };
+
+    public static bool IsOverridableRole(MailFolderType role) =>
+        role is MailFolderType.Sent or MailFolderType.Drafts or MailFolderType.Trash or MailFolderType.Junk;
+
+    /// <summary>
+    /// Recomputes <see cref="FolderType"/> for every folder of one account: an override wins, and a folder whose
+    /// detected role was taken over by another folder's override becomes Custom so each role resolves to one folder.
+    /// </summary>
+    public static void ApplyRoles(IReadOnlyCollection<MailFolder> accountFolders)
+    {
+        var overridden = accountFolders.Where(folder => folder.FolderRoleOverride is not null)
+            .Select(folder => folder.FolderRoleOverride!.Value).ToHashSet();
+        foreach (var folder in accountFolders)
+            folder.FolderType = folder.FolderRoleOverride
+                ?? (overridden.Contains(folder.DetectedFolderType) ? MailFolderType.Custom : folder.DetectedFolderType);
+    }
 }
 public sealed class Mail
 {

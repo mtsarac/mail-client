@@ -293,6 +293,24 @@ Belirtilen cihazın oturumunu uzaktan kapatır (o cihazın refresh token'ı geç
 |---|---|---|
 | 404 | — | Oturum yok, zaten iptal edilmiş, ya da başka hesaba ait. |
 
+### `GET /api/account/quota`
+**Auth:** Bearer
+
+Bağlı hesabın INBOX depolama kotasını IMAP `QUOTA` (RFC 9208, `GETQUOTAROOT INBOX`) üzerinden canlı okur. Sunucu `STORAGE` değerini 1024 oktet birimiyle verir; API bunu bayta çevirir. Her istek yalnız token'daki hesabı sorgular.
+
+```json
+// 200 OK — destekleyen sunucu
+{ "available": true, "usedBytes": 10485760, "limitBytes": 16106127360 }
+// 200 OK — QUOTA yok, reddedildi ya da hesap şu an bağlanamıyor
+{ "available": false, "usedBytes": null, "limitBytes": null }
+```
+
+Sunucu hatası, yetkisiz kimlik bilgisi veya yeniden giriş bekleyen hesap hata yerine `available: false` döner; istemci depolama satırını gizler. Flutter tarafı hesap açılışında ve Ayarlar → hesap ekranı açıldığında kotayı yeniler; ağ hatasında son bilinen değeri korur.
+
+| Durum | code | Anlamı |
+|---|---|---|
+| 404 | — | Token'daki hesap bulunamadı. |
+
 ### `GET /api/account/sync-status`
 **Auth:** Bearer
 

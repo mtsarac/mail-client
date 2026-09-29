@@ -46,6 +46,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         model.Entity<MailSession>().HasOne(x => x.MailAccount).WithMany(x => x.Sessions).HasForeignKey(x => x.MailAccountId).OnDelete(DeleteBehavior.Cascade);
         model.Entity<MailSession>().HasIndex(x => x.RefreshTokenHash).IsUnique();
         model.Entity<MailFolder>().HasIndex(x => new { x.MailAccountId, x.FullName }).IsUnique();
+        model.Entity<MailFolder>().HasIndex(x => new { x.MailAccountId, x.FolderRoleOverride }).IsUnique();
         model.Entity<MailFolder>().Property(x => x.Delimiter).HasMaxLength(8);
         model.Entity<MailFolder>().HasOne(x => x.MailAccount).WithMany(x => x.Folders).HasForeignKey(x => x.MailAccountId).OnDelete(DeleteBehavior.Cascade);
         model.Entity<MailFolder>().HasOne(x => x.SyncState).WithOne(x => x.MailFolder).HasForeignKey<SyncState>(x => x.MailFolderId).OnDelete(DeleteBehavior.Cascade);
