@@ -77,6 +77,10 @@ public sealed class MailFolder
     public string Name { get; set; } = "";
     public string FullName { get; set; } = "";
     public string? Delimiter { get; set; }
+    /// <summary>Explicit local-only parent when the IMAP server cannot perform the requested hierarchy operation.</summary>
+    public Guid? LocalParentId { get; set; }
+    /// <summary>Distinguishes an explicit root override from no override (derive from the remote full name).</summary>
+    public bool HasLocalParentOverride { get; set; }
     /// <summary>Effective role used by sync, send, drafts, trash and spam: the override, else the detected role.</summary>
     public MailFolderType FolderType { get; set; } = MailFolderType.Unknown;
     /// <summary>Role reported by the mail server at the last folder discovery.</summary>

@@ -23,6 +23,7 @@ public interface IRemoteFolderManager
 {
     Task<RemoteFolderResult> CreateAsync(MailAccount account, string? parentFullName, string name, CancellationToken cancellationToken);
     Task<RemoteFolderResult> RenameAsync(MailAccount account, string fullName, string name, CancellationToken cancellationToken);
+    Task<RemoteFolderResult> MoveAsync(MailAccount account, string fullName, string? parentFullName, CancellationToken cancellationToken);
     Task<RemoteFolderResult> DeleteAsync(MailAccount account, string fullName, CancellationToken cancellationToken);
 }
 
@@ -35,6 +36,9 @@ public sealed class MailKitRemoteFolderManager(
 
     public Task<RemoteFolderResult> RenameAsync(MailAccount account, string fullName, string name, CancellationToken cancellationToken) =>
         RunAsync(account, "RenameFolder", (imap, ct) => RenameAsync(imap, fullName, name, ct), cancellationToken);
+
+    public Task<RemoteFolderResult> MoveAsync(MailAccount account, string fullName, string? parentFullName, CancellationToken cancellationToken) =>
+        RunAsync(account, "MoveFolder", (imap, ct) => MoveAsync(imap, fullName, parentFullName, ct), cancellationToken);
 
     public Task<RemoteFolderResult> DeleteAsync(MailAccount account, string fullName, CancellationToken cancellationToken) =>
         RunAsync(account, "DeleteFolder", (imap, ct) => DeleteAsync(imap, fullName, ct), cancellationToken);
@@ -93,6 +97,46 @@ public sealed class MailKitRemoteFolderManager(
         try
         {
             await folder.RenameAsync(parent, name, cancellationToken);
+        }
+        catch (ImapCommandException)
+        {
+            return new(RemoteFolderOutcome.Rejected);
+        }
+
+        return new(RemoteFolderOutcome.Succeeded, DiscoveredMailFolder.From(folder, folder.UidValidity));
+    }
+
+    internal static async Task<RemoteFolderResult> MoveAsync(ImapClient imap, string fullName, string? parentFullName, CancellationToken cancellationToken)
+    {
+        if (await FindAsync(imap, fullName, cancellationToken) is not { } folder)
+            return new(RemoteFolderOutcome.NotFound);
+        IMailFolder parent;
+        if (parentFullName is null)
+        {
+            if (imap.PersonalNamespaces.Count == 0)
+                return new(RemoteFolderOutcome.Rejected);
+            parent = imap.GetFolder(imap.PersonalNamespaces[0]);
+        }
+        else if (await FindAsync(imap, parentFullName, cancellationToken) is { } found)
+        {
+            parent = found;
+        }
+        else
+        {
+            return new(RemoteFolderOutcome.NotFound);
+        }
+
+        if (folder.DirectorySeparator == '\0' || parent.DirectorySeparator != folder.DirectorySeparator
+            || string.Equals(parent.FullName, folder.FullName, StringComparison.OrdinalIgnoreCase)
+            || parent.FullName.StartsWith(folder.FullName + folder.DirectorySeparator, StringComparison.OrdinalIgnoreCase))
+            return new(RemoteFolderOutcome.Rejected);
+        if (await SiblingExistsAsync(parent, folder.Name, folder.FullName, cancellationToken))
+            return new(RemoteFolderOutcome.AlreadyExists);
+
+        try
+        {
+            // IMAP RENAME is a server-side operation: never copy/create/delete message trees as a fallback.
+            await folder.RenameAsync(parent, folder.Name, cancellationToken);
         }
         catch (ImapCommandException)
         {

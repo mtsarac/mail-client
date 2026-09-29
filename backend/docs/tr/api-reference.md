@@ -80,9 +80,10 @@ uyanmaz.
 
 | Metot | Yol | Yetki | Açıklama |
 |---|---|---|---|
-| GET | `/api/folders` | bearer | Önbellekteki klasörleri listeler (`delimiter` ve `parentId` ile) |
-| POST | `/api/folders` | bearer | Sunucuda klasör oluşturur (`name`, isteğe bağlı `parentId`) |
+| GET | `/api/folders` | bearer | Önbellekteki klasörleri `delimiter`, geçerli `parentId` ve yerel yedek hiyerarşiyi gösteren `isLocalParentOverride` ile listeler. `fullName` her zaman gerçek IMAP adıdır. |
+| POST | `/api/folders` | bearer | Sunucuda klasör oluşturur (`name`, isteğe bağlı `parentId`); sunucu alt klasör oluşturmayı reddederse kökte oluşturup ancak başarılı olduğunda yerel üst klasöre bağlar |
 | PATCH | `/api/folders/{id}` | bearer | Özel klasörü sunucuda yeniden adlandırır; id'ler korunur |
+| PUT | `/api/folders/{id}/parent` | bearer | `Custom` klasörü `{"parentId":"<guid>"}` ile aynı hesaptaki kullanılabilir standart/özel klasörün altına, `{"parentId":null}` ile köke taşır. Önce IMAP RENAME dener; sunucu reddederse gerçek uzaktaki klasör ve mailler olduğu yerde kalır, yerel üst klasör saklanır (`isLocalParentOverride: true`). Refresh bu seçimi korur; kopyalama/silme yapılmaz. Döngü 409 `mail_folder_cycle`, ad çakışması 409 `mail_folder_exists`, bulunmayan/başka hesaptaki üst klasör 404 `mail_folder_not_found`, standart klasörü taşıma 422 `mail_folder_protected` döner. PATCH yalnızca yeniden adlandırır. |
 | DELETE | `/api/folders/{id}` | bearer | Alt klasörü olmayan boş özel klasörü siler |
 | PUT | `/api/folders/{id}/role` | bearer | Klasör rolünü elle atar: `{"role":"Sent"\|"Drafts"\|"Trash"\|"Junk"}`, otomatik tespite dönmek için `{"role":null}`. Aynı hesapta aynı rolü taşıyan diğer atamayı kaldırır; `folderType` etkin rolü döner ve refresh sonrası korunur. `400 invalid_folder_role`, başka hesabın klasörü için `404` |
 | POST | `/api/folders/refresh` | bearer | Klasör listesini sunucudan yeniden okur |

@@ -34,11 +34,14 @@ public static class MailFolderHierarchy
         var byName = new Dictionary<string, Guid>(StringComparer.OrdinalIgnoreCase);
         foreach (var folder in folders.Where(folder => folder.IsAvailable))
             byName.TryAdd(folder.FullName, folder.Id);
+        var byId = folders.Where(folder => folder.IsAvailable).Select(folder => folder.Id).ToHashSet();
         return folders.ToDictionary(
             folder => folder.Id,
-            folder => ParentFullName(folder.FullName, folder.Delimiter) is { } parent && byName.TryGetValue(parent, out var id)
-                ? id
-                : (Guid?)null);
+            folder => folder.HasLocalParentOverride
+                ? folder.LocalParentId is { } localId && byId.Contains(localId) ? localId : (Guid?)null
+                : ParentFullName(folder.FullName, folder.Delimiter) is { } parent && byName.TryGetValue(parent, out var id)
+                    ? id
+                    : (Guid?)null);
     }
 }
 
@@ -67,6 +70,9 @@ public sealed class FolderManagementService(
 
         var account = await db.MailAccounts.SingleAsync(item => item.Id == accountId, cancellationToken);
         var result = await remote.CreateAsync(account, parent?.FullName, normalized, cancellationToken);
+        var localFallback = parent is not null && result.Outcome == RemoteFolderOutcome.Rejected;
+        if (localFallback)
+            result = await remote.CreateAsync(account, null, normalized, cancellationToken);
         if (Failure(result) is { } failure)
             return FolderMutationResult.Failed(failure);
 
@@ -91,6 +97,8 @@ public sealed class FolderManagementService(
         row.UidValidity = created.UidValidity;
         row.Delimiter = created.Delimiter;
         row.IsAvailable = true;
+        row.HasLocalParentOverride = localFallback;
+        row.LocalParentId = localFallback ? parentId : null;
         MailFolder.ApplyRoles(folders);
         await db.SaveChangesAsync(cancellationToken);
         await audit.WriteAsync(accountId, AuditActions.MailFolderCreated, "MailFolder", row.Id.ToString(), null, correlationId, cancellationToken);
@@ -137,6 +145,92 @@ public sealed class FolderManagementService(
         return new(folder, null);
     }
 
+    public async Task<FolderMutationResult> MoveAsync(Guid accountId, Guid folderId, Guid? parentId, string correlationId, CancellationToken cancellationToken)
+    {
+        var folders = await db.MailFolders.Where(item => item.MailAccountId == accountId).ToListAsync(cancellationToken);
+        var folder = folders.SingleOrDefault(item => item.Id == folderId && item.IsAvailable);
+        if (folder is null)
+            return FolderMutationResult.Failed("mail_folder_not_found");
+        if (folder.FolderType != MailFolderType.Custom)
+            return FolderMutationResult.Failed("mail_folder_protected");
+
+        MailFolder? parent = null;
+        if (parentId is { } id)
+        {
+            parent = folders.SingleOrDefault(item => item.Id == id && item.IsAvailable);
+            if (parent is null)
+                return FolderMutationResult.Failed("mail_folder_not_found");
+        }
+
+        var parents = MailFolderHierarchy.ParentIds(folders);
+        // A local-only parent still owes the server a real RENAME, so a repeated
+        // request must retry the remote move instead of short-circuiting.
+        if (!folder.HasLocalParentOverride && parents[folder.Id] == parentId)
+            return new(folder, null);
+        for (var ancestor = parentId; ancestor is { } ancestorId; ancestor = parents[ancestorId])
+        {
+            if (ancestorId == folder.Id)
+                return FolderMutationResult.Failed("mail_folder_cycle");
+        }
+        if (parent is not null && (parent.Id == folder.Id || MailFolderHierarchy.IsDescendant(parent, folder)))
+            return FolderMutationResult.Failed("mail_folder_cycle");
+
+        var actualParent = MailFolderHierarchy.ParentFullName(folder.FullName, folder.Delimiter);
+        if (string.Equals(actualParent, parent?.FullName, StringComparison.OrdinalIgnoreCase))
+        {
+            folder.HasLocalParentOverride = false;
+            folder.LocalParentId = null;
+            await db.SaveChangesAsync(cancellationToken);
+            return new(folder, null);
+        }
+
+        var descendants = folders.Where(item => MailFolderHierarchy.IsDescendant(item, folder)).ToList();
+        var moving = descendants.Select(item => item.Id).Append(folder.Id).ToHashSet();
+        var oldFullName = folder.FullName;
+        var expectedFullName = parent is null ? folder.Name : parent.FullName + folder.Delimiter + folder.Name;
+        if (folders.Any(item => !moving.Contains(item.Id) &&
+            (string.Equals(item.FullName, expectedFullName, StringComparison.OrdinalIgnoreCase)
+                || descendants.Any(child => string.Equals(item.FullName, expectedFullName + child.FullName[oldFullName.Length..], StringComparison.OrdinalIgnoreCase)))))
+            return FolderMutationResult.Failed("mail_folder_exists");
+
+        // If IMAP cannot represent the requested tree, retain the real remote path and
+        // store only its presentation parent. Neither mail nor remote folders are migrated.
+        var canRename = !string.IsNullOrEmpty(folder.Delimiter) && (parent is null || parent.Delimiter == folder.Delimiter);
+        RemoteFolderResult? result = null;
+        if (canRename)
+        {
+            var account = await db.MailAccounts.SingleAsync(item => item.Id == accountId, cancellationToken);
+            result = await remote.MoveAsync(account, oldFullName, parent?.FullName, cancellationToken);
+            if (result.Outcome != RemoteFolderOutcome.Rejected && Failure(result) is { } failure)
+                return FolderMutationResult.Failed(failure);
+        }
+        if (result is null || result.Outcome == RemoteFolderOutcome.Rejected)
+        {
+            folder.HasLocalParentOverride = true;
+            folder.LocalParentId = parentId;
+            await db.SaveChangesAsync(cancellationToken);
+            await audit.WriteAsync(accountId, AuditActions.MailFolderRenamed, "MailFolder", folder.Id.ToString(), null, correlationId, cancellationToken);
+            return new(folder, null);
+        }
+
+        var newFullName = result.Folder!.FullName;
+        // Never evict an existing cached folder or its messages when reconciling a remote rename.
+        if (folders.Any(item => !moving.Contains(item.Id) &&
+            (string.Equals(item.FullName, newFullName, StringComparison.OrdinalIgnoreCase)
+                || descendants.Any(child => string.Equals(item.FullName, newFullName + child.FullName[oldFullName.Length..], StringComparison.OrdinalIgnoreCase)))))
+            return FolderMutationResult.Failed("mail_folder_exists");
+
+        foreach (var child in descendants)
+            child.FullName = newFullName + child.FullName[oldFullName.Length..];
+        folder.FullName = newFullName;
+        folder.Name = result.Folder.Name;
+        folder.HasLocalParentOverride = false;
+        folder.LocalParentId = null;
+        await db.SaveChangesAsync(cancellationToken);
+        await audit.WriteAsync(accountId, AuditActions.MailFolderRenamed, "MailFolder", folder.Id.ToString(), null, correlationId, cancellationToken);
+        return new(folder, null);
+    }
+
     public async Task<string?> DeleteAsync(Guid accountId, Guid folderId, string correlationId, CancellationToken cancellationToken)
     {
         var folders = await db.MailFolders.Where(folder => folder.MailAccountId == accountId).ToListAsync(cancellationToken);
@@ -145,7 +239,8 @@ public sealed class FolderManagementService(
             return "mail_folder_not_found";
         if (folder.FolderType != MailFolderType.Custom)
             return "mail_folder_protected";
-        if (folders.Any(item => item.IsAvailable && MailFolderHierarchy.IsDescendant(item, folder)))
+        var parents = MailFolderHierarchy.ParentIds(folders);
+        if (folders.Any(item => item.IsAvailable && parents[item.Id] == folder.Id))
             return "mail_folder_has_children";
 
         var account = await db.MailAccounts.SingleAsync(item => item.Id == accountId, cancellationToken);

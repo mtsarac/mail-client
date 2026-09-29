@@ -38,6 +38,14 @@ public sealed class FakeRemoteFolderManager : IRemoteFolderManager
         return Task.FromResult(Result(new DiscoveredMailFolder(name, renamed, MailFolderType.Custom, 7, "/")));
     }
 
+    public Task<RemoteFolderResult> MoveAsync(MailAccount account, string fullName, string? parentFullName, CancellationToken cancellationToken)
+    {
+        Calls.Add($"move {account.Id} {fullName} {parentFullName}");
+        var name = fullName[(fullName.LastIndexOf('/') + 1)..];
+        var moved = parentFullName is null ? name : $"{parentFullName}/{name}";
+        return Task.FromResult(Result(new DiscoveredMailFolder(name, moved, MailFolderType.Custom, 7, "/")));
+    }
+
     public Task<RemoteFolderResult> DeleteAsync(MailAccount account, string fullName, CancellationToken cancellationToken)
     {
         Calls.Add($"delete {account.Id} {fullName}");
@@ -105,6 +113,94 @@ public sealed class FolderManagementApiTests(FolderManagementApiFactory factory)
         await ExpectProblemAsync(await client.DeleteAsync($"/api/folders/{rootId}"), HttpStatusCode.Conflict, "mail_folder_has_children");
         Assert.DoesNotContain(factory.Remote.Calls, call => call.Contains(otherAccountId.ToString()));
         Assert.DoesNotContain(factory.Remote.Calls, call => call.StartsWith($"delete {accountId}", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Move_ReparentsRemoteFolders_KeepsCachedMailAndDescendantIds_AndRejectsUnsafeRequests()
+    {
+        var (accountId, inbox, custom) = await SeedAsync();
+        var (_, otherInbox, _) = await SeedAsync();
+        var client = Client(accountId);
+        var child = await ReadFolderAsync(await client.PostAsJsonAsync("/api/folders", new { name = "Child", parentId = custom }), HttpStatusCode.Created);
+        var childId = child.GetProperty("id").GetGuid();
+        var mailId = Guid.NewGuid();
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            db.Mails.Add(new Domain.Entities.Mail { Id = mailId, MailAccountId = accountId, MailFolderId = childId, Uid = 5 });
+            await db.SaveChangesAsync();
+        }
+
+        await ExpectProblemAsync(await client.PutAsJsonAsync($"/api/folders/{custom}/parent", new { parentId = childId }), HttpStatusCode.Conflict, "mail_folder_cycle");
+        await ExpectProblemAsync(await client.PutAsJsonAsync($"/api/folders/{custom}/parent", new { parentId = custom }), HttpStatusCode.Conflict, "mail_folder_cycle");
+        await ExpectProblemAsync(await client.PutAsJsonAsync($"/api/folders/{custom}/parent", new { parentId = otherInbox }), HttpStatusCode.NotFound, "mail_folder_not_found");
+        await ExpectProblemAsync(await client.PutAsJsonAsync($"/api/folders/{inbox}/parent", new { parentId = (Guid?)null }), HttpStatusCode.UnprocessableEntity, "mail_folder_protected");
+        Assert.DoesNotContain(factory.Remote.Calls, call => call.StartsWith($"move {accountId}", StringComparison.Ordinal));
+
+        factory.Remote.NextOutcome = RemoteFolderOutcome.Rejected;
+        var virtualMove = await ReadFolderAsync(await client.PutAsJsonAsync($"/api/folders/{custom}/parent", new { parentId = inbox }), HttpStatusCode.OK);
+        Assert.Equal("Eski", virtualMove.GetProperty("fullName").GetString());
+        Assert.Equal(inbox, virtualMove.GetProperty("parentId").GetGuid());
+        Assert.True(virtualMove.GetProperty("isLocalParentOverride").GetBoolean());
+        var original = (await client.GetFromJsonAsync<JsonElement>("/api/folders")).EnumerateArray().ToDictionary(f => f.GetProperty("id").GetGuid());
+        Assert.Equal("Eski", original[custom].GetProperty("fullName").GetString());
+        Assert.Equal("Eski/Child", original[childId].GetProperty("fullName").GetString());
+        Assert.Equal(inbox, original[custom].GetProperty("parentId").GetGuid());
+
+        var moved = await ReadFolderAsync(await client.PutAsJsonAsync($"/api/folders/{custom}/parent", new { parentId = inbox }), HttpStatusCode.OK);
+        Assert.Equal("INBOX/Eski", moved.GetProperty("fullName").GetString());
+        Assert.Equal(inbox, moved.GetProperty("parentId").GetGuid());
+        var nested = (await client.GetFromJsonAsync<JsonElement>("/api/folders")).EnumerateArray().Single(f => f.GetProperty("id").GetGuid() == childId);
+        Assert.Equal("INBOX/Eski/Child", nested.GetProperty("fullName").GetString());
+        Assert.Equal(custom, nested.GetProperty("parentId").GetGuid());
+        Assert.Contains(factory.Remote.Calls, call => call == $"move {accountId} Eski INBOX");
+        var rooted = await ReadFolderAsync(await client.PutAsJsonAsync($"/api/folders/{custom}/parent", new { parentId = (Guid?)null }), HttpStatusCode.OK);
+        Assert.Equal("Eski", rooted.GetProperty("fullName").GetString());
+        Assert.Equal(JsonValueKind.Null, rooted.GetProperty("parentId").ValueKind);
+        using var verify = factory.Services.CreateScope();
+        var dbVerify = verify.ServiceProvider.GetRequiredService<AppDbContext>();
+        Assert.Equal(childId, dbVerify.Mails.Single(mail => mail.Id == mailId).MailFolderId);
+        Assert.Equal("Eski/Child", dbVerify.MailFolders.Single(folder => folder.Id == childId).FullName);
+    }
+
+    [Fact]
+    public async Task Move_CollisionAndUnknownHierarchyLeaveRemoteAndCachedFoldersUntouched()
+    {
+        var (accountId, inbox, custom) = await SeedAsync();
+        var client = Client(accountId);
+        var existing = Guid.NewGuid();
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            db.MailFolders.Add(new Domain.Entities.MailFolder
+            {
+                Id = existing,
+                MailAccountId = accountId,
+                Name = "Eski",
+                FullName = "INBOX/Eski",
+                Delimiter = "/",
+                FolderType = MailFolderType.Custom,
+                DetectedFolderType = MailFolderType.Custom,
+                IsAvailable = true
+            });
+            await db.SaveChangesAsync();
+        }
+        var beforeCalls = factory.Remote.Calls.Count;
+        await ExpectProblemAsync(await client.PutAsJsonAsync($"/api/folders/{custom}/parent", new { parentId = inbox }), HttpStatusCode.Conflict, "mail_folder_exists");
+        Assert.Equal(beforeCalls, factory.Remote.Calls.Count);
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            Assert.Equal("Eski", db.MailFolders.Single(folder => folder.Id == custom).FullName);
+            Assert.Equal("INBOX/Eski", db.MailFolders.Single(folder => folder.Id == existing).FullName);
+            db.MailFolders.Single(folder => folder.Id == custom).Delimiter = null;
+            await db.SaveChangesAsync();
+        }
+        var virtualRoot = await ReadFolderAsync(await client.PutAsJsonAsync($"/api/folders/{custom}/parent", new { parentId = inbox }), HttpStatusCode.OK);
+        Assert.Equal("Eski", virtualRoot.GetProperty("fullName").GetString());
+        Assert.Equal(inbox, virtualRoot.GetProperty("parentId").GetGuid());
+        Assert.True(virtualRoot.GetProperty("isLocalParentOverride").GetBoolean());
+        Assert.Equal(beforeCalls, factory.Remote.Calls.Count);
     }
 
     [Fact]

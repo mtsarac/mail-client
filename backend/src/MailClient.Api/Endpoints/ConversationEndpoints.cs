@@ -3,6 +3,7 @@ using MailClient.Application.Accounts;
 using MailClient.Application.Conversations;
 using MailClient.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using MailClient.Domain.Enums;
 
 namespace MailClient.Api.Endpoints;
 
@@ -88,9 +89,29 @@ public static class ConversationEndpoints
                             || folder.FolderType == MailClient.Domain.Enums.MailFolderType.Drafts))
                         || mail.FromAddress.ToUpper() == self))
                 .ToListAsync(ct);
+            var ids = messages.Select(message => message.Id).ToList();
+            var participants = (await db.Participants.AsNoTracking()
+                    .Where(participant => ids.Contains(participant.MailId)
+                        && (participant.Type == ParticipantType.To || participant.Type == ParticipantType.Cc || participant.Type == ParticipantType.Bcc))
+                    .Select(participant => new { participant.MailId, participant.Id, participant.Type, participant.Address, participant.DisplayName, participant.SortOrder })
+                    .ToListAsync(ct))
+                .ToLookup(participant => participant.MailId);
+            messages = messages.Select(message => message with
+            {
+                To = Recipients(message.Id, ParticipantType.To),
+                Cc = Recipients(message.Id, ParticipantType.Cc),
+                Bcc = Recipients(message.Id, ParticipantType.Bcc)
+            }).ToList();
+
+            List<MailClient.Application.Mail.MailParticipantResponse> Recipients(Guid mailId, ParticipantType type) =>
+                participants[mailId]
+                    .Where(participant => participant.Type == type)
+                    .OrderBy(participant => participant.SortOrder)
+                    .Select(participant => new MailClient.Application.Mail.MailParticipantResponse(
+                        participant.Id, participant.Type.ToString(), participant.Address, participant.DisplayName, participant.SortOrder))
+                    .ToList();
             if (include == "body")
             {
-                var ids = messages.Select(m => m.Id).ToList();
                 var entities = await db.Mails.AsNoTracking().Include(m => m.Attachments)
                     .Where(m => ids.Contains(m.Id)).ToDictionaryAsync(m => m.Id, ct);
                 messages = messages.Select(m =>

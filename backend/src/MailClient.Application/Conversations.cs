@@ -24,7 +24,12 @@ public sealed record ConversationMessageResponse(
     bool HasAttachments,
     bool IsFromMe = false,
     string? BodyText = null,
-    MailClient.Application.Mail.MailBodyResponse? Body = null);
+    MailClient.Application.Mail.MailBodyResponse? Body = null)
+{
+    public IReadOnlyList<MailClient.Application.Mail.MailParticipantResponse> To { get; init; } = [];
+    public IReadOnlyList<MailClient.Application.Mail.MailParticipantResponse> Cc { get; init; } = [];
+    public IReadOnlyList<MailClient.Application.Mail.MailParticipantResponse> Bcc { get; init; } = [];
+}
 
 public sealed record ConversationDetailResponse(
     Guid Id,

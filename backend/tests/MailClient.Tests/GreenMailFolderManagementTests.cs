@@ -99,8 +99,8 @@ public sealed class GreenMailFolderManagementTests(GreenMailFixture greenmail) :
 
         using (var imap = await ConnectAsync())
         {
-            var destination = await imap.GetFolderAsync(child.Folder.FullName);
-            await destination.AppendAsync(new MimeMessage
+            var seedTarget = await imap.GetFolderAsync(child.Folder.FullName);
+            await seedTarget.AppendAsync(new MimeMessage
             {
                 From = { new MailboxAddress("Sender", "sender@example.test") },
                 To = { new MailboxAddress("Recipient", greenmail.Username) },
@@ -109,14 +109,30 @@ public sealed class GreenMailFolderManagementTests(GreenMailFixture greenmail) :
             });
             await imap.DisconnectAsync(true);
         }
+        var destination = await service.CreateAsync(accountId, null, rootName + "-destination", "test", CancellationToken.None);
+        Assert.Null(destination.Error);
+        var moved = await service.MoveAsync(accountId, root.Folder.Id, destination.Folder!.Id, "test", CancellationToken.None);
+        Assert.Null(moved.Error);
+        Assert.Equal(root.Folder.Id, moved.Folder!.Id);
+        Assert.Equal(destination.Folder.Id, MailFolderHierarchy.ParentIds(await db.MailFolders.ToListAsync())[root.Folder.Id]);
+        Assert.Equal(root.Folder.Id, MailFolderHierarchy.ParentIds(await db.MailFolders.ToListAsync())[child.Folder.Id]);
+        using (var imap = await ConnectAsync())
+        {
+            var remoteChild = await imap.GetFolderAsync(child.Folder.FullName);
+            await remoteChild.StatusAsync(StatusItems.Count);
+            Assert.Equal(1, remoteChild.Count);
+            await imap.DisconnectAsync(true);
+        }
+        Assert.Null((await service.MoveAsync(accountId, root.Folder.Id, null, "test", CancellationToken.None)).Error);
+        Assert.Null(await service.DeleteAsync(accountId, destination.Folder.Id, "test", CancellationToken.None));
         Assert.Equal("mail_folder_not_empty", await service.DeleteAsync(accountId, child.Folder.Id, "test", CancellationToken.None));
         using (var imap = await ConnectAsync())
         {
-            var destination = await imap.GetFolderAsync(child.Folder.FullName);
-            await destination.OpenAsync(FolderAccess.ReadWrite);
-            var uids = await destination.SearchAsync(MailKit.Search.SearchQuery.All);
-            await destination.AddFlagsAsync(uids, MessageFlags.Deleted, true);
-            await destination.CloseAsync(true);
+            var cleanupTarget = await imap.GetFolderAsync(child.Folder.FullName);
+            await cleanupTarget.OpenAsync(FolderAccess.ReadWrite);
+            var uids = await cleanupTarget.SearchAsync(MailKit.Search.SearchQuery.All);
+            await cleanupTarget.AddFlagsAsync(uids, MessageFlags.Deleted, true);
+            await cleanupTarget.CloseAsync(true);
             await imap.DisconnectAsync(true);
         }
         Assert.Null(await service.DeleteAsync(accountId, child.Folder.Id, "test", CancellationToken.None));
@@ -143,6 +159,9 @@ public sealed class GreenMailFolderManagementTests(GreenMailFixture greenmail) :
 
         public Task<RemoteFolderResult> RenameAsync(MailAccount account, string fullName, string name, CancellationToken ct) =>
             RunAsync((imap, token) => MailKitRemoteFolderManager.RenameAsync(imap, fullName, name, token), ct);
+
+        public Task<RemoteFolderResult> MoveAsync(MailAccount account, string fullName, string? parentFullName, CancellationToken ct) =>
+            RunAsync((imap, token) => MailKitRemoteFolderManager.MoveAsync(imap, fullName, parentFullName, token), ct);
 
         public Task<RemoteFolderResult> DeleteAsync(MailAccount account, string fullName, CancellationToken ct) =>
             RunAsync((imap, token) => MailKitRemoteFolderManager.DeleteAsync(imap, fullName, token), ct);
