@@ -205,6 +205,8 @@ builder.Services.AddScoped<ISyncLockProvider>(sp =>
 if (!builder.Environment.IsEnvironment("Test"))
 {
     builder.Services.AddHostedService<MailSyncService>();
+    builder.Services.AddSingleton(builder.Configuration.GetSection("Sync:Idle").Get<ImapIdleOptions>() ?? new ImapIdleOptions());
+    builder.Services.AddHostedService<ImapIdleWatcher>();
     builder.Services.AddHostedService<AllowlistReconciliationService>();
     builder.Services.AddHostedService<ScheduledSendDispatcher>();
     builder.Services.AddHostedService<SnoozeWakeupService>();
