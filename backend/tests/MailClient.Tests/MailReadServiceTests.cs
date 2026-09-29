@@ -5,6 +5,7 @@ using MailClient.Infrastructure.Email;
 using MailClient.Infrastructure.Mail;
 using MailClient.Infrastructure.Observability;
 using MailClient.Infrastructure.Persistence;
+using MailClient.Infrastructure.Security;
 using MailClient.Infrastructure.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -24,6 +25,27 @@ public sealed class MailReadServiceTests
 
         Assert.Null(await service.GetAsync(Guid.NewGuid(), mail.Id, CancellationToken.None));
         Assert.NotNull(await service.GetAsync(mail.MailAccountId, mail.Id, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task GetAsync_DecryptsStoredHtmlBody_AndStillReadsLegacyPlaintext()
+    {
+        var cipher = new MailContentCipher(new Microsoft.AspNetCore.DataProtection.EphemeralDataProtectionProvider());
+        await using var db = CreateDb();
+        var (accountId, _, encryptedId) = await SeedMailAsync(db, isRead: true);
+        var encrypted = await db.Mails.SingleAsync(x => x.Id == encryptedId);
+        encrypted.BodyHtml = cipher.Protect("<p>hello encrypted</p>");
+        var legacy = new Domain.Entities.Mail { Id = Guid.NewGuid(), MailAccountId = accountId, MailFolderId = encrypted.MailFolderId, Uid = 99, BodyHtml = "<p>hello legacy</p>" };
+        db.Mails.Add(legacy);
+        await db.SaveChangesAsync();
+        var service = new MailReadService(db, new FakeReadFolder(new FakeRemoteMailFolder(7, new())), new AuditLogger(db), NullLogger<MailReadService>.Instance, cipher);
+
+        var first = await service.GetAsync(accountId, encryptedId, CancellationToken.None);
+        var second = await service.GetAsync(accountId, legacy.Id, CancellationToken.None);
+
+        Assert.Contains("hello encrypted", first!.Body.Html);
+        Assert.DoesNotContain(MailContentCipher.Prefix, first.Body.Html);
+        Assert.Contains("hello legacy", second!.Body.Html);
     }
 
     [Theory]

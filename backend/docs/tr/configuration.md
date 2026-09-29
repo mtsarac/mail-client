@@ -30,6 +30,7 @@ yüklemez (bkz. [Geliştirme](development.md#yerelde-çalıştırma)).
 | `Storage__Provider` | `Local` (`<content root>/data/attachments`, Docker'da `/app/data/attachments`) veya `S3` | `Local` |
 | `Storage__S3__Bucket/Region/ServiceUrl/Prefix/ForcePathStyle` | S3 hedefi; anahtar çifti boşsa ortamdaki AWS kimlik zinciri kullanılır | — |
 | `Storage__S3__AccessKeyId/SecretAccessKey` | Opsiyonel açık S3 kimlik bilgisi | yok |
+| `Storage__EncryptMailBodies` | Saklanan HTML gövdelerini (`Mails.BodyHtml`) Data Protection anahtar halkasıyla şifreler; mevcut satırlar açılışta bir kez yeniden yazılır. `Subject` ve `BodyText`, tam metin arama ve liste önizlemeleri PostgreSQL tarafından kullanıldığı için okunabilir kalır; bunları veritabanı veya disk şifrelemesiyle koruyun. Anahtar halkası kaybolursa şifreli HTML gövdeleri okunamaz (yeniden senkronize edilene kadar boş görünür). | `true` |
 | `Firebase__Enabled`, `Firebase__ProjectId`, `Firebase__CredentialsPath` | Push bildirimleri (FCM); `Enabled=false`/tanımsız no-op sender kullanır. Kurulum için bkz. [Production](production.md#5-firebase-cloud-messaging-opsiyonel) / [Geliştirme](development.md#firebase-cloud-messaging) | kapalı |
 | `OAuth__Google__ClientId/ClientSecret/RedirectUris__N` | Google OAuth; tanımsızsa kapalı | yok |
 | `OAuth__Microsoft__ClientId/ClientSecret/Tenant/RedirectUris__N` | Microsoft OAuth | tenant `organizations` |

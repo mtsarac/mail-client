@@ -94,6 +94,9 @@ builder.Services.AddSingleton(managementOptions);
 builder.Services.AddScoped<ManagementApiKeyFilter>();
 var connection = builder.Configuration.GetConnectionString("Default") ?? "Host=localhost;Port=5432;Database=kaydetmail-db;Username=postgres;Password=postgres;GSS Encryption Mode=Disable";
 builder.Services.AddDbContext<AppDbContext>(options => options.UseNpgsql(connection));
+var encryptMailBodies = builder.Configuration.GetValue("Storage:EncryptMailBodies", true);
+if (encryptMailBodies)
+    builder.Services.AddSingleton<MailContentCipher>();
 var keyPath = builder.Configuration["DataProtection:KeyPath"] ?? Path.Combine(builder.Environment.ContentRootPath, "data", "protection-keys");
 var dataProtection = builder.Services.AddDataProtection().PersistKeysToFileSystem(new DirectoryInfo(keyPath));
 var certificatePath = builder.Configuration["DataProtection:CertificatePath"];
@@ -205,6 +208,8 @@ if (!builder.Environment.IsEnvironment("Test"))
     builder.Services.AddHostedService<AllowlistReconciliationService>();
     builder.Services.AddHostedService<ScheduledSendDispatcher>();
     builder.Services.AddHostedService<SnoozeWakeupService>();
+    if (encryptMailBodies)
+        builder.Services.AddHostedService<MailContentEncryptionBackfill>();
 }
 var storageOptions = builder.Configuration.GetSection("Storage").Get<StorageOptions>() ?? new StorageOptions();
 storageOptions.Validate();

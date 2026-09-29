@@ -167,6 +167,41 @@ public sealed class PostgresIntegrationTests(PostgresFixture fixture)
     }
 
     [Fact]
+    public async Task BackfillEncryptsLegacyHtmlBodies_AndIsIdempotent()
+    {
+        if (!IntegrationEnvironment.PostgresEnabled) return;
+        var accountId = await SeedAccountAsync();
+        var cipher = new MailContentCipher(new Microsoft.AspNetCore.DataProtection.EphemeralDataProtectionProvider());
+        await using var db = fixture.CreateDb();
+        var folderId = await SeedFolderAsync(db, accountId);
+        var legacy = Guid.NewGuid();
+        var alreadyEncrypted = Guid.NewGuid();
+        db.Mails.Add(new Domain.Entities.Mail { Id = legacy, MailAccountId = accountId, MailFolderId = folderId, Uid = 301, Subject = "s", BodyHtml = "<p>legacy body</p>", ReceivedAt = DateTime.UtcNow });
+        db.Mails.Add(new Domain.Entities.Mail { Id = alreadyEncrypted, MailAccountId = accountId, MailFolderId = folderId, Uid = 302, Subject = "s", BodyHtml = cipher.Protect("<p>kept</p>"), ReceivedAt = DateTime.UtcNow });
+        await db.SaveChangesAsync();
+        var before = await RawBodyAsync(alreadyEncrypted);
+
+        Assert.Equal(1, await MailContentEncryptionBackfill.RunAsync(db, cipher, CancellationToken.None));
+
+        var stored = await RawBodyAsync(legacy);
+        Assert.StartsWith(MailContentCipher.Prefix, stored);
+        Assert.DoesNotContain("legacy body", stored);
+        Assert.Equal("<p>legacy body</p>", cipher.Unprotect(stored));
+        Assert.Equal(before, await RawBodyAsync(alreadyEncrypted));
+        Assert.Equal(0, await MailContentEncryptionBackfill.RunAsync(db, cipher, CancellationToken.None));
+
+        async Task<string> RawBodyAsync(Guid id)
+        {
+            await using var connection = new NpgsqlConnection(fixture.ConnectionString);
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = "SELECT \"BodyHtml\" FROM \"Mails\" WHERE \"Id\" = @id";
+            command.Parameters.AddWithValue("id", id);
+            return (string)(await command.ExecuteScalarAsync())!;
+        }
+    }
+
+    [Fact]
     public async Task Search_DateFilterWithoutOffset_IsTreatedAsUtc()
     {
         if (!IntegrationEnvironment.PostgresEnabled) return;

@@ -7,6 +7,7 @@ using MailClient.Infrastructure.Email;
 using MailClient.Infrastructure.Observability;
 using MailClient.Infrastructure.Persistence;
 using MailKit;
+using MailClient.Infrastructure.Security;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using MailEntity = MailClient.Domain.Entities.Mail;
@@ -19,7 +20,8 @@ public sealed class MailReadService(
     AppDbContext db,
     Mail.IMailFolderClient folders,
     AuditLogger audit,
-    ILogger<MailReadService> logger)
+    ILogger<MailReadService> logger,
+    MailContentCipher? contentCipher = null)
 {
     public async Task<MailDetailResponse?> GetAsync(Guid accountId, Guid mailId, CancellationToken cancellationToken, bool allowRemoteImages = false)
     {
@@ -47,7 +49,7 @@ public sealed class MailReadService(
         if (!allowRemoteImages)
             allowRemoteImages = folderType != MailFolderType.Junk
                 && !string.Equals(authentication?.Dmarc, "fail", StringComparison.Ordinal);
-        var body = HtmlMailBodyRenderer.Render(mail, mail.BodyHtml, allowRemoteImages);
+        var body = HtmlMailBodyRenderer.Render(mail, contentCipher.UnprotectContent(mail.BodyHtml), allowRemoteImages);
         var bodyContract = new MailBodyResponse(body.Html, body.HasRemoteContent, body.RemoteContentHosts, body.RemoteImageHosts, body.TrackingPixelHosts, body.RemoteImagesAllowed);
 
         return new MailDetailResponse(

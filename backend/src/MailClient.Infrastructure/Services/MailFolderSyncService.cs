@@ -24,7 +24,8 @@ public sealed class MailFolderSyncService(
     IPushNotificationService push,
     ConversationService conversations,
     MailReconciliationService reconciliations,
-    ILogger<MailFolderSyncService> logger) : ISyncExecutor
+    ILogger<MailFolderSyncService> logger,
+    MailContentCipher? contentCipher = null) : ISyncExecutor
 {
     private async Task MarkReauthenticationAsync(Guid accountId, CancellationToken cancellationToken)
     {
@@ -521,7 +522,7 @@ public sealed class MailFolderSyncService(
                 FromAddress = incoming.FromAddress,
                 FromDisplayName = incoming.FromDisplayName,
                 ToAddress = incoming.ToAddress,
-                BodyHtml = incoming.BodyHtml,
+                BodyHtml = contentCipher.ProtectContent(incoming.BodyHtml),
                 BodyText = incoming.BodyText,
                 SentAt = incoming.SentAt,
                 ReceivedAt = incoming.ReceivedAt,
