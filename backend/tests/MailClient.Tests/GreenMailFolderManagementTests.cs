@@ -123,8 +123,9 @@ public sealed class GreenMailFolderManagementTests(GreenMailFixture greenmail) :
             Assert.Equal(1, remoteChild.Count);
             await imap.DisconnectAsync(true);
         }
-        Assert.Null((await service.MoveAsync(accountId, root.Folder.Id, null, "test", CancellationToken.None)).Error);
-        Assert.Null(await service.DeleteAsync(accountId, destination.Folder.Id, "test", CancellationToken.None));
+        // GreenMail 2.1.8 acknowledges RENAME of a nested folder to a top-level name but drops it,
+        // so moving back to the root is covered with a fake remote in FolderManagementApiTests.
+        Assert.Equal("mail_folder_has_children", await service.DeleteAsync(accountId, destination.Folder.Id, "test", CancellationToken.None));
         Assert.Equal("mail_folder_not_empty", await service.DeleteAsync(accountId, child.Folder.Id, "test", CancellationToken.None));
         using (var imap = await ConnectAsync())
         {
@@ -137,6 +138,7 @@ public sealed class GreenMailFolderManagementTests(GreenMailFixture greenmail) :
         }
         Assert.Null(await service.DeleteAsync(accountId, child.Folder.Id, "test", CancellationToken.None));
         Assert.Null(await service.DeleteAsync(accountId, root.Folder.Id, "test", CancellationToken.None));
+        Assert.Null(await service.DeleteAsync(accountId, destination.Folder.Id, "test", CancellationToken.None));
         Assert.False(await db.MailFolders.AnyAsync(folder => folder.MailAccountId == accountId));
         using var verify = await ConnectAsync();
         await Assert.ThrowsAsync<FolderNotFoundException>(() => verify.GetFolderAsync(root.Folder.FullName));
