@@ -212,7 +212,8 @@ public sealed class MailRemoteSearchService
     {
         SearchQuery? query = null;
         void Add(SearchQuery term) => query = query is null ? term : query.And(term);
-        if (!string.IsNullOrWhiteSpace(queryText)) Add(SearchQuery.MessageContains(queryText));
+        foreach (var term in queryText?.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries) ?? [])
+            Add(SearchQuery.MessageContains(term));
         if (!string.IsNullOrWhiteSpace(request.From)) Add(SearchQuery.FromContains(request.From.Trim()));
         if (!string.IsNullOrWhiteSpace(request.To))
         {

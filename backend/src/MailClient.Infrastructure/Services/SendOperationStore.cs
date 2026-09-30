@@ -35,7 +35,9 @@ public sealed class SendOperationStore(AppDbContext db, ILogger<SendOperationSto
             }
             catch (DbUpdateException) when (attempt == 0)
             {
-                db.ChangeTracker.Clear();
+                foreach (var entry in db.ChangeTracker.Entries<SendOperation>()
+                    .Where(x => x.State == EntityState.Added).ToList())
+                    entry.State = EntityState.Detached;
             }
         }
 
@@ -96,6 +98,8 @@ public sealed class SendOperationStore(AppDbContext db, ILogger<SendOperationSto
         DateTime now,
         CancellationToken cancellationToken)
     {
+        var tracked = db.SendOperations.Local.SingleOrDefault(
+            operation => operation.MailAccountId == accountId && operation.IdempotencyKey == key);
         var existing = await db.SendOperations.SingleOrDefaultAsync(
             operation => operation.MailAccountId == accountId && operation.IdempotencyKey == key, cancellationToken);
         if (existing is null)
@@ -113,6 +117,14 @@ public sealed class SendOperationStore(AppDbContext db, ILogger<SendOperationSto
             db.SendOperations.Add(operation);
             await db.SaveChangesAsync(cancellationToken);
             return new Proceed(operation);
+        }
+
+        if (tracked is not null)
+        {
+            // Another scope may have retried/completed this key since this context first loaded it.
+            await db.Entry(existing).ReloadAsync(cancellationToken);
+            if (db.Entry(existing).State == EntityState.Detached)
+                return new Denied("send_in_progress");
         }
 
         if (!string.Equals(existing.Fingerprint, fingerprint, StringComparison.Ordinal))

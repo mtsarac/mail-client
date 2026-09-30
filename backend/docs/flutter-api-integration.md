@@ -477,7 +477,12 @@ Hesap kapsamında liste, en yeni önce (`receivedAt`). Query: `folderId`, `isRea
 ### `GET /api/search`
 **Auth:** Bearer
 
-Yalnızca sunucudaki önbellekli maillerde tam metin + filtreli arama; tüm filtreler opsiyonel ve AND'lenir. Query: `q`, `folderId`, `conversationId`, `from`, `to`, `fromDate`, `toDate` (ISO-8601), `isRead`, `flagged`, `hasAttachment` (dikkat: `/mails`'te `hasAttachments`), `labelId`, `page`, `pageSize`. Yanıt şekli `/mails` ile birebir aynı (`MailListResponse`).
+Yalnızca sunucudaki önbellekli maillerde metin + filtreli arama; tüm filtreler opsiyonel ve AND'lenir. Query: `q`, `folderId`, `conversationId`, `from`, `to`, `fromDate`, `toDate` (ISO-8601), `isRead`, `flagged`, `hasAttachment` (dikkat: `/mails`'te `hasAttachments`), `labelId`, `page`, `pageSize`. Yanıt şekli `/mails` ile birebir aynı (`MailListResponse`).
+
+- Normal `q`, boşluklarla ayrılmış terimlerin büyük/küçük harf duyarsız, literal alt dize aramasıdır. Her terim aynı mailin aranabilir alanlarından en az birinde bulunmalıdır (AND); terimler farklı alanlarda bulunabilir. `domates`, `Domatesli` ile; `domates çorba`, `Domatesli nefis çorba` ile eşleşir. `%`, `_`, `\` joker karakter değildir.
+- Aranabilir alanlar: konu, düz metin gövde, gönderen adresi/adı, alıcı adresi, Message-ID, katılımcı adresleri/adları ve ek dosya adları. `BodyHtml` şifreli olsa da `BodyText` arama/önizleme için okunabilir tutulur; veritabanı/disk şifrelemesiyle korunmalıdır.
+- PostgreSQL'de mevcut açık web-search sözdizimi korunur: çift tırnaklı ifade, ayrı `OR` terimi veya `-terim` içeren sorgu eski `websearch_to_tsquery` yolunu kullanır. Bu özel yol kelime/ifade eşleştirir; yerel önbellek, diğer veritabanları ve IMAP için yeni bir operatör dili eklenmez.
+- Normal aramayı hızlandırmak için `pg_trgm`, yukarıdaki alt dize sorgularındaki `lower(column)` ifadelerine GIN indeksleri sağlar (altı mail alanı, iki katılımcı alanı, ek dosya adı). Mevcut tam-metin GIN indeksi operatörlü sorgular için kalır. Dokuz ek indeks depolama ve senkronizasyon/yazma maliyetini artırır; kurulumda `pg_trgm` oluşturma yetkisi gerekir. Üç karakterden kısa veya trigram üretmeyen terimler yine doğrudur ancak seçici indeks erişimi yerine tarama gerektirebilir. Filtreler ve toplam sayı hesaplaması sayfalamadan önce uygulanır.
 
 - `from`: gönderen adresi ya da görünen adında büyük/küçük harf duyarsız "içerir" araması.
 - `to`: herhangi bir To/Cc/Bcc alıcısının adresi ya da adında büyük/küçük harf duyarsız "içerir" araması.
@@ -488,6 +493,8 @@ Yalnızca sunucudaki önbellekli maillerde tam metin + filtreli arama; tüm filt
 **Auth:** Bearer
 
 Kullanıcının başlattığı IMAP SEARCH: `q`, `folderId`, `conversationId`, `from`, `to`, `fromDate`, `toDate`, `isRead`, `flagged`, `hasAttachment`, `labelId` filtrelerini alır (`page`/`pageSize` yok). `q`, `from` veya `to` alanlarından en az biri dolu olmalıdır. Generic IMAP aramasıyla eşleşen ancak henüz backend indeksinde olmayan mailleri sınırlı sayıda içeri aktarır; çağrıdan sonra sonuçları görmek için tekrar `GET /api/search` çağırın. `hasAttachment`, `labelId` ve `conversationId` uzaktan IMAP filtresi değildir; etiket ve konuşma yalnızca indekslenmiş maillere uygulanır.
+
+Normal `q` terimleri ayrı IMAP `TEXT` alt dize ölçütleri olarak AND'lenir; operatör yorumlaması eklenmez. Önceki içeri alma bütçesi, süre sınırı ve `complete`/`remaining` sözleşmesi değişmez. IMAP eşleştirme ayrıntıları sunucuya bağlıdır ve backend'in aranabilir alanlarından daha geniş MIME metnini tarayabilir; görünen sonuçlar yeniden `GET /api/search` filtresinden geçer.
 
 ```json
 {"matched": 3, "imported": 2, "remaining": 1, "complete": false}
@@ -743,7 +750,7 @@ Kopya kaydedildiyse sunucu Gönderilmiş klasörünü hemen senkronlar; `mailId`
 
 ### Zamanlanmış gönderim
 
-Bir maili şimdi değil, belirli bir zamanda göndermek için. Sunucu arka planda periyodik olarak zamanı gelenleri tarar ve gönderir — istemcinin ayrıca bir işlem yapmasına gerek yoktur.
+Bir maili şimdi değil, belirli bir zamanda göndermek için. Kayıt PostgreSQL'de saklanır; sunucu arka planda 30 saniyede bir zamanı gelenleri tarar ve gönderir — istemci kapalı olsa da ayrıca bir işlem yapmasına gerek yoktur. Tam saniyesinde teslim garantisi yoktur. API `Test` dışı bir ortamda çalışmalı, migration'lar uygulanmalı, bekletilen ek dosyaları korunmalı ve hesap kimlik bilgileri kullanılabilir olmalıdır. Kilit alınamayan kayıt sonraki taramada denenir; tek kaydın hatası diğerlerini durdurmaz. SMTP başlamadan önce doğrulanan geçici ağ/kimlik yenileme kilidi hataları aynı dispatch key ile 1, 2, 4 ve 8 dakika sonra, toplam en fazla beş denemeye kadar tekrar edilir. Teslim sonucu belirsiz veya yarım kalan gönderim otomatik tekrarlanmaz.
 
 ### `POST /api/scheduled-sends`
 **Auth:** Bearer · **Gövde:** `multipart/form-data`
@@ -767,7 +774,7 @@ Bir maili şimdi değil, belirli bir zamanda göndermek için. Sunucu arka pland
 ### `GET /api/scheduled-sends`
 **Auth:** Bearer
 
-Hesabın tüm zamanlanmış gönderimlerini döner (dizi, sayfalama yok), `sendAtUtc`'ye göre artan sırada.
+Hesabın tüm zamanlanmış gönderimlerini döner (`{ "items": [...] }`, sayfalama yok), `sendAtUtc`'ye göre artan sırada. Pending, Sent, Failed, DeliveryUnknown ve Cancelled kayıtları korunur; istemci yalnız zamanı geçti diye kaydı gizlememelidir.
 
 ```json
 // 200 OK
@@ -789,7 +796,7 @@ Hesabın tüm zamanlanmış gönderimlerini döner (dizi, sayfalama yok), `sendA
 ```
 
 `status`: `Pending · Sent · Cancelled · Failed · DeliveryUnknown`. `attemptCount`
-SMTP deneme sayısıdır; `nextAttemptAtUtc` geçici hata sonrası otomatik retry
+gönderim deneme sayısıdır (SMTP öncesi kimlik bilgisi hataları dahil); `nextAttemptAtUtc` geçici hata sonrası otomatik retry
 zamanını verir. `failureReason`, Failed veya DeliveryUnknown durumunu açıklar.
 `requestReadReceipt` gönderimde okundu bilgisi istenip istenmeyeceğini gösterir.
 

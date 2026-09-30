@@ -208,6 +208,19 @@ Başka hesaba ait klasör id'si 404 döner.
 | POST | `/api/scheduled-sends/{id}/reschedule` | bearer + yeni `Idempotency-Key` | Failed gönderimi yeni Pending gönderime kopyalar |
 | DELETE | `/api/scheduled-sends/{id}` | bearer | Pending gönderimi iptal eder veya Failed içeriği siler |
 
+Zamanlamalar PostgreSQL'de saklanır; istemci uygulaması kapalı olsa da API'nin
+arka plan işçisi gönderimi yapar. API `Test` dışı bir ortamda çalışmalı,
+veritabanı migration'ları uygulanmalı, bekletilen ek dosyaları korunmalı ve
+hesap kimlik bilgileri kullanılabilir olmalıdır. İşçi 30 saniyede bir tarar;
+UTC son tarihinin tam saniyesinde teslim garantisi yoktur. Gönderim kilidi
+alınamazsa kayıt sonraki tarama için Pending kalır. Tek kaydın hatası diğer
+zamanı gelmiş kayıtları durdurmaz. SMTP başlamadan önce doğrulanan ağ hataları
+(kimlik bilgisi yenileme ağı/kilit hataları dahil) aynı dispatch key ile
+1, 2, 4 ve 8 dakika sonra, toplam en fazla beş denemeye kadar tekrar edilir.
+Teslim sonucu belirsiz veya yarım kalan gönderimler otomatik tekrarlanmaz.
+Liste Pending, Sent, Failed, DeliveryUnknown ve Cancelled kayıtlarını korur;
+istemci yalnız zamanı geçti diye kaydı gizlememelidir.
+
 `PUT`, oluşturmayla aynı alıcı, gövde, konu, zaman ve ek sınırlarını uygular.
 Dispatch başladıysa 409 `scheduled_send_already_sent`, Failed/Cancelled kayıt
 için `scheduled_send_not_pending`, başka düzenleme önce tamamlandıysa

@@ -7,8 +7,12 @@ using MailClient.Domain.Enums;
 using MailClient.Infrastructure.OAuth;
 using MailClient.Infrastructure.Persistence;
 using MailClient.Infrastructure.Security;
+using MailClient.Infrastructure.Mail;
+using MailClient.Infrastructure.Observability;
+using MailClient.Infrastructure.Services;
 using MailClient.Infrastructure.Sync;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace MailClient.Tests;
 
@@ -86,6 +90,40 @@ public sealed class OAuthCredentialResolverTests
         Assert.Equal(0, provider.RefreshCount);
         Assert.Equal(1, locks.Calls);
         Assert.Equal(MailAccountStatus.Active, (await db.MailAccounts.SingleAsync(x => x.Id == accountId)).Status);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SendAsync_CredentialTransientFailure_CanRetryWithoutDuplicateDelivery(bool lockUnavailable)
+    {
+        await using var db = Db();
+        var accountId = await SeedOAuthAsync(db, DateTime.UtcNow.AddMinutes(1), "old-access", "old-refresh");
+        var connections = new RecordingMailConnectionHelper();
+        var resolver = TestServices.Credentials(db, new PrefixProtector(), [FakeOAuthProvider.Unreachable()],
+            lockUnavailable ? new StubSyncLockProvider(SyncLockStatus.InfrastructureFailure) : null);
+        var operationStore = new SendOperationStore(db, NullLogger<SendOperationStore>.Instance);
+        var transport = new MailKitMailTransport(resolver, connections);
+        var sender = new MailSendService(db, transport, operationStore, FixedRuntimeSettingsStore.Operation(),
+            TestServices.InlineSync(), new AuditLogger(db), NullLogger<MailSendService>.Instance);
+        var command = new MailClient.Application.Mail.SendMailCommand(accountId,
+            "recipient@example.test", "Credential retry", null, "body", [])
+        { IdempotencyKey = "credential-retry" };
+
+        var failure = await sender.SendAsync(accountId, command, null, CancellationToken.None);
+
+        Assert.False(failure.Sent);
+        Assert.Equal(MailClient.Application.Mail.MailConnectionFailure.Network, failure.PreDeliveryFailure);
+        Assert.Empty(connections.SmtpCalls);
+        Assert.Equal(SendOperationStatus.FailedBeforeSend, (await db.SendOperations.AsNoTracking().SingleAsync()).Status);
+        var delivered = new FakeMailTransport();
+        var retrySender = new MailSendService(db, delivered, operationStore, FixedRuntimeSettingsStore.Operation(),
+            TestServices.InlineSync(), new AuditLogger(db), NullLogger<MailSendService>.Instance);
+
+        Assert.True((await retrySender.SendAsync(accountId, command, null, CancellationToken.None)).Sent);
+        Assert.True((await retrySender.SendAsync(accountId, command, null, CancellationToken.None)).Sent);
+        Assert.Equal(1, delivered.SentCount);
+        Assert.Single(await db.SendOperations.ToListAsync());
     }
 
     [Fact]

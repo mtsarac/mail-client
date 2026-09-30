@@ -38,6 +38,44 @@ public sealed class ScheduledSendDispatcherTests
     }
 
     [Fact]
+    public async Task ProcessDueAsync_RowLockFailure_DoesNotBlockLaterDueSend()
+    {
+        await using var db = CreateDb();
+        var accountId = await SeedAccountAsync(db);
+        var first = await SeedScheduledSendAsync(db, accountId, DateTime.UtcNow.AddMinutes(-5), "Lock failed");
+        var second = await SeedScheduledSendAsync(db, accountId, DateTime.UtcNow.AddMinutes(-1), "Deliver");
+        var transport = new FakeMailTransport();
+        await using var provider = BuildProvider(db, transport, new FakeFileStorage(), new OnceFailingLockProvider());
+
+        await ScheduledSendDispatcher.ProcessDueAsync(provider, CancellationToken.None);
+
+        var firstRow = await db.ScheduledSends.AsNoTracking().SingleAsync(x => x.Id == first);
+        Assert.Equal(ScheduledSendStatus.Pending, firstRow.Status);
+        Assert.Equal(0, firstRow.AttemptCount);
+        Assert.Equal(ScheduledSendStatus.Sent, (await db.ScheduledSends.AsNoTracking().SingleAsync(x => x.Id == second)).Status);
+        Assert.Equal(1, transport.SentCount);
+        Assert.Equal("Deliver", transport.Message!.Subject);
+    }
+
+    [Fact]
+    public async Task ProcessDueAsync_AccountSyncLock_DoesNotDelayScheduledSend()
+    {
+        await using var db = CreateDb();
+        var accountId = await SeedAccountAsync(db);
+        var due = await SeedScheduledSendAsync(db, accountId, DateTime.UtcNow.AddMinutes(-1), "Independent send");
+        var locks = new InMemorySyncLockProvider();
+        await using var accountSync = await locks.TryAcquireAsync(accountId, SyncLockPurpose.AccountSync, CancellationToken.None);
+        var transport = new FakeMailTransport();
+        await using var provider = BuildProvider(db, transport, new FakeFileStorage(), locks);
+
+        await ScheduledSendDispatcher.ProcessDueAsync(provider, CancellationToken.None);
+        await ScheduledSendDispatcher.ProcessDueAsync(provider, CancellationToken.None);
+
+        Assert.Equal(1, transport.SentCount);
+        Assert.Equal(ScheduledSendStatus.Sent, (await db.ScheduledSends.AsNoTracking().SingleAsync(x => x.Id == due)).Status);
+    }
+
+    [Fact]
     public async Task ProcessDueAsync_StoredReadReceiptRequest_AddsDispositionNotificationHeader()
     {
         await using var db = CreateDb();
@@ -319,7 +357,8 @@ public sealed class ScheduledSendDispatcherTests
         Assert.Equal(ScheduledSendStatus.Cancelled, row.Status);
     }
 
-    private static ServiceProvider BuildProvider(AppDbContext db, MailClient.Infrastructure.Mail.IMailTransport transport, FakeFileStorage storage)
+    private static ServiceProvider BuildProvider(AppDbContext db, MailClient.Infrastructure.Mail.IMailTransport transport,
+        FakeFileStorage storage, ISyncLockProvider? locks = null)
     {
         var services = new ServiceCollection();
         services.AddSingleton(db);
@@ -331,7 +370,7 @@ public sealed class ScheduledSendDispatcherTests
         services.AddSingleton(new AuditLogger(db));
         services.AddSingleton<Microsoft.Extensions.Logging.ILogger<MailSendService>>(NullLogger<MailSendService>.Instance);
         services.AddSingleton<Microsoft.Extensions.Logging.ILogger<ScheduledSendDispatcher>>(NullLogger<ScheduledSendDispatcher>.Instance);
-        services.AddSingleton<ISyncLockProvider>(new InMemorySyncLockProvider());
+        services.AddSingleton<ISyncLockProvider>(locks ?? new InMemorySyncLockProvider());
         services.AddSingleton<MailSendService>();
         return services.BuildServiceProvider();
     }
@@ -426,6 +465,22 @@ public sealed class ScheduledSendDispatcherTests
 
     private static AppDbContext CreateDb() => new(new DbContextOptionsBuilder<AppDbContext>()
         .UseInMemoryDatabase(Guid.NewGuid().ToString()).Options);
+
+    private sealed class OnceFailingLockProvider : ISyncLockProvider
+    {
+        private readonly InMemorySyncLockProvider _inner = new();
+        private bool _failed;
+
+        public Task<SyncLockAcquisition> TryAcquireAsync(Guid accountId, SyncLockPurpose purpose, CancellationToken cancellationToken)
+        {
+            if (!_failed)
+            {
+                _failed = true;
+                throw new IOException("Temporary lock infrastructure failure.");
+            }
+            return _inner.TryAcquireAsync(accountId, purpose, cancellationToken);
+        }
+    }
 
     private sealed class OnceUnavailableTransport : MailClient.Infrastructure.Mail.IMailTransport
     {

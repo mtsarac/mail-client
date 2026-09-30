@@ -56,7 +56,8 @@ public sealed class GreenMailRemoteSearchIntegrationTests(GreenMailFixture green
         if (!IntegrationEnvironment.GreenMailEnabled || !IntegrationEnvironment.PostgresEnabled) return;
         var token = $"remote-search-{Guid.NewGuid():N}";
         var ccAddress = $"cc-{Guid.NewGuid():N}@example.test";
-        await SeedAsync($"older-{token}", token, ccAddress);
+        var query = $"{token} DOMATES çorba";
+        await SeedAsync($"older-{token}", $"Domatesli nefis çorba {token}", ccAddress);
         await SeedAsync($"middle-{token}", token);
         await SeedAsync($"newest-{token}", token);
 
@@ -104,7 +105,7 @@ public sealed class GreenMailRemoteSearchIntegrationTests(GreenMailFixture green
         var progress = new MailRemoteSearchService.SearchProgress();
         var folders = await db.MailFolders.AsNoTracking().Where(folder => folder.Id == folderId).ToListAsync();
         await remoteSearch.SearchAndImportCoreAsync(accountId, folders,
-            MailRemoteSearchService.BuildQuery(new MailSearchRequest(token, folderId, null, null, ccAddress, null, null, null, null, null, 1, 0), token), progress,
+            MailRemoteSearchService.BuildQuery(new MailSearchRequest(query, folderId, null, null, ccAddress, null, null, null, null, null, 1, 0), query), progress,
             (_, _) => Task.FromResult<IRemoteMailFolder>(remote), CancellationToken.None);
 
         Assert.Equal(1, progress.Matched);
@@ -112,12 +113,12 @@ public sealed class GreenMailRemoteSearchIntegrationTests(GreenMailFixture green
         Assert.True(progress.Complete);
         var search = new MailSearchService(db, runtime);
         var indexed = await search.SearchAsync(accountId,
-            new MailSearchRequest(token, folderId, null, null, ccAddress, null, null, null, null, null, 1, 0), CancellationToken.None);
+            new MailSearchRequest(query, folderId, null, null, ccAddress, null, null, null, null, null, 1, 0), CancellationToken.None);
         Assert.Contains(indexed.Items, item => item.Subject == $"older-{token}");
 
         var second = new MailRemoteSearchService.SearchProgress();
         await remoteSearch.SearchAndImportCoreAsync(accountId, folders,
-            MailRemoteSearchService.BuildQuery(new MailSearchRequest(token, folderId, null, null, ccAddress, null, null, null, null, null, 1, 0), token), second,
+            MailRemoteSearchService.BuildQuery(new MailSearchRequest(query, folderId, null, null, ccAddress, null, null, null, null, null, 1, 0), query), second,
             (_, _) => Task.FromResult<IRemoteMailFolder>(remote), CancellationToken.None);
         Assert.Equal(0, second.Matched);
         Assert.Equal(0, second.Imported);

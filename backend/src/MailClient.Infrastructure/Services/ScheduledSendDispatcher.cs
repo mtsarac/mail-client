@@ -32,7 +32,7 @@ public sealed class ScheduledSendDispatcher(
                 await using var scope = scopes.CreateAsyncScope();
                 await ProcessDueAsync(scope.ServiceProvider, stoppingToken);
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
                 break;
             }
@@ -59,7 +59,16 @@ public sealed class ScheduledSendDispatcher(
         foreach (var row in due)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            await DispatchOneAsync(provider, row.Id, row.MailAccountId, cancellationToken);
+            try
+            {
+                await using var scope = provider.CreateAsyncScope();
+                await DispatchOneAsync(scope.ServiceProvider, row.Id, row.MailAccountId, cancellationToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+            {
+                provider.GetRequiredService<ILogger<ScheduledSendDispatcher>>()
+                    .LogError(ex, "Scheduled send {Id} dispatch failed; continuing with other due sends.", row.Id);
+            }
         }
     }
 
@@ -81,6 +90,10 @@ public sealed class ScheduledSendDispatcher(
                     .SetProperty(x => x.AttemptCount, x => x.AttemptCount + 1)
                     .SetProperty(x => x.NextAttemptAtUtc, (DateTime?)null), cancellationToken) != 1)
                 return;
+            // ExecuteUpdate bypasses EF's identity map, including the status concurrency token.
+            var tracked = db.ScheduledSends.Local.SingleOrDefault(x => x.Id == id);
+            if (tracked is not null)
+                await db.Entry(tracked).ReloadAsync(cancellationToken);
         }
         else
         {

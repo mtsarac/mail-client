@@ -1,4 +1,5 @@
 using MailClient.Application.Mail;
+using MailClient.Application.Sync;
 using MailClient.Domain.Entities;
 using MailClient.Infrastructure.Email;
 using MailClient.Infrastructure.Security;
@@ -18,7 +19,7 @@ public sealed class MailKitMailTransport(
 {
     public async Task SendAsync(MailAccount account, MimeMessage message, CancellationToken cancellationToken)
     {
-        var resolved = await credentials.ResolveAsync(account.Id, cancellationToken);
+        var resolved = await ResolveForSendAsync(account.Id, cancellationToken);
         var endpoint = new MailServerEndpoint(account.SmtpHost, account.SmtpPort, account.SmtpSecurity);
         await connections.WithSmtpAsync(
             endpoint,
@@ -44,6 +45,22 @@ public sealed class MailKitMailTransport(
             },
             cancellationToken,
             resolved.AuthenticationMethod);
+    }
+
+    private async Task<ResolvedCredential> ResolveForSendAsync(Guid accountId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await credentials.ResolveAsync(accountId, cancellationToken);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or TimeoutException or System.Net.Sockets.SocketException
+            || ex is InvalidOperationException { Message: SyncFailureClassifier.OAuthRefreshLockUnavailable })
+        {
+            // Credentials are resolved before opening SMTP, so this failure cannot mean delivery occurred.
+            throw new MailConnectionException(MailConnectionFailure.Network,
+                MailConnectionErrorClassifier.SafeMessage(MailConnectionFailure.Network), ex)
+            { Operation = "SendMail" };
+        }
     }
 
     public async Task AppendToSentAsync(
