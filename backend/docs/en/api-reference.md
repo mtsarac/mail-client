@@ -207,6 +207,19 @@ Foreign folder IDs return 404.
 | POST | `/api/scheduled-sends/{id}/reschedule` | bearer + new `Idempotency-Key` | Copy a Failed send to a new Pending send |
 | DELETE | `/api/scheduled-sends/{id}` | bearer | Cancel Pending or discard Failed content |
 
+Schedules are persisted in PostgreSQL and dispatched by the API's background
+worker even when the client app is closed. Keep the API process running in a
+non-`Test` environment, apply database migrations, retain staged attachment
+storage and maintain usable account credentials. The worker polls every 30
+seconds; delivery is not guaranteed at the exact second of the UTC deadline.
+An unavailable dispatch lock leaves the row Pending for the next pass. A
+failure on one row does not stop other due rows. Confirmed pre-delivery network
+failures (including credential-refresh network/lock failures before SMTP)
+retry with the same dispatch key after 1, 2, 4 and 8 minutes, with at most five
+attempts. Uncertain delivery and abandoned claims never resend automatically.
+The list retains Pending, Sent, Failed, DeliveryUnknown and Cancelled rows;
+clients must not hide an overdue row merely because its deadline has passed.
+
 `PUT` uses the same recipients, body, subject, time and attachment limits as
 create. It returns 409 `scheduled_send_already_sent` after dispatch starts,
 `scheduled_send_not_pending` for Failed/Cancelled rows, or

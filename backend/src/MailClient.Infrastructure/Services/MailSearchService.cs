@@ -75,7 +75,10 @@ public sealed class MailSearchService(AppDbContext db, RuntimeOperationSettings 
                     && (participant.Type == ParticipantType.To || participant.Type == ParticipantType.Cc || participant.Type == ParticipantType.Bcc)
                     && (participant.Address.ToLower().Contains(to) || participant.DisplayName.ToLower().Contains(to))));
         }
-        var useTs = !string.IsNullOrWhiteSpace(queryText) && db.Database.ProviderName == "Npgsql.EntityFrameworkCore.PostgreSQL";
+        var terms = queryText?.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries) ?? [];
+        // Preserve PostgreSQL's existing explicit web-search syntax; ordinary words are literal substrings.
+        var useTs = terms.Length > 0 && db.Database.ProviderName == "Npgsql.EntityFrameworkCore.PostgreSQL"
+            && (queryText!.Contains('"') || terms.Any(term => term == "OR" || (term.Length > 1 && term[0] == '-')));
         if (useTs)
         {
             var plain = queryText!;
@@ -85,11 +88,18 @@ public sealed class MailSearchService(AppDbContext db, RuntimeOperationSettings 
                 || db.Participants.Any(participant => participant.MailId == mail.Id && (participant.Address.ToLower().Contains(lower) || participant.DisplayName.ToLower().Contains(lower)))
                 || db.Attachments.Any(attachment => attachment.MailId == mail.Id && attachment.FileName.ToLower().Contains(lower)));
         }
-        else if (!string.IsNullOrWhiteSpace(queryText))
+        else
         {
-            var normalized = queryText.ToLowerInvariant();
-            query = query.Where(mail => mail.Subject.ToLower().Contains(normalized) || mail.BodyText.ToLower().Contains(normalized)
-                || mail.FromAddress.ToLower().Contains(normalized) || mail.ToAddress.ToLower().Contains(normalized));
+            foreach (var term in terms)
+            {
+                var normalized = term.ToLowerInvariant();
+                query = query.Where(mail => mail.Subject.ToLower().Contains(normalized) || mail.BodyText.ToLower().Contains(normalized)
+                    || mail.FromAddress.ToLower().Contains(normalized) || mail.FromDisplayName.ToLower().Contains(normalized)
+                    || mail.ToAddress.ToLower().Contains(normalized) || mail.MessageId.ToLower().Contains(normalized)
+                    || db.Participants.Any(participant => participant.MailId == mail.Id
+                        && (participant.Address.ToLower().Contains(normalized) || participant.DisplayName.ToLower().Contains(normalized)))
+                    || db.Attachments.Any(attachment => attachment.MailId == mail.Id && attachment.FileName.ToLower().Contains(normalized)));
+            }
         }
 
         var total = await query.CountAsync(cancellationToken);

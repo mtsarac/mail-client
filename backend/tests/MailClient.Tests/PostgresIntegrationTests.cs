@@ -167,6 +167,46 @@ public sealed class PostgresIntegrationTests(PostgresFixture fixture)
     }
 
     [Fact]
+    public async Task Search_SubstringsInMetadataAndEncryptedHtmlPlainText_PreserveWebOperatorsAndLiteralWildcards()
+    {
+        if (!IntegrationEnvironment.PostgresEnabled) return;
+        var accountId = await SeedAccountAsync();
+        await using var db = fixture.CreateDb();
+        var folderId = await SeedFolderAsync(db, accountId);
+        var cipher = new MailContentCipher(new Microsoft.AspNetCore.DataProtection.EphemeralDataProtectionProvider());
+        var subject = Mail(accountId, folderId, 120);
+        subject.Subject = "Domatesli nefis çorba 50%_indirim";
+        subject.BodyHtml = cipher.Protect("<p>Domatesli nefis çorba</p>");
+        var body = Mail(accountId, folderId, 121);
+        body.Subject = "domatesli";
+        body.BodyText = "çorba";
+        var metadata = Mail(accountId, folderId, 122);
+        metadata.FromDisplayName = "Domatesli";
+        db.Participants.Add(new MailParticipant { Id = Guid.NewGuid(), MailId = metadata.Id, Type = ParticipantType.Cc, DisplayName = "çorba" });
+        var attachment = Mail(accountId, folderId, 123);
+        attachment.MessageId = "<domatesli@example.test>";
+        db.Attachments.Add(new Attachment { Id = Guid.NewGuid(), MailAccountId = accountId, MailId = attachment.Id, FileName = "çorba.pdf", StoragePath = "test" });
+        var partial = Mail(accountId, folderId, 124);
+        partial.Subject = "domatesli without second term";
+        var other = Mail(accountId, folderId, 125);
+        other.Subject = "orchid";
+        db.Mails.AddRange(subject, body, metadata, attachment, partial, other);
+        await db.SaveChangesAsync();
+        var service = new MailSearchService(db, FixedRuntimeSettingsStore.Operation());
+        async Task<MailListResponse> Search(string text) => await service.SearchAsync(accountId,
+            new MailSearchRequest(text, folderId, null, null, null, null, null, null, null, null, 1, 20), CancellationToken.None);
+
+        var result = await Search("  DOMATES\tçorba ");
+        Assert.Equal(new[] { subject.Id, body.Id, metadata.Id, attachment.Id }.Order(), result.Items.Select(item => item.Id).Order());
+        Assert.Equal(subject.Id, Assert.Single((await Search("50%_indirim")).Items).Id);
+        Assert.Empty((await Search("50%_missing")).Items);
+        Assert.Equal(new[] { partial.Id, other.Id }.Order(),
+            (await Search("without OR orchid")).Items.Select(item => item.Id).Order());
+        Assert.Equal(partial.Id, Assert.Single((await Search("without -çorba")).Items).Id);
+        Assert.Equal(subject.Id, Assert.Single((await Search("\"nefis çorba\"")).Items).Id);
+    }
+
+    [Fact]
     public async Task BackfillEncryptsLegacyHtmlBodies_AndIsIdempotent()
     {
         if (!IntegrationEnvironment.PostgresEnabled) return;
@@ -274,14 +314,14 @@ public sealed class PostgresIntegrationTests(PostgresFixture fixture)
         var otherFolderId = await SeedFolderAsync(db, otherAccountId);
         var conversationId = Guid.NewGuid();
         db.Conversations.Add(new Conversation { Id = conversationId, MailAccountId = accountId, NormalizedSubject = "needle", StartedAt = DateTime.UtcNow, LastMessageAt = DateTime.UtcNow });
-        db.Mails.Add(new Domain.Entities.Mail { Id = Guid.NewGuid(), MailAccountId = accountId, MailFolderId = folderId, ConversationId = conversationId, Uid = 201, Subject = "needle alpha", BodyText = "body", FromAddress = "person@example.test", ToAddress = "to@example.test", IsRead = false, Flagged = true, HasAttachments = true, ReceivedAt = DateTime.UtcNow.AddMinutes(-2) });
-        db.Mails.Add(new Domain.Entities.Mail { Id = Guid.NewGuid(), MailAccountId = accountId, MailFolderId = folderId, Uid = 202, Subject = "needle beta", BodyText = "body", FromAddress = "person@example.test", ToAddress = "to@example.test", IsRead = false, Flagged = true, HasAttachments = true, ReceivedAt = DateTime.UtcNow.AddMinutes(-1) });
-        db.Mails.Add(new Domain.Entities.Mail { Id = Guid.NewGuid(), MailAccountId = otherAccountId, MailFolderId = otherFolderId, Uid = 203, Subject = "needle other", BodyText = "body", FromAddress = "person@example.test", ToAddress = "to@example.test", IsRead = false, Flagged = true, HasAttachments = true, ReceivedAt = DateTime.UtcNow });
+        db.Mails.Add(new Domain.Entities.Mail { Id = Guid.NewGuid(), MailAccountId = accountId, MailFolderId = folderId, ConversationId = conversationId, Uid = 201, Subject = "Domatesli nefis çorba alpha", BodyText = "body", FromAddress = "person@example.test", ToAddress = "to@example.test", IsRead = false, Flagged = true, HasAttachments = true, ReceivedAt = DateTime.UtcNow.AddMinutes(-2) });
+        db.Mails.Add(new Domain.Entities.Mail { Id = Guid.NewGuid(), MailAccountId = accountId, MailFolderId = folderId, Uid = 202, Subject = "Domatesli nefis çorba beta", BodyText = "body", FromAddress = "person@example.test", ToAddress = "to@example.test", IsRead = false, Flagged = true, HasAttachments = true, ReceivedAt = DateTime.UtcNow.AddMinutes(-1) });
+        db.Mails.Add(new Domain.Entities.Mail { Id = Guid.NewGuid(), MailAccountId = otherAccountId, MailFolderId = otherFolderId, Uid = 203, Subject = "Domatesli nefis çorba other", BodyText = "body", FromAddress = "person@example.test", ToAddress = "to@example.test", IsRead = false, Flagged = true, HasAttachments = true, ReceivedAt = DateTime.UtcNow });
         await db.SaveChangesAsync();
         var service = new MailSearchService(db, FixedRuntimeSettingsStore.Operation());
 
-        var first = await service.SearchAsync(accountId, new MailSearchRequest("needle", folderId, null, "person@example.test", "to@example.test", null, null, false, true, true, 1, 1), CancellationToken.None);
-        var second = await service.SearchAsync(accountId, new MailSearchRequest("needle", folderId, null, "person@example.test", "to@example.test", null, null, false, true, true, 2, 1), CancellationToken.None);
+        var first = await service.SearchAsync(accountId, new MailSearchRequest("DOMATES çorba", folderId, null, "person@example.test", "to@example.test", null, null, false, true, true, 1, 1), CancellationToken.None);
+        var second = await service.SearchAsync(accountId, new MailSearchRequest("DOMATES çorba", folderId, null, "person@example.test", "to@example.test", null, null, false, true, true, 2, 1), CancellationToken.None);
         var special = await service.SearchAsync(accountId, new MailSearchRequest("'bad & query: *", null, null, null, null, null, null, null, null, null, 1, 20), CancellationToken.None);
 
         Assert.Equal(2, first.Total);
