@@ -110,6 +110,41 @@ public sealed class MailOperationServiceTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_Restore_WithoutRecordedFolder_MovesTrashMailToInbox()
+    {
+        await using var db = CreateDb();
+        var (accountId, inboxId, mailId) = await SeedAsync(db);
+        var trashId = Guid.NewGuid();
+        db.MailFolders.Add(new MailFolder { Id = trashId, MailAccountId = accountId, Name = "Trash", FullName = "Trash", FolderType = MailFolderType.Trash, UidValidity = 8 });
+        var mail = await db.Mails.SingleAsync(x => x.Id == mailId);
+        mail.MailFolderId = trashId;
+        mail.UidValidity = 8;
+        await db.SaveChangesAsync();
+        var service = CreateService(db, new FakeMailFolderClient(new DestinationUidRemote(8, 12, 9)));
+
+        var result = await service.ExecuteAsync(accountId, new(mailId, MailOperationKind.Restore), null, CancellationToken.None);
+
+        Assert.True(result.Success);
+        var restored = await db.Mails.SingleAsync(x => x.Id == mailId);
+        Assert.Equal(inboxId, restored.MailFolderId);
+        Assert.Null(restored.PreviousMailFolderId);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Restore_WithoutRecordedFolder_OutsideTrashOrJunk_IsNotSupported()
+    {
+        await using var db = CreateDb();
+        var (accountId, folderId, mailId) = await SeedAsync(db);
+        var service = CreateService(db, new FakeMailFolderClient(new DestinationUidRemote(7, 12, 9)));
+
+        var result = await service.ExecuteAsync(accountId, new(mailId, MailOperationKind.Restore), null, CancellationToken.None);
+
+        Assert.False(result.Success);
+        Assert.Equal(MailOperationError.NotSupported, result.Error);
+        Assert.Equal(folderId, (await db.Mails.SingleAsync(x => x.Id == mailId)).MailFolderId);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_MoveWithoutDestinationUid_MarksReconciliationPending()
     {
         var databaseName = Guid.NewGuid().ToString();

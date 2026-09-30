@@ -49,12 +49,25 @@ public sealed class MailOperationService(
         var auditKind = request.Kind;
         if (request.Kind == MailOperationKind.Restore)
         {
-            if (mail.PreviousMailFolderId is not { } previousFolderId)
-                return new(false, MailOperationError.NotSupported);
-            var previousFolder = await db.MailFolders.SingleOrDefaultAsync(folder => folder.Id == previousFolderId && folder.MailAccountId == accountId && folder.IsAvailable, cancellationToken);
-            if (previousFolder is null)
-                return new(false, MailOperationError.NotSupported);
-            request = request with { Kind = MailOperationKind.Move, DestinationFolderId = previousFolderId };
+            Guid restoreFolderId;
+            if (mail.PreviousMailFolderId is { } previousFolderId)
+            {
+                var previousFolder = await db.MailFolders.SingleOrDefaultAsync(folder => folder.Id == previousFolderId && folder.MailAccountId == accountId && folder.IsAvailable, cancellationToken);
+                if (previousFolder is null)
+                    return new(false, MailOperationError.NotSupported);
+                restoreFolderId = previousFolder.Id;
+            }
+            else
+            {
+                // Mails that reached Trash/Junk outside this app (another client, server rule) have no recorded origin.
+                if (mail.MailFolder.FolderType is not (MailFolderType.Trash or MailFolderType.Junk))
+                    return new(false, MailOperationError.NotSupported);
+                var inbox = await ResolveDestinationAsync(accountId, new MailOperationRequest(mail.Id, MailOperationKind.NotSpam), cancellationToken);
+                if (inbox is null)
+                    return new(false, MailOperationError.FolderNotFound);
+                restoreFolderId = inbox.Id;
+            }
+            request = request with { Kind = MailOperationKind.Move, DestinationFolderId = restoreFolderId };
         }
         if (request.Kind == MailOperationKind.Star && mail.Flagged || request.Kind == MailOperationKind.Unstar && !mail.Flagged)
             return new(true);
