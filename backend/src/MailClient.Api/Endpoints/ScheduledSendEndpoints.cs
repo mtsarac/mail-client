@@ -88,6 +88,11 @@ public static class ScheduledSendEndpoints
             {
                 if (!TryReadSendAt(form, out var sendAtUtc))
                     return SendAtRequired();
+                if (!int.TryParse(form["expectedRevision"], out var expectedRevision) || expectedRevision < 0)
+                    return Results.ValidationProblem(new Dictionary<string, string[]>
+                    {
+                        ["expectedRevision"] = ["expectedRevision must be a non-negative revision from scheduled-send detail."]
+                    });
                 var keep = new List<Guid>();
                 foreach (var value in form["keepAttachmentIds"])
                 {
@@ -101,13 +106,13 @@ public static class ScheduledSendEndpoints
 
                 var compose = MailEndpoints.ComposeForm.Read(form);
                 var result = await scheduledSends.UpdatePendingAsync(current.MailAccountId, id,
-                    new ScheduledSendEdit(sendAtUtc, compose.To, compose.Cc, compose.Bcc, compose.Subject,
+                    new ScheduledSendEdit(expectedRevision, sendAtUtc, compose.To, compose.Cc, compose.Bcc, compose.Subject,
                         compose.BodyHtml, compose.BodyText, keep, compose.Attachments, compose.RequestReadReceipt),
                     correlation.CorrelationId, ct);
                 return Results.Ok(new ScheduledSendResponse(result.Id, result.SendAtUtc, result.Status));
             })
             .DisableAntiforgery().WithName("UpdateScheduledSend").WithSummary("Edit a pending scheduled send")
-            .WithDescription("multipart/form-data: to, cc, bcc, subject, bodyHtml/bodyText, sendAtUtc (required, future), optional requestReadReceipt (absent keeps the stored value), keepAttachmentIds (repeated; staged attachments not listed are removed) and new files. Replaces the whole content atomically; only Pending sends can be edited and a send the dispatcher already claimed is never modified.")
+            .WithDescription("multipart/form-data: expectedRevision (required, from detail), to, cc, bcc, subject, bodyHtml/bodyText, sendAtUtc (required, future), optional requestReadReceipt (absent keeps the stored value), keepAttachmentIds (repeated; staged attachments not listed are removed) and new files. Replaces the whole content atomically; stale revisions fail with scheduled_send_modified before staging files. Only Pending sends can be edited and a send the dispatcher already claimed is never modified.")
             .Accepts<IFormCollection>("multipart/form-data").Produces<ScheduledSendResponse>().ProducesValidationProblem()
             .ProblemCodes(400, "scheduled_send_in_past", "recipient_required", "invalid_recipient", "body_required",
                 "body_too_large", "too_many_attachments", "attachment_too_large", "invalid_mail_header",

@@ -33,8 +33,9 @@ public sealed class MailReadService(
         if (mail is null)
             return null;
 
+        var effectiveFolderId = mail.ExpectedMailFolderId ?? mail.MailFolderId;
         var folderType = await db.MailFolders
-            .Where(folder => folder.Id == mail.MailFolderId && folder.MailAccountId == accountId)
+            .Where(folder => folder.Id == effectiveFolderId && folder.MailAccountId == accountId)
             .Select(folder => (MailFolderType?)folder.FolderType)
             .SingleOrDefaultAsync(cancellationToken);
         var normalizedFrom = MailAccount.NormalizeEmailAddress(mail.FromAddress);
@@ -54,7 +55,7 @@ public sealed class MailReadService(
 
         return new MailDetailResponse(
             mail.Id,
-            mail.MailFolderId,
+            effectiveFolderId,
             mail.MailAccountId,
             mail.Uid,
             mail.MessageId,
@@ -93,7 +94,9 @@ public sealed class MailReadService(
             mail.ConversationId,
             isFromMe,
             authentication,
-            MailSecurityParser.Parse(headerResponses, mail.BodyText));
+            MailSecurityParser.Parse(headerResponses, mail.BodyText),
+            folderType == MailFolderType.Drafts && !string.IsNullOrWhiteSpace(mail.InReplyToMessageId) ? mail.Id : null,
+            mail.ExpectedMailFolderId is not null);
     }
 
     private static List<MailParticipantResponse> ToParticipantResponses(IEnumerable<MailParticipant> participants, ParticipantType type) =>

@@ -7,6 +7,7 @@ using MailClient.Infrastructure.Observability;
 using MailClient.Infrastructure.Email;
 using MailClient.Infrastructure.Mail;
 using MailClient.Infrastructure.Persistence;
+using MailClient.Infrastructure.Sync;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using MailKit;
@@ -23,7 +24,8 @@ public sealed class MailOperationService(
     ISyncScheduler scheduler,
     ILogger<MailOperationService> logger,
     IPushNotificationService push,
-    IFileStorage storage) : IMailOperationService
+    IFileStorage storage,
+    InlineFolderSync inlineSync) : IMailOperationService
 {
     public async Task<MailOperationResult> ExecuteAsync(Guid accountId, MailOperationRequest request, string? correlationId, CancellationToken cancellationToken)
     {
@@ -33,6 +35,29 @@ public sealed class MailOperationService(
             return new(false, MailOperationError.NotFound);
         if (mail.MailAccount.Status == MailAccountStatus.NeedsReauthentication)
             return new(false, MailOperationError.NeedsReauthentication);
+        if (mail.ReconciliationState == MailReconciliationState.Pending || mail.ExpectedMailFolderId is not null)
+        {
+            if (mail.ExpectedMailFolderId is { } expectedFolderId)
+            {
+                try
+                {
+                    await inlineSync.TrySyncNowAsync(accountId, expectedFolderId, cancellationToken);
+                    await db.Entry(mail).ReloadAsync(cancellationToken);
+                    if (db.Entry(mail).State == EntityState.Detached)
+                        return new(false, MailOperationError.NotFound);
+                    mail.MailFolder = await db.MailFolders.SingleAsync(
+                        folder => folder.Id == mail.MailFolderId && folder.MailAccountId == accountId,
+                        cancellationToken);
+                }
+                catch (Exception exception) when (exception is MailConnectionException or CryptographicException)
+                {
+                    logger.LogWarning(exception, "Pending move reconciliation failed for mail {MailId}.", mail.Id);
+                    await scheduler.ScheduleFolderAsync(accountId, expectedFolderId, SyncOrigin.Reconciliation, cancellationToken);
+                }
+            }
+            if (mail.ReconciliationState == MailReconciliationState.Pending || mail.ExpectedMailFolderId is not null)
+                return new(false, MailOperationError.ReconciliationPending, true);
+        }
         if (request.Kind is MailOperationKind.Read or MailOperationKind.Unread)
         {
             var outcome = await readService.SetReadAsync(accountId, request.MailId, request.Kind == MailOperationKind.Read, correlationId, cancellationToken);
@@ -76,6 +101,10 @@ public sealed class MailOperationService(
         if (request.Kind is MailOperationKind.Move or MailOperationKind.Copy or MailOperationKind.Trash or MailOperationKind.Archive or MailOperationKind.Spam or MailOperationKind.NotSpam
             && target is null)
             return new(false, MailOperationError.FolderNotFound);
+        var isMove = request.Kind is MailOperationKind.Move or MailOperationKind.Trash or MailOperationKind.Archive or MailOperationKind.Spam or MailOperationKind.NotSpam;
+        string? fingerprint = null;
+        if (isMove && target!.Id == mail.MailFolderId)
+            return await AuditSuccess(accountId, auditKind, mail.Id, correlationId, cancellationToken, new(true));
 
         try
         {
@@ -86,6 +115,8 @@ public sealed class MailOperationService(
                 if (remote.UidValidity != mail.UidValidity)
                     throw new MailOperationConflictException();
                 var uid = new UniqueId(mail.Uid);
+                if (isMove && string.IsNullOrWhiteSpace(mail.MessageId))
+                    fingerprint = await MailReconciliationService.FingerprintAsync(await remote.GetMessageAsync(uid, ct), ct);
                 return request.Kind switch
                 {
                     MailOperationKind.Star => await SetFlagged(remote, uid, true, ct),
@@ -103,19 +134,14 @@ public sealed class MailOperationService(
                     return new(false, MailOperationError.MoveFailed, true);
                 if (moveResult.DestinationUid is not { } destinationUid)
                 {
-                    // Without the destination UID the local row can only be matched to its moved copy by Message-ID.
-                    // A message without one would stay pending forever (pending rows are never treated as vanished),
-                    // so leave it unmarked: the source flag pass removes it and the destination sync imports the copy.
-                    if (!string.IsNullOrWhiteSpace(mail.MessageId))
-                    {
-                        if (auditKind is MailOperationKind.Trash or MailOperationKind.Spam)
-                            mail.PreviousMailFolderId = mail.MailFolderId;
-                        mail.ExpectedMailFolderId = target!.Id;
-                        mail.ReconciliationState = MailReconciliationState.Pending;
-                        mail.IsRestoreReconciliation = auditKind == MailOperationKind.Restore;
-                        // Commit the pending marker first: the coordinator may run the reconciliation sync immediately.
-                        await db.SaveChangesAsync(cancellationToken);
-                    }
+                    if (auditKind is MailOperationKind.Trash or MailOperationKind.Spam)
+                        mail.PreviousMailFolderId = mail.MailFolderId;
+                    mail.ExpectedMailFolderId = target!.Id;
+                    mail.ReconciliationState = MailReconciliationState.Pending;
+                    mail.IsRestoreReconciliation = auditKind == MailOperationKind.Restore;
+                    mail.ReconciliationFingerprint = fingerprint;
+                    // Commit first: a separate scheduler scope may immediately reconcile.
+                    await db.SaveChangesAsync(cancellationToken);
                     await scheduler.ScheduleFolderAsync(accountId, target!.Id, SyncOrigin.Reconciliation, cancellationToken);
                     await NotifyStateChangedAsync(accountId, mail, target.Id, OperationName(auditKind), cancellationToken);
                     return await AuditSuccess(accountId, auditKind, mail.Id, correlationId, cancellationToken, new(true, MailOperationError.None, true));
@@ -129,6 +155,7 @@ public sealed class MailOperationService(
                 mail.ReconciliationState = MailReconciliationState.None;
                 mail.ExpectedMailFolderId = null;
                 mail.IsRestoreReconciliation = false;
+                mail.ReconciliationFingerprint = null;
             }
             else if (request.Kind is MailOperationKind.Star or MailOperationKind.Unstar)
                 mail.Flagged = request.Kind == MailOperationKind.Star;
@@ -160,7 +187,7 @@ public sealed class MailOperationService(
         {
             cancellationToken.ThrowIfCancellationRequested();
             var result = await ExecuteAsync(accountId, new MailOperationRequest(mailId, kind, destinationFolderId), correlationId, cancellationToken);
-            results.Add(new BulkMailOperationItemResult(mailId, result.Success, result.Error));
+            results.Add(new BulkMailOperationItemResult(mailId, result.Success, result.Error, result.ReconciliationPending));
         }
 
         return new BulkMailOperationResult(results);

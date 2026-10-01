@@ -252,7 +252,7 @@ public sealed class ScheduledSendServiceTests
         var both = await service.GetAsync(accountId, created.Id, CancellationToken.None);
         var added = both.Attachments.Single(x => x.FileName == "b.txt");
         await service.UpdatePendingAsync(accountId, created.Id,
-            Edit(nextSendAt, [added.Id]) with { To = ["new@example.test"], Cc = ["cc@example.test"], Subject = "Edited", BodyText = "edited body" },
+            Edit(nextSendAt, [added.Id]) with { ExpectedRevision = both.Revision, To = ["new@example.test"], Cc = ["cc@example.test"], Subject = "Edited", BodyText = "edited body" },
             null, CancellationToken.None);
 
         Assert.Equal(["a.txt", "b.txt"], both.Attachments.Select(x => x.FileName).Order());
@@ -348,8 +348,41 @@ public sealed class ScheduledSendServiceTests
         Assert.Equal(0, unchanged.Revision);
     }
 
+    [Fact]
+    public async Task UpdatePendingAsync_StaleEditorPreservesWinningContentAndFiles()
+    {
+        await using var db = CreateDb();
+        var accountId = await SeedAccountAsync(db);
+        var storage = new FakeFileStorage();
+        var service = CreateService(db, storage);
+        var created = await service.CreateAsync(accountId, Command(accountId, "stale-edit", attachment: true),
+            DateTime.UtcNow.AddHours(1), null, CancellationToken.None);
+        var firstEditor = await service.GetAsync(accountId, created.Id, CancellationToken.None);
+        var staleEditor = await service.GetAsync(accountId, created.Id, CancellationToken.None);
+        var kept = firstEditor.Attachments.Single().Id;
+        await service.UpdatePendingAsync(accountId, created.Id,
+            Edit(DateTime.UtcNow.AddHours(2), [kept], File("winner.txt", "winner")) with
+            { ExpectedRevision = firstEditor.Revision, Subject = "Winner" }, null, CancellationToken.None);
+        var savedPaths = storage.Saved.ToArray();
+        db.ChangeTracker.Clear();
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.UpdatePendingAsync(accountId, created.Id,
+                Edit(DateTime.UtcNow.AddHours(3), [], File("stale.txt", "stale")) with
+                { ExpectedRevision = staleEditor.Revision, Subject = "Stale" }, null, CancellationToken.None));
+
+        Assert.Equal("scheduled_send_modified", error.Message);
+        var winner = await service.GetAsync(accountId, created.Id, CancellationToken.None);
+        Assert.Equal("Winner", winner.Subject);
+        Assert.Equal(1, winner.Revision);
+        Assert.Equal(["a.txt", "winner.txt"], winner.Attachments.Select(x => x.FileName).Order());
+        Assert.Equal(savedPaths, storage.Saved);
+        Assert.Empty(storage.Deleted);
+        Assert.Equal("winner"u8.ToArray(), storage.Content[savedPaths.Last()]);
+    }
+
     private static ScheduledSendEdit Edit(DateTime sendAtUtc, IReadOnlyList<Guid> keep, params SendMailAttachment[] files) =>
-        new(sendAtUtc, ["friend@example.test"], [], [], "Hello", null, "body", keep, files);
+        new(0, sendAtUtc, ["friend@example.test"], [], [], "Hello", null, "body", keep, files);
 
     private static SendMailAttachment File(string name, string content) =>
         new(name, "text/plain", new MemoryStream(System.Text.Encoding.UTF8.GetBytes(content)));

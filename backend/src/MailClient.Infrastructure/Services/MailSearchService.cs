@@ -46,7 +46,8 @@ public sealed class MailSearchService(AppDbContext db, RuntimeOperationSettings 
         var queryText = request.Query?.Trim();
         if (queryText is { Length: var length } && length > settings.MaxQueryLength) queryText = queryText[..settings.MaxQueryLength];
         var query = db.Mails.AsNoTracking().Where(mail => mail.MailAccountId == accountId);
-        if (request.FolderId is { } folderId) query = query.Where(mail => mail.MailFolderId == folderId);
+        if (request.FolderId is { } folderId)
+            query = query.Where(mail => (mail.ExpectedMailFolderId ?? mail.MailFolderId) == folderId);
         if (request.ConversationId is { } conversationId) query = query.Where(mail => mail.ConversationId == conversationId);
         if (request.LabelId is { } labelId) query = query.Where(mail => db.MailLabelAssignments.Any(a => a.MailAccountId == accountId && a.MailId == mail.Id && a.MailLabelId == labelId));
         if (request.IsRead is { } isRead) query = query.Where(mail => mail.IsRead == isRead);
@@ -110,8 +111,8 @@ public sealed class MailSearchService(AppDbContext db, RuntimeOperationSettings 
             : query.OrderByDescending(mail => mail.ReceivedAt).ThenByDescending(mail => mail.Uid).ThenByDescending(mail => mail.Id);
         var skip = (int)Math.Min((long)(page - 1) * pageSize, int.MaxValue);
         var items = await ordered.Skip(skip).Take(pageSize)
-            .Select(mail => new MailListItemResponse(mail.Id, mail.MailFolderId, mail.Subject, mail.FromAddress, mail.FromDisplayName, mail.ToAddress, mail.IsRead, mail.HasAttachments, mail.ReceivedAt, mail.ConversationId,
-                mail.BodyText.Substring(0, Math.Min(mail.BodyText.Length, 120)), mail.Flagged, mail.Answered, mail.Attachments.Count))
+            .Select(mail => new MailListItemResponse(mail.Id, mail.ExpectedMailFolderId ?? mail.MailFolderId, mail.Subject, mail.FromAddress, mail.FromDisplayName, mail.ToAddress, mail.IsRead, mail.HasAttachments, mail.ReceivedAt, mail.ConversationId,
+                mail.BodyText.Substring(0, Math.Min(mail.BodyText.Length, 120)), mail.Flagged, mail.Answered, mail.Attachments.Count, mail.ExpectedMailFolderId != null))
             .ToListAsync(cancellationToken);
         return new(items, page, pageSize, total);
     }

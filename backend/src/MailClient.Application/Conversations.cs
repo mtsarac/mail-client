@@ -26,6 +26,7 @@ public sealed record ConversationMessageResponse(
     string? BodyText = null,
     MailClient.Application.Mail.MailBodyResponse? Body = null)
 {
+    public bool ReconciliationPending { get; init; }
     public IReadOnlyList<MailClient.Application.Mail.MailParticipantResponse> To { get; init; } = [];
     public IReadOnlyList<MailClient.Application.Mail.MailParticipantResponse> Cc { get; init; } = [];
     public IReadOnlyList<MailClient.Application.Mail.MailParticipantResponse> Bcc { get; init; } = [];

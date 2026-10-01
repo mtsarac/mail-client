@@ -46,7 +46,8 @@ public sealed record MailListItemResponse(
     string Snippet = "",
     bool Flagged = false,
     bool Answered = false,
-    int AttachmentCount = 0);
+    int AttachmentCount = 0,
+    bool ReconciliationPending = false);
 
 public sealed record MailListResponse(
     IReadOnlyList<MailListItemResponse> Items,
@@ -102,4 +103,6 @@ public sealed record MailDetailResponse(
     Guid? ConversationId = null,
     bool IsFromMe = false,
     MailAuthenticationResponse? Authentication = null,
-    MailSecurityResponse? Security = null);
+    MailSecurityResponse? Security = null,
+    Guid? ReplySourceMailId = null,
+    bool ReconciliationPending = false);

@@ -2,12 +2,12 @@ namespace MailClient.Application.Mail;
 
 /// <remarks><see cref="MailOperationKind.Delete"/> permanently expunges the mail and is only allowed from Trash or Junk.</remarks>
 public enum MailOperationKind { Read, Unread, Star, Unstar, Move, Copy, Trash, Restore, Archive, Spam, NotSpam, Delete }
-public enum MailOperationError { None, NotFound, FolderNotFound, NeedsReauthentication, ProviderUnavailable, Conflict, MoveFailed, NotSupported, DeleteFailed }
+public enum MailOperationError { None, NotFound, FolderNotFound, NeedsReauthentication, ProviderUnavailable, Conflict, MoveFailed, NotSupported, DeleteFailed, ReconciliationPending }
 public sealed record MailOperationRequest(Guid MailId, MailOperationKind Kind, Guid? DestinationFolderId = null);
 /// <param name="ReconciliationPending">The server moved the mail but did not report its new UID; the local row is
 /// matched to the moved copy by the next sync of the destination folder.</param>
 public sealed record MailOperationResult(bool Success, MailOperationError Error = MailOperationError.None, bool ReconciliationPending = false);
-public sealed record BulkMailOperationItemResult(Guid MailId, bool Success, MailOperationError Error = MailOperationError.None);
+public sealed record BulkMailOperationItemResult(Guid MailId, bool Success, MailOperationError Error = MailOperationError.None, bool ReconciliationPending = false);
 public sealed record BulkMailOperationResult(IReadOnlyList<BulkMailOperationItemResult> Results);
 public interface IMailOperationService
 {

@@ -36,6 +36,7 @@ public sealed record ScheduledSendAttachmentInfo(Guid Id, string FileName, strin
 
 public sealed record ScheduledSendDetail(
     Guid Id,
+    int Revision,
     IReadOnlyList<string> To,
     IReadOnlyList<string> Cc,
     IReadOnlyList<string> Bcc,
@@ -62,6 +63,7 @@ public sealed record RescheduleFailedSend(
     bool? RequestReadReceipt = null);
 
 public sealed record ScheduledSendEdit(
+    int ExpectedRevision,
     DateTime SendAtUtc,
     IReadOnlyList<string> To,
     IReadOnlyList<string> Cc,
@@ -182,7 +184,7 @@ public sealed class ScheduledSendService(
         var entity = await db.ScheduledSends.AsNoTracking().Include(x => x.Attachments)
             .SingleOrDefaultAsync(x => x.Id == id && x.MailAccountId == accountId, cancellationToken)
             ?? throw new InvalidOperationException("scheduled_send_not_found");
-        return new ScheduledSendDetail(entity.Id,
+        return new ScheduledSendDetail(entity.Id, entity.Revision,
             Deserialize(entity.ToAddressesJson), Deserialize(entity.CcAddressesJson), Deserialize(entity.BccAddressesJson),
             entity.Subject, entity.BodyHtml, entity.BodyText, entity.SendAtUtc, entity.Status, entity.FailureReason,
             entity.AttemptCount, entity.NextAttemptAtUtc, entity.RequestReadReceipt,
@@ -235,6 +237,8 @@ public sealed class ScheduledSendService(
             ?? throw new InvalidOperationException("scheduled_send_not_found");
         if (entity.Status != ScheduledSendStatus.Pending)
             throw new InvalidOperationException(NotEditableCode(entity.Status));
+        if (entity.Revision != edit.ExpectedRevision)
+            throw new InvalidOperationException("scheduled_send_modified");
         if (edit.SendAtUtc <= DateTime.UtcNow)
             throw new InvalidOperationException("scheduled_send_in_past");
 

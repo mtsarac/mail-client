@@ -178,6 +178,8 @@ To/Cc/Bcc address or name; `fromDate`/`toDate` filter on received time,
 treated as UTC. `labelId` only matches labels owned by the authenticated
 account.
 
+`total` counts every match in the account's cached mail, independent of the page size. Mails whose server move is awaiting reconciliation (see bulk operations) are matched and listed in their destination folder, with `reconciliationPending: true`.
+
 `/api/search/remote` accepts the same search filters except pagination; at
 least one of `q`, `from`, `to` must be non-blank. The response
 `{matched, imported, remaining, complete}` reports not-yet-indexed matches
@@ -278,9 +280,9 @@ Identities are deleted with their account.
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | PATCH | `/api/mails/{id}/read` | bearer | Set read state (body) |
-| POST | `/api/mails/{id}/{op}` | bearer | `op`: read, unread, star, unstar, trash, restore, archive, spam, not-spam, delete (204, no body). `restore` moves the mail back to the folder it was trashed/junked from; a Trash/Junk mail with no recorded origin (removed by another client or server rule) goes to Inbox. `delete` permanently expunges the mail and is allowed only in Trash/Junk (otherwise 422 `mail_operation_not_supported`; server-side failure 502 `mail_delete_failed`) |
+| POST | `/api/mails/{id}/{op}` | bearer | `op`: read, unread, star, unstar, trash, restore, archive, spam, not-spam, delete (204, no body; 202 `{reconciliationPending:true}` when the server moved the mail without reporting its new UID). `restore` moves the mail back to the folder it was trashed/junked from; a Trash/Junk mail with no recorded origin (removed by another client or server rule) goes to Inbox. `delete` permanently expunges the mail and is allowed only in Trash/Junk (otherwise 422 `mail_operation_not_supported`; server-side failure 502 `mail_delete_failed`). While a move awaits reconciliation, follow-up operations first try an inline sync of the destination folder, then fail with 409 `mail_reconciliation_pending` rather than touching the retired source UID |
 | POST | `/api/mails/{id}/move · copy` | bearer | Move/copy to a folder (body) |
-| POST | `/api/mails/bulk/{action}` | bearer | Bulk op on up to 100 `mailIds`; `read`, `unread`, `star`, `unstar`, `archive`, `trash`, `restore`, `spam`, `not-spam`, `delete`, `move` (`move` requires `folderId`) |
+| POST | `/api/mails/bulk/{action}` | bearer | Bulk op on up to 100 `mailIds`; `read`, `unread`, `star`, `unstar`, `archive`, `trash`, `restore`, `spam`, `not-spam`, `delete`, `move` (`move` requires `folderId`). Items report `success`, `code` and `reconciliationPending` |
 
 ### Conversations
 

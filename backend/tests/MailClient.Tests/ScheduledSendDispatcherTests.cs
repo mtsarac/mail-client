@@ -142,7 +142,7 @@ public sealed class ScheduledSendDispatcherTests
         var hook = new HookedFileStorage(storage, () => ScheduledSendDispatcher.ProcessDueAsync(provider, CancellationToken.None));
         var service = new ScheduledSendService(editDb, hook, FixedRuntimeSettingsStore.Operation(),
             new AuditLogger(editDb), NullLogger<ScheduledSendService>.Instance);
-        var edit = new ScheduledSendEdit(DateTime.UtcNow.AddHours(1), ["edited@example.test"], [], [],
+        var edit = new ScheduledSendEdit(0, DateTime.UtcNow.AddHours(1), ["edited@example.test"], [], [],
             "Edited", null, "edited body", [], [File("new.txt", "new")]);
 
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
@@ -173,7 +173,7 @@ public sealed class ScheduledSendDispatcherTests
         db.ChangeTracker.Clear();
         var service = new ScheduledSendService(db, storage, FixedRuntimeSettingsStore.Operation(),
             new AuditLogger(db), NullLogger<ScheduledSendService>.Instance);
-        var edit = new ScheduledSendEdit(DateTime.UtcNow.AddHours(1), ["edited@example.test"], [], [],
+        var edit = new ScheduledSendEdit(0, DateTime.UtcNow.AddHours(1), ["edited@example.test"], [], [],
             "Edited", null, "edited body", [], []);
         await service.UpdatePendingAsync(accountId, due, edit, null, CancellationToken.None);
         var row = await db.ScheduledSends.SingleAsync(x => x.Id == due);

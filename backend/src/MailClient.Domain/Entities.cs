@@ -126,6 +126,7 @@ public sealed class Mail
     public Guid? ExpectedMailFolderId { get; set; }
     public MailReconciliationState ReconciliationState { get; set; }
     public bool IsRestoreReconciliation { get; set; }
+    public string? ReconciliationFingerprint { get; set; }
     public Guid? ConversationId { get; set; }
     public uint Uid { get; set; }
     public uint UidValidity { get; set; }
