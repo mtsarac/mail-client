@@ -20,7 +20,7 @@ public sealed record ReadRequest(bool IsRead);
 public sealed record FolderOperationRequest(Guid FolderId);
 public sealed record SendMailResponse(bool Sent, bool SentCopySaved, string? Warning, Guid? MailId, Guid? ConversationId);
 public sealed record BulkMailOperationRequest(IReadOnlyList<Guid> MailIds, Guid? FolderId = null);
-public sealed record BulkMailOperationItemResponse(Guid MailId, bool Success, string? Code);
+public sealed record BulkMailOperationItemResponse(Guid MailId, bool Success, string? Code, bool ReconciliationPending = false);
 public sealed record BulkMailOperationResponse(IReadOnlyList<BulkMailOperationItemResponse> Results);
 public sealed record ComposeLimitsResponse(long MaxAttachmentBytes, long MaxMessageAttachmentBytes, int MaxAttachmentCount);
 
@@ -112,7 +112,7 @@ public static class MailEndpoints
             var result = await operations.ExecuteAsync(current.MailAccountId, new MailOperationRequest(id, request.IsRead ? MailOperationKind.Read : MailOperationKind.Unread), correlation.CorrelationId, ct);
             return OperationResult(result, correlation.CorrelationId, legacyRead: true);
         }).WithTags(OperationsTag).WithName("SetMailReadState").WithSummary("Set read state (PATCH)").WithDescription("Body {\"isRead\": true|false}. Equivalent to POST /read or /unread; legacy conflict code is mailbox_changed.")
-            .Produces(204).ProblemCodes(404, "mail_not_found").ProblemCodes(409, "mailbox_changed", "mail_account_needs_reauthentication").ProblemCodes(502, "mail_provider_unavailable");
+            .Produces(204).Produces(202).ProblemCodes(404, "mail_not_found").ProblemCodes(409, "mailbox_changed", "mail_account_needs_reauthentication", "mail_reconciliation_pending").ProblemCodes(502, "mail_provider_unavailable");
 
         MapOperation(api, "unread", MailOperationKind.Unread, "MarkMailUnread", "Mark unread");
         MapOperation(api, "read", MailOperationKind.Read, "MarkMailRead", "Mark read");
@@ -140,7 +140,7 @@ public static class MailEndpoints
 
             var result = await operations.ExecuteBulkAsync(current.MailAccountId, request.MailIds, kind, request.FolderId, correlation.CorrelationId, ct);
             return Results.Ok(new BulkMailOperationResponse(result.Results
-                .Select(item => new BulkMailOperationItemResponse(item.MailId, item.Success, item.Success ? null : MapOperationError(item.Error).Code))
+                .Select(item => new BulkMailOperationItemResponse(item.MailId, item.Success, item.Success ? null : MapOperationError(item.Error).Code, item.ReconciliationPending))
                 .ToList()));
         }).WithTags(OperationsTag).WithName("BulkMailOperation").WithSummary("Apply a mail operation to multiple mails")
             .WithDescription("action: read, unread, star, unstar, archive, trash, restore, spam, not-spam, delete (Trash/Junk only, permanent), or move (move requires folderId). 1-100 ids. Each mail is applied independently, so one failure does not block the rest of the batch — always 200 for a valid request; check per-item `success`/`code`.")
@@ -269,8 +269,9 @@ public static class MailEndpoints
         var delete = kind == MailOperationKind.Delete;
         return builder
             .Produces(204)
+            .Produces(202)
             .ProblemCodes(404, delete ? ["mail_not_found"] : ["mail_not_found", "mail_folder_not_found"])
-            .ProblemCodes(409, "mail_account_needs_reauthentication", "mail_operation_conflict")
+            .ProblemCodes(409, "mail_account_needs_reauthentication", "mail_operation_conflict", "mail_reconciliation_pending")
             .ProblemCodes(422, "mail_operation_not_supported")
             .ProblemCodes(502, "mail_provider_unavailable", delete ? "mail_delete_failed" : "mail_move_failed");
     }
@@ -287,7 +288,9 @@ public static class MailEndpoints
     private static IResult OperationResult(MailOperationResult result, string correlationId, bool legacyRead = false)
     {
         if (result.Success)
-            return Results.NoContent();
+            return result.ReconciliationPending
+                ? Results.Json(new { reconciliationPending = true }, statusCode: StatusCodes.Status202Accepted)
+                : Results.NoContent();
         var (status, title, code) = MapOperationError(result.Error, legacyRead);
         return Results.Problem(title: title, statusCode: status, extensions: new Dictionary<string, object?> { ["code"] = code, ["correlationId"] = correlationId });
     }
@@ -303,6 +306,7 @@ public static class MailEndpoints
         MailOperationError.MoveFailed => (502, "Mail move failed.", "mail_move_failed"),
         MailOperationError.DeleteFailed => (502, "Mail delete failed.", "mail_delete_failed"),
         MailOperationError.NotSupported => (422, "Mail operation is not supported.", "mail_operation_not_supported"),
+        MailOperationError.ReconciliationPending => (409, "Mail move is awaiting reconciliation.", "mail_reconciliation_pending"),
         _ => (500, "Mail operation failed.", "mail_operation_failed")
     };
 }

@@ -278,9 +278,21 @@ public sealed class MailSendService(
             return new(null, null);
         var source = await db.Mails.AsNoTracking()
             .Where(x => x.Id == id && x.MailAccountId == accountId)
-            .Select(x => new { x.MessageId, x.References })
+            .Select(x => new
+            {
+                x.MessageId,
+                x.InReplyToMessageId,
+                x.References,
+                IsDraftSource = db.MailFolders.Any(folder => folder.MailAccountId == accountId
+                    && folder.FolderType == MailFolderType.Drafts
+                    && (folder.Id == x.MailFolderId || folder.Id == x.PreviousMailFolderId))
+            })
             .SingleOrDefaultAsync(cancellationToken)
             ?? throw new InvalidOperationException("mail_not_found");
+        // An opened reply draft is already threaded. Its saved GUID remains
+        // a valid source after an edit retires that version into Trash.
+        if (source.IsDraftSource)
+            return new(source.InReplyToMessageId, source.References);
         var (inReplyTo, references) = ConversationEngine.ReplyHeaders(source.MessageId, source.References);
         return new(inReplyTo, references);
     }

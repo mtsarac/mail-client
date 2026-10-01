@@ -12,6 +12,35 @@ namespace MailClient.Tests;
 
 public sealed class MailSearchServiceTests
 {
+    [Fact]
+    public async Task Search_PendingMove_AppearsOnlyInDestinationWithPendingMarker()
+    {
+        await using var db = CreateDb();
+        var accountId = Guid.NewGuid();
+        var sourceId = Guid.NewGuid();
+        var destinationId = Guid.NewGuid();
+        var mail = Message(accountId, sourceId, 1);
+        mail.ExpectedMailFolderId = destinationId;
+        mail.ReconciliationState = MailReconciliationState.Pending;
+        db.Mails.Add(mail);
+        await db.SaveChangesAsync();
+        var service = new MailSearchService(db, FixedRuntimeSettingsStore.Operation());
+        var request = new MailSearchRequest(null, sourceId, null, null, null, null, null, null, null, null, 1, 20);
+
+        var source = await service.SearchAsync(accountId, request, CancellationToken.None);
+        var destination = await service.SearchAsync(accountId, request with { FolderId = destinationId }, CancellationToken.None);
+        var anywhere = await service.SearchAsync(accountId, request with { FolderId = null }, CancellationToken.None);
+
+        Assert.Equal(0, source.Total);
+        var moved = Assert.Single(destination.Items);
+        Assert.Equal(mail.Id, moved.Id);
+        Assert.Equal(destinationId, moved.FolderId);
+        Assert.True(moved.ReconciliationPending);
+        Assert.Equal(mail.Id, Assert.Single(anywhere.Items).Id);
+        Assert.Empty((await service.SearchAsync(Guid.NewGuid(), request with { FolderId = destinationId }, CancellationToken.None)).Items);
+        Assert.Equal(sourceId, mail.MailFolderId);
+    }
+
     [Theory]
     [InlineData("subject")]
     [InlineData("body")]

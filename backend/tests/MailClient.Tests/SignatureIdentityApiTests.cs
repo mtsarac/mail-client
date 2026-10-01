@@ -323,7 +323,7 @@ public sealed class SignatureIdentityApiTests(AcceptingApiFactory factory) : ICl
         var audit = new AuditLogger(db);
         var reader = new MailReadService(db, folders, audit, NullLogger<MailReadService>.Instance);
         var operations = new MailOperationService(db, folders, reader, audit, new FakeSyncScheduler(),
-            NullLogger<MailOperationService>.Instance, new FakePushNotificationService(), new FakeFileStorage());
+            NullLogger<MailOperationService>.Instance, new FakePushNotificationService(), new FakeFileStorage(), TestServices.InlineSync());
         var sendOperations = new SendOperationStore(db, NullLogger<SendOperationStore>.Instance);
         var sender = new MailSendService(db, new FakeMailTransport(), sendOperations,
             FixedRuntimeSettingsStore.Operation(), TestServices.InlineSync(), audit, NullLogger<MailSendService>.Instance);

@@ -54,5 +54,44 @@ public sealed class MailReconciliationTests
         Assert.False(await service.ReconcileAsync(accountId, destinationId, "", 1, 1, CancellationToken.None));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ReconcileAsync_MissingMessageId_RebindsOnlyUniqueDestinationContent(bool duplicate)
+    {
+        await using var db = CreateDb();
+        var accountId = Guid.NewGuid();
+        var sourceId = Guid.NewGuid();
+        var destinationId = Guid.NewGuid();
+        var mailId = Guid.NewGuid();
+        var message = new MimeKit.MimeMessage { Subject = "no identity", Body = new MimeKit.TextPart("plain") { Text = "content proof" } };
+        message.Headers.Remove(MimeKit.HeaderId.MessageId);
+        var fingerprint = await MailReconciliationService.FingerprintAsync(message, CancellationToken.None);
+        db.Mails.Add(new Mail
+        {
+            Id = mailId,
+            MailAccountId = accountId,
+            MailFolderId = sourceId,
+            ExpectedMailFolderId = destinationId,
+            ReconciliationState = MailReconciliationState.Pending,
+            ReconciliationFingerprint = fingerprint,
+            Uid = 4,
+            UidValidity = 1
+        });
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+        var remote = new FakeRemoteMailFolder(2, new() { [22] = () => message });
+        if (duplicate) remote.Messages[23] = () => message;
+
+        var rebound = await new MailReconciliationService(db).ReconcileAsync(
+            accountId, destinationId, "", 22, 2, CancellationToken.None, fingerprint, remote);
+
+        Assert.Equal(!duplicate, rebound);
+        var mail = await db.Mails.SingleAsync(item => item.Id == mailId);
+        Assert.Equal(duplicate ? sourceId : destinationId, mail.MailFolderId);
+        Assert.Equal(duplicate ? 4u : 22u, mail.Uid);
+        Assert.Equal(duplicate ? MailReconciliationState.Pending : MailReconciliationState.None, mail.ReconciliationState);
+    }
+
     private static AppDbContext CreateDb() => new(new DbContextOptionsBuilder<AppDbContext>().UseInMemoryDatabase(Guid.NewGuid().ToString()).Options);
 }

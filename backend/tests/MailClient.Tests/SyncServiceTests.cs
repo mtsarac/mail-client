@@ -292,6 +292,31 @@ public sealed class SyncServiceTests
     }
 
     [Fact]
+    public async Task SourceUidValidityReset_PreservesPendingMoveIdentity()
+    {
+        await using var db = CreateDb();
+        var (accountId, folderId) = await SeedFolderAsync(db);
+        var source = new FakeRemoteMailFolder(7, new() { [1] = () => SimpleMessage("pending") });
+        var service = CreateService(db, Options(100));
+        await service.SyncFolderCoreAsync(accountId, folderId, source, CancellationToken.None);
+        var pending = await db.Mails.SingleAsync();
+        var mailId = pending.Id;
+        var destinationId = Guid.NewGuid();
+        pending.ExpectedMailFolderId = destinationId;
+        pending.ReconciliationState = MailReconciliationState.Pending;
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+
+        await service.SyncFolderCoreAsync(accountId, folderId, new FakeRemoteMailFolder(99, new()), CancellationToken.None);
+
+        var retained = await db.Mails.SingleAsync(mail => mail.Id == mailId);
+        Assert.Equal(destinationId, retained.ExpectedMailFolderId);
+        Assert.Equal(1u, retained.Uid);
+        Assert.Equal(7u, retained.UidValidity);
+        Assert.Equal(MailReconciliationState.Pending, retained.ReconciliationState);
+    }
+
+    [Fact]
     public async Task ConversationAssignmentFailure_KeepsImportedMailAndItsAttachments()
     {
         await using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()

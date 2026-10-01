@@ -136,7 +136,7 @@ public static class FolderEndpoints
         var folders = await db.MailFolders.AsNoTracking().Where(x => x.MailAccountId == accountId).ToListAsync(ct);
         var counts = await db.Mails.AsNoTracking()
             .Where(m => m.MailAccountId == accountId && !m.Deleted)
-            .GroupBy(m => m.MailFolderId)
+            .GroupBy(m => m.ExpectedMailFolderId ?? m.MailFolderId)
             .Select(g => new { FolderId = g.Key, Unread = g.Count(m => !m.IsRead), Total = g.Count() })
             .ToDictionaryAsync(x => x.FolderId, ct);
         var parents = MailFolderHierarchy.ParentIds(folders);

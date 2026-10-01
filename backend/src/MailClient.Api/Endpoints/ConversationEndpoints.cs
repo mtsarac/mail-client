@@ -70,14 +70,14 @@ public static class ConversationEndpoints
             var messages = await db.Mails
                 .AsNoTracking()
                 .Where(mail => mail.ConversationId == id && mail.MailAccountId == accountId
-                    && !(noTrash && folderTypes.Any(folder => folder.Id == mail.MailFolderId
+                    && !(noTrash && folderTypes.Any(folder => folder.Id == (mail.ExpectedMailFolderId ?? mail.MailFolderId)
                         && (folder.FolderType == MailClient.Domain.Enums.MailFolderType.Trash
                             || folder.FolderType == MailClient.Domain.Enums.MailFolderType.Junk))))
                 .OrderBy(mail => mail.SentAt)
                 .ThenBy(mail => mail.Uid)
                 .Select(mail => new ConversationMessageResponse(
                     mail.Id,
-                    mail.MailFolderId,
+                    mail.ExpectedMailFolderId ?? mail.MailFolderId,
                     mail.Subject,
                     mail.FromAddress,
                     mail.FromDisplayName,
@@ -85,10 +85,13 @@ public static class ConversationEndpoints
                     mail.ReceivedAt,
                     mail.IsRead,
                     mail.HasAttachments,
-                    folderTypes.Any(folder => folder.Id == mail.MailFolderId
+                    folderTypes.Any(folder => folder.Id == (mail.ExpectedMailFolderId ?? mail.MailFolderId)
                         && (folder.FolderType == MailClient.Domain.Enums.MailFolderType.Sent
                             || folder.FolderType == MailClient.Domain.Enums.MailFolderType.Drafts))
-                        || mail.FromAddress.ToUpper() == self))
+                        || mail.FromAddress.ToUpper() == self)
+                {
+                    ReconciliationPending = mail.ExpectedMailFolderId != null
+                })
                 .ToListAsync(ct);
             var ids = messages.Select(message => message.Id).ToList();
             var participants = (await db.Participants.AsNoTracking()

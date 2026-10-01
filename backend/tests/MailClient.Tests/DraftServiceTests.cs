@@ -131,11 +131,34 @@ public sealed class DraftServiceTests
     }
 
     [Fact]
+    public async Task DeleteAsync_RemoteConflict_LeavesFlaglessDraftListedAndEditable()
+    {
+        await using var db = CreateDb();
+        var (accountId, draftsId) = await SeedAsync(db);
+        AddTrash(db, accountId);
+        var draftId = await SeedDraftAsync(db, accountId, draftsId, draft: false);
+        var remote = new FakeRemoteMailFolder(99, new());
+        var service = CreateService(db, remote, new RecordingSyncExecutor());
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.DeleteAsync(accountId, draftId, null, CancellationToken.None));
+        var listed = await new MailSearchService(db, FixedRuntimeSettingsStore.Operation()).SearchAsync(accountId,
+            new MailSearchRequest(null, draftsId, null, null, null, null, null, null, null, null, 1, 20), CancellationToken.None);
+
+        Assert.Equal("draft_delete_failed", error.Message);
+        Assert.Empty(remote.Moved);
+        Assert.Equal(draftId, Assert.Single(listed.Items).Id);
+        Assert.Equal(DraftLookupError.None, (await service.GetAsync(accountId, draftId, CancellationToken.None)).Error);
+    }
+
+    [Fact]
     public async Task GetAsync_ForeignAccountAndNonDraft_AreRejected()
     {
         await using var db = CreateDb();
         var (accountId, draftsId) = await SeedAsync(db);
-        var mailId = await SeedDraftAsync(db, accountId, draftsId, draft: false);
+        AddTrash(db, accountId);
+        var trash = db.MailFolders.Local.Single(folder => folder.FolderType == MailFolderType.Trash);
+        var mailId = await SeedDraftAsync(db, accountId, trash.Id);
         var service = CreateService(db, new FakeRemoteMailFolder(31, new()), new RecordingSyncExecutor());
 
         var other = await service.GetAsync(Guid.NewGuid(), mailId, CancellationToken.None);
@@ -143,6 +166,103 @@ public sealed class DraftServiceTests
 
         Assert.Equal(DraftLookupError.NotFound, other.Error);
         Assert.Equal(DraftLookupError.NotDraft, nonDraft.Error);
+        var update = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.UpdateAsync(accountId, mailId, Command(accountId), null, CancellationToken.None));
+        var delete = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.DeleteAsync(accountId, mailId, null, CancellationToken.None));
+        Assert.Equal("mail_not_draft", update.Message);
+        Assert.Equal("mail_not_draft", delete.Message);
+    }
+
+    [Fact]
+    public async Task GetAsync_DraftsFolderWithoutDraftFlag_ReturnsDraft()
+    {
+        await using var db = CreateDb();
+        var (accountId, draftsId) = await SeedAsync(db);
+        var draftId = await SeedDraftAsync(db, accountId, draftsId, draft: false);
+        var service = CreateService(db, new FakeRemoteMailFolder(31, new()), new RecordingSyncExecutor());
+
+        var result = await service.GetAsync(accountId, draftId, CancellationToken.None);
+
+        Assert.Equal(DraftLookupError.None, result.Error);
+        Assert.Equal(draftId, result.Draft!.Id);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_WithoutDraftFlags_ListsOnlyEditableReplacementAfterMoveWithoutUid()
+    {
+        await using var db = CreateDb();
+        var (accountId, draftsId) = await SeedAsync(db);
+        AddTrash(db, accountId);
+        var draftId = await SeedDraftAsync(db, accountId, draftsId, draft: false);
+        var replacementId = Guid.NewGuid();
+        var remote = new FakeRemoteMailFolder(31, new()) { AppendResult = new(new UniqueId(6), 31) };
+        var sync = new RecordingSyncExecutor(async () =>
+        {
+            db.Mails.Add(new MailClient.Domain.Entities.Mail
+            {
+                Id = replacementId,
+                MailAccountId = accountId,
+                MailFolderId = draftsId,
+                Uid = 6,
+                UidValidity = 31,
+                Draft = false,
+                MessageId = "draft@example.test",
+                Subject = "replacement"
+            });
+            await db.SaveChangesAsync();
+        });
+        var service = CreateService(db, remote, sync);
+
+        var result = await service.UpdateAsync(accountId, draftId, Command(accountId), null, CancellationToken.None);
+        var listed = await new MailSearchService(db, FixedRuntimeSettingsStore.Operation()).SearchAsync(accountId,
+            new MailSearchRequest(null, draftsId, null, null, null, null, null, null, null, null, 1, 20), CancellationToken.None);
+        var original = await service.GetAsync(accountId, draftId, CancellationToken.None);
+        var replacement = await service.GetAsync(accountId, replacementId, CancellationToken.None);
+
+        Assert.Equal(replacementId, result.MailId);
+        Assert.False(result.ReconciliationPending);
+        Assert.Equal(replacementId, Assert.Single(listed.Items).Id);
+        Assert.Equal(1, listed.Total);
+        Assert.Equal(DraftLookupError.NotDraft, original.Error);
+        Assert.Equal(DraftLookupError.None, replacement.Error);
+        Assert.Equal(replacementId, replacement.Draft!.Id);
+        Assert.Equal([5u], remote.Moved);
+        var staleDelete = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.DeleteAsync(accountId, draftId, null, CancellationToken.None));
+        var staleUpdate = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.UpdateAsync(accountId, draftId, Command(accountId), null, CancellationToken.None));
+        Assert.Equal("mail_not_draft", staleDelete.Message);
+        Assert.Equal("mail_not_draft", staleUpdate.Message);
+        Assert.Equal([5u], remote.Moved);
+    }
+
+    [Fact]
+    public async Task DeleteAsync_WithoutDraftFlag_RetiresDraftAndRejectsForeignAccount()
+    {
+        await using var db = CreateDb();
+        var (accountId, draftsId) = await SeedAsync(db);
+        AddTrash(db, accountId);
+        var draftId = await SeedDraftAsync(db, accountId, draftsId, draft: false);
+        var remote = new FakeRemoteMailFolder(31, new());
+        var service = CreateService(db, remote, new RecordingSyncExecutor());
+
+        var foreignDelete = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.DeleteAsync(Guid.NewGuid(), draftId, null, CancellationToken.None));
+        var foreignUpdate = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.UpdateAsync(Guid.NewGuid(), draftId, Command(accountId), null, CancellationToken.None));
+        Assert.Equal("draft_not_found", foreignDelete.Message);
+        Assert.Equal("draft_not_found", foreignUpdate.Message);
+        Assert.Empty(remote.Moved);
+
+        await service.DeleteAsync(accountId, draftId, null, CancellationToken.None);
+        var listed = await new MailSearchService(db, FixedRuntimeSettingsStore.Operation()).SearchAsync(accountId,
+            new MailSearchRequest(null, draftsId, null, null, null, null, null, null, null, null, 1, 20), CancellationToken.None);
+
+        Assert.Equal([5u], remote.Moved);
+        Assert.Empty(listed.Items);
+        Assert.Equal(0, listed.Total);
+        Assert.Equal(DraftLookupError.NotDraft, (await service.GetAsync(accountId, draftId, CancellationToken.None)).Error);
     }
 
     [Fact]
@@ -205,7 +325,7 @@ public sealed class DraftServiceTests
         var folders = new RecordingMailFolderClient(remote);
         var audit = new AuditLogger(db);
         var reader = new MailReadService(db, folders, audit, NullLogger<MailReadService>.Instance);
-        var operations = new MailOperationService(db, folders, reader, audit, new FakeSyncScheduler(), NullLogger<MailOperationService>.Instance, new FakePushNotificationService(), new FakeFileStorage());
+        var operations = new MailOperationService(db, folders, reader, audit, new FakeSyncScheduler(), NullLogger<MailOperationService>.Instance, new FakePushNotificationService(), new FakeFileStorage(), TestServices.InlineSync(sync));
         var sendOperations = new SendOperationStore(db, NullLogger<SendOperationStore>.Instance);
         var inlineSync = TestServices.InlineSync(sync);
         var sender = new MailSendService(db, transport ?? new FakeMailTransport(), sendOperations, FixedRuntimeSettingsStore.Operation(), inlineSync, audit, NullLogger<MailSendService>.Instance);

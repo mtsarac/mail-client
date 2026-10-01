@@ -63,7 +63,7 @@ public sealed class DraftService(
             .SingleOrDefaultAsync(mail => mail.Id == draftId && mail.MailAccountId == accountId, cancellationToken);
         if (draft is null)
             return new(null, DraftLookupError.NotFound);
-        if (draft.MailFolder?.FolderType != MailFolderType.Drafts || !draft.Draft)
+        if (!IsEditableDraft(draft))
             return new(null, DraftLookupError.NotDraft);
         return new(await reader.GetAsync(accountId, draftId, cancellationToken), DraftLookupError.None);
     }
@@ -170,10 +170,15 @@ public sealed class DraftService(
         var draft = await db.Mails.Include(mail => mail.MailFolder).Include(mail => mail.MailAccount)
             .SingleOrDefaultAsync(mail => mail.Id == draftId && mail.MailAccountId == accountId, cancellationToken)
             ?? throw new InvalidOperationException("draft_not_found");
-        if (draft.MailFolder?.FolderType != MailFolderType.Drafts || !draft.Draft)
+        if (!IsEditableDraft(draft))
             throw new InvalidOperationException("mail_not_draft");
         return draft;
     }
+
+    // Drafts folder membership is authoritative: other clients can omit the IMAP \Draft flag.
+    // A successful MOVE without a destination UID leaves the source row pending, not editable.
+    private static bool IsEditableDraft(MailClient.Domain.Entities.Mail mail) =>
+        mail.MailFolder?.FolderType == MailFolderType.Drafts && mail.ExpectedMailFolderId is null;
 
     private async Task<MimeMessage> BuildAsync(MailAccount account, DraftCommand command, MailClient.Domain.Entities.Mail? existing, CancellationToken cancellationToken)
     {

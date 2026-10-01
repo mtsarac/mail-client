@@ -132,11 +132,13 @@ public sealed class MailFolderSyncService(
         else if (SyncStateDecision.RequiresReset(state.UidValidity, remote.UidValidity))
         {
             var obsoletePaths = await db.Attachments
-                .Where(attachment => db.Mails.Any(mail => mail.Id == attachment.MailId && mail.MailFolderId == folderId)
+                .Where(attachment => db.Mails.Any(mail => mail.Id == attachment.MailId && mail.MailFolderId == folderId
+                        && mail.ExpectedMailFolderId == null && mail.ReconciliationState == MailReconciliationState.None)
                     && attachment.StoragePath != "")
                 .Select(attachment => attachment.StoragePath)
                 .ToListAsync(cancellationToken);
-            db.Mails.RemoveRange(db.Mails.Where(mail => mail.MailFolderId == folderId));
+            db.Mails.RemoveRange(db.Mails.Where(mail => mail.MailFolderId == folderId
+                && mail.ExpectedMailFolderId == null && mail.ReconciliationState == MailReconciliationState.None));
             db.SyncSkippedUids.RemoveRange(db.SyncSkippedUids.Where(skip => skip.MailFolderId == folderId));
             state.UidValidity = remote.UidValidity;
             state.LastUid = 0;
@@ -494,7 +496,14 @@ public sealed class MailFolderSyncService(
             }
 
             var incomingMessageId = MailFieldNormalizer.MessageId(message.MessageId);
-            if (await reconciliations.ReconcileAsync(accountId, folderId, incomingMessageId, uid.Id, remote.UidValidity, cancellationToken))
+            var needsFingerprint = string.IsNullOrWhiteSpace(incomingMessageId)
+                && await db.Mails.AnyAsync(mail => mail.MailAccountId == accountId
+                    && mail.ExpectedMailFolderId == folderId
+                    && mail.ReconciliationFingerprint != null, cancellationToken);
+            var fingerprint = needsFingerprint
+                ? await MailReconciliationService.FingerprintAsync(message, cancellationToken)
+                : null;
+            if (await reconciliations.ReconcileAsync(accountId, folderId, incomingMessageId, uid.Id, remote.UidValidity, cancellationToken, fingerprint, remote))
             {
                 state.LastUid = Math.Max(state.LastUid, uid.Id);
                 await db.SaveChangesAsync(cancellationToken);

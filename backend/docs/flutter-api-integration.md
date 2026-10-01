@@ -685,6 +685,8 @@ Yeni taslak oluşturur (sunucu tarafında IMAP `APPEND` ile). Alanlar form-data:
 
 Yanıt şekli `GET /api/mails/{id}` ile aynıdır (`MailDetailResponse`).
 
+Taslak uygunluğu hesaba ait **Drafts klasöründeki** mesajlara göre belirlenir; başka istemciler IMAP `\Draft` bayrağını koymamış olsa da bu mesajlar açılabilir, düzenlenebilir, silinebilir ve gönderilebilir. Bayrak tek başına Drafts dışındaki bir mesajı taslak yapmaz. Sunucuda çöpe taşınmış fakat hedef UID eşleştirmesi bekleyen eski taslaklar liste sonuçlarından çıkarılır ve taslak işlemleri için artık geçerli değildir.
+
 | Durum | code | Anlamı |
 |---|---|---|
 | 404 | — | Taslak yok / başka hesaba ait. |
@@ -693,7 +695,7 @@ Yanıt şekli `GET /api/mails/{id}` ile aynıdır (`MailDetailResponse`).
 ### `PUT /api/drafts/{id}`
 **Auth:** Bearer · **Gövde:** `multipart/form-data`
 
-IMAP taslaklar yerinde düzenlenemez: sunucu eski mesajı siler, yenisini `APPEND` eder. Yanıt `POST /drafts` ile aynı şekil (`{ created: false, mailId, … }`) ama **yeni** bir `mailId` döner. `reconciliationPending: true` ise (örn. art arda iki `PUT`'ta ikinci istek senkronizasyon meşgulken gelirse) yeni kopya sunucuda kayıtlıdır ve eski taslak yine çöpe taşınmıştır, ama `mailId` `null`'dır — eski id'yi state'ten çıkar ve taslak listesini kısa süre sonra tazele.
+IMAP taslaklar yerinde düzenlenemez: sunucu önce yenisini `APPEND` eder; bu başarılı olduktan sonra eski mesajı çöpe taşır. Yanıt `POST /drafts` ile aynı şekil (`{ created: false, mailId, … }`) ama **yeni** bir `mailId` döner. `reconciliationPending: true` ise (örn. art arda iki `PUT`'ta ikinci istek senkronizasyon meşgulken gelirse) yeni kopya sunucuda kayıtlıdır ve eski taslak yine çöpe taşınmıştır, ama `mailId` `null`'dır — eski id'yi state'ten çıkar ve taslak listesini kısa süre sonra tazele.
 
 `PUT` hataları: `404 draft_not_found`, `422 mail_not_draft` / `drafts_folder_unavailable`.
 

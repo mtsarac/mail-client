@@ -60,7 +60,7 @@ public sealed class MailOperationServiceTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_MoveWithoutDestinationUidOrMessageId_LeavesRowForVanishCleanup()
+    public async Task ExecuteAsync_MoveWithoutDestinationUidOrMessageId_ReconcilesStableIdByMimeContent()
     {
         await using var db = CreateDb();
         var (accountId, folderId, mailId) = await SeedAsync(db);
@@ -71,15 +71,28 @@ public sealed class MailOperationServiceTests
         await db.SaveChangesAsync();
         db.ChangeTracker.Clear();
         var scheduler = new FakeSyncScheduler();
-        var service = CreateService(db, new FakeMailFolderClient(new NullDestinationRemote(7)), scheduler);
+        var message = new MimeKit.MimeMessage { Subject = "test", Body = new MimeKit.TextPart("plain") { Text = "unique body" } };
+        message.Headers.Remove(MimeKit.HeaderId.MessageId);
+        var remote = new NullDestinationRemote(7);
+        remote.Messages[5] = () => message;
+        var service = CreateService(db, new FakeMailFolderClient(remote), scheduler);
 
         var result = await service.ExecuteAsync(accountId, new(mailId, MailOperationKind.Move, destinationId), null, CancellationToken.None);
 
         Assert.True(result.Success);
         var mail = await db.Mails.SingleAsync(x => x.Id == mailId);
         Assert.Equal(folderId, mail.MailFolderId);
-        Assert.Equal(MailReconciliationState.None, mail.ReconciliationState);
-        Assert.Null(mail.ExpectedMailFolderId);
+        Assert.True(result.ReconciliationPending);
+        Assert.Equal(MailReconciliationState.Pending, mail.ReconciliationState);
+        Assert.Equal(destinationId, mail.ExpectedMailFolderId);
+        var destination = new FakeRemoteMailFolder(8, new() { [22] = () => message });
+        var fingerprint = await MailReconciliationService.FingerprintAsync(message, CancellationToken.None);
+        Assert.True(await new MailReconciliationService(db).ReconcileAsync(accountId, destinationId, "", 22, 8, CancellationToken.None, fingerprint, destination));
+        Assert.Equal(destinationId, mail.MailFolderId);
+        Assert.Equal(22u, mail.Uid);
+        Assert.Equal(8u, mail.UidValidity);
+        Assert.Null(mail.ReconciliationFingerprint);
+        Assert.Single(await db.Mails.ToListAsync());
         Assert.Contains(scheduler.Scheduled, item => item.FolderId == destinationId);
     }
 
@@ -170,6 +183,78 @@ public sealed class MailOperationServiceTests
         Assert.Equal(MailReconciliationState.Pending, mail.ReconciliationState);
         Assert.NotEqual(destinationId, mail.MailFolderId);
         Assert.Equal(MailReconciliationState.Pending, persistedWhenScheduled);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_NoUidTrashThenDelete_AfterRestartReconcilesBeforeExpunging()
+    {
+        var databaseName = Guid.NewGuid().ToString();
+        Guid accountId;
+        Guid mailId;
+        var trashId = Guid.NewGuid();
+        await using (var db = CreateDb(databaseName))
+        {
+            (accountId, _, mailId) = await SeedAsync(db);
+            db.MailFolders.Add(new MailFolder { Id = trashId, MailAccountId = accountId, Name = "Trash", FullName = "Trash", FolderType = MailFolderType.Trash, UidValidity = 8 });
+            await db.SaveChangesAsync();
+            var result = await CreateService(db, new FakeMailFolderClient(new NullDestinationRemote(7)))
+                .ExecuteAsync(accountId, new(mailId, MailOperationKind.Trash), null, CancellationToken.None);
+            Assert.True(result.Success);
+            Assert.True(result.ReconciliationPending);
+        }
+        await using var restarted = CreateDb(databaseName);
+        var destination = new FakeRemoteMailFolder(8, new());
+        var inlineSync = TestServices.InlineSync(new CallbackSyncExecutor(async (account, folder, ct) =>
+        {
+            await using var observer = CreateDb(databaseName);
+            Assert.True(await new MailReconciliationService(observer).ReconcileAsync(account, folder, "seed@example.test", 22, 8, ct));
+        }));
+        var service = CreateService(restarted, new FakeMailFolderClient(destination), inlineSync: inlineSync);
+
+        var deleted = await service.ExecuteAsync(accountId, new(mailId, MailOperationKind.Delete), null, CancellationToken.None);
+
+        Assert.True(deleted.Success);
+        Assert.Equal([22u], destination.Expunged);
+        Assert.False(await restarted.Mails.AnyAsync(mail => mail.Id == mailId));
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_PendingMoveWithoutRebind_LeavesSourceUidUntouched()
+    {
+        await using var db = CreateDb();
+        var (accountId, sourceId, mailId) = await SeedAsync(db);
+        var trashId = Guid.NewGuid();
+        db.MailFolders.Add(new MailFolder { Id = trashId, MailAccountId = accountId, Name = "Trash", FullName = "Trash", FolderType = MailFolderType.Trash, UidValidity = 8 });
+        await db.SaveChangesAsync();
+        var source = new NullDestinationRemote(7);
+        var service = CreateService(db, new FakeMailFolderClient(source));
+        await service.ExecuteAsync(accountId, new(mailId, MailOperationKind.Trash), null, CancellationToken.None);
+
+        var results = await service.ExecuteBulkAsync(accountId, [mailId], MailOperationKind.Delete, null, null, CancellationToken.None);
+
+        Assert.Equal(new BulkMailOperationItemResult(mailId, false, MailOperationError.ReconciliationPending, true), results.Results.Single());
+        Assert.Empty(source.Expunged);
+        var pending = await db.Mails.SingleAsync(mail => mail.Id == mailId);
+        Assert.Equal(sourceId, pending.MailFolderId);
+        Assert.Equal(5u, pending.Uid);
+        Assert.Equal(trashId, pending.ExpectedMailFolderId);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_MoveToCurrentFolder_IsAlreadyAtRequestedNetLocation()
+    {
+        await using var db = CreateDb();
+        var (accountId, sourceId, mailId) = await SeedAsync(db);
+        var remote = new NullDestinationRemote(7);
+
+        var result = await CreateService(db, new FakeMailFolderClient(remote))
+            .ExecuteAsync(accountId, new(mailId, MailOperationKind.Move, sourceId), null, CancellationToken.None);
+
+        Assert.True(result.Success);
+        Assert.Empty(remote.Moved);
+        var mail = await db.Mails.SingleAsync(item => item.Id == mailId);
+        Assert.Equal(sourceId, mail.MailFolderId);
+        Assert.Equal(5u, mail.Uid);
     }
 
     [Fact]
@@ -275,8 +360,8 @@ public sealed class MailOperationServiceTests
         Assert.True(await db.Mails.AnyAsync(x => x.Id == inboxMailId));
     }
 
-    private static MailOperationService CreateService(AppDbContext db, IMailFolderClient folders, FakeSyncScheduler? scheduler = null, FakeFileStorage? storage = null, FakePushNotificationService? push = null) =>
-        new(db, folders, new MailReadService(db, folders, new AuditLogger(db), NullLogger<MailReadService>.Instance), new AuditLogger(db), scheduler ?? new FakeSyncScheduler(), NullLogger<MailOperationService>.Instance, push ?? new FakePushNotificationService(), storage ?? new FakeFileStorage());
+    private static MailOperationService CreateService(AppDbContext db, IMailFolderClient folders, FakeSyncScheduler? scheduler = null, FakeFileStorage? storage = null, FakePushNotificationService? push = null, MailClient.Infrastructure.Sync.InlineFolderSync? inlineSync = null) =>
+        new(db, folders, new MailReadService(db, folders, new AuditLogger(db), NullLogger<MailReadService>.Instance), new AuditLogger(db), scheduler ?? new FakeSyncScheduler(), NullLogger<MailOperationService>.Instance, push ?? new FakePushNotificationService(), storage ?? new FakeFileStorage(), inlineSync ?? TestServices.InlineSync());
 
     /// <summary>Puts the seeded mail into a new folder of <paramref name="type"/> with UIDVALIDITY 8.</summary>
     private static async Task MoveToFolderAsync(AppDbContext db, Guid mailId, MailFolderType type)
@@ -318,6 +403,12 @@ public sealed class MailOperationServiceTests
     }
 
     private sealed class NullDestinationRemote(uint validity) : FakeRemoteMailFolder(validity, new()) { }
+
+    private sealed class CallbackSyncExecutor(Func<Guid, Guid, CancellationToken, Task> sync) : ISyncExecutor
+    {
+        public Task SyncFolderAsync(Guid accountId, Guid folderId, CancellationToken cancellationToken) =>
+            sync(accountId, folderId, cancellationToken);
+    }
 
     private sealed class NotExpungingRemote(uint validity) : FakeRemoteMailFolder(validity, new())
     {

@@ -168,6 +168,45 @@ public sealed class SendServiceTests
         Assert.False(string.IsNullOrWhiteSpace(transport.Message.MessageId));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SendAsync_ReplyDraftSource_PreservesOriginalThreadAfterReplacement(bool retired)
+    {
+        await using var db = CreateDb();
+        var accountId = await SeedAccountAsync(db, saveSentCopy: false);
+        var draftsId = Guid.NewGuid();
+        var trashId = Guid.NewGuid();
+        db.MailFolders.AddRange(
+            new MailFolder { Id = draftsId, MailAccountId = accountId, Name = "Drafts", FullName = "Drafts", FolderType = MailFolderType.Drafts },
+            new MailFolder { Id = trashId, MailAccountId = accountId, Name = "Trash", FullName = "Trash", FolderType = MailFolderType.Trash });
+        var draftId = Guid.NewGuid();
+        db.Mails.Add(new Mail
+        {
+            Id = draftId,
+            MailAccountId = accountId,
+            MailFolderId = retired ? trashId : draftsId,
+            PreviousMailFolderId = retired ? draftsId : null,
+            Draft = false,
+            MessageId = "saved-draft@example.test",
+            InReplyToMessageId = "original@example.test",
+            References = "ancestor@example.test original@example.test"
+        });
+        await db.SaveChangesAsync();
+        var transport = new FakeMailTransport();
+        var command = new SendMailCommand(accountId, ["friend@example.test"], [], [], "Re: Original", null, "Edited reply", [], draftId)
+        {
+            IdempotencyKey = "reply-draft"
+        };
+
+        var result = await CreateService(db, transport).SendAsync(accountId, command, null, CancellationToken.None);
+
+        Assert.True(result.Sent);
+        Assert.Equal("original@example.test", transport.Message!.InReplyTo);
+        Assert.Equal(["ancestor@example.test", "original@example.test"], transport.Message.References);
+        Assert.DoesNotContain("saved-draft@example.test", transport.Message.References);
+    }
+
     [Fact]
     public async Task SendAsync_ReplySourceFromAnotherAccount_IsRejected()
     {

@@ -15,6 +15,47 @@ namespace MailClient.Tests;
 public sealed class MailReadServiceTests
 {
     [Fact]
+    public async Task GetAsync_ReplyDraft_ExposesGuidSourceSeparatelyFromMimeHeader()
+    {
+        await using var db = CreateDb();
+        var (accountId, folderId, mailId) = await SeedMailAsync(db, isRead: true);
+        var folder = await db.MailFolders.SingleAsync(x => x.Id == folderId);
+        folder.FolderType = MailFolderType.Drafts;
+        var mail = await db.Mails.SingleAsync(x => x.Id == mailId);
+        mail.Draft = false;
+        mail.InReplyToMessageId = "original@example.test";
+        await db.SaveChangesAsync();
+
+        var detail = await CreateService(db, new FakeReadFolder(new FakeRemoteMailFolder(7, new())))
+            .GetAsync(accountId, mailId, CancellationToken.None);
+
+        Assert.Equal(mailId, detail!.ReplySourceMailId);
+        Assert.Equal("original@example.test", detail.InReplyToMessageId);
+    }
+
+    [Fact]
+    public async Task GetAsync_PendingMove_UsesDestinationWithoutRewritingRemoteIdentity()
+    {
+        await using var db = CreateDb();
+        var (accountId, sourceId, mailId) = await SeedMailAsync(db, isRead: true);
+        var destinationId = Guid.NewGuid();
+        db.MailFolders.Add(new MailFolder { Id = destinationId, MailAccountId = accountId, Name = "Trash", FullName = "Trash", FolderType = MailFolderType.Trash });
+        var mail = await db.Mails.SingleAsync(x => x.Id == mailId);
+        var originalUid = mail.Uid;
+        mail.ExpectedMailFolderId = destinationId;
+        mail.ReconciliationState = MailReconciliationState.Pending;
+        await db.SaveChangesAsync();
+
+        var detail = await CreateService(db, new FakeReadFolder(new FakeRemoteMailFolder(7, new())))
+            .GetAsync(accountId, mailId, CancellationToken.None);
+
+        Assert.Equal(destinationId, detail!.FolderId);
+        Assert.True(detail.ReconciliationPending);
+        Assert.Equal(sourceId, mail.MailFolderId);
+        Assert.Equal(originalUid, mail.Uid);
+    }
+
+    [Fact]
     public async Task GetAsync_ReturnsNullForDifferentAccount()
     {
         await using var db = CreateDb();
