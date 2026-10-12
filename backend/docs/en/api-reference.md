@@ -179,6 +179,8 @@ treated as UTC. `labelId` only matches labels owned by the authenticated
 account.
 
 `total` counts every match in the account's cached mail, independent of the page size. Mails whose server move is awaiting reconciliation (see bulk operations) are matched and listed in their destination folder, with `reconciliationPending: true`.
+If the cached count is zero, the empty page returns without a second database
+query; normalized pagination metadata is unchanged.
 
 `/api/search/remote` accepts the same search filters except pagination; at
 least one of `q`, `from`, `to` must be non-blank. The response
@@ -187,6 +189,9 @@ and whether the request covered the entire scope. Each call imports at most
 25 messages with a 20-second deadline; retry if `complete` is false.
 `hasAttachment` is applied by the subsequent cached search, not by IMAP.
 Foreign folder IDs return 404.
+Folders with no IMAP matches skip local UID lookups. For matching folders, only
+the returned UIDs are checked against committed mail and skipped UIDs; UIDVALIDITY,
+folder/import ordering, cancellation and progress reporting are unchanged.
 
 ### Drafts
 

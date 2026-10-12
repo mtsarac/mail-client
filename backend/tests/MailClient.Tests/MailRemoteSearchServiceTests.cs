@@ -20,6 +20,89 @@ namespace MailClient.Tests;
 public sealed class MailRemoteSearchServiceTests
 {
     [Fact]
+    public async Task SearchCore_EmptyFolder_DoesNotPreventImportFromNextFolder()
+    {
+        await using var db = CreateDb();
+        var (accountId, folderId) = await SeedFolderAsync(db);
+        var nextFolder = new MailClient.Domain.Entities.MailFolder
+        {
+            Id = Guid.NewGuid(),
+            MailAccountId = accountId,
+            Name = "Archive",
+            FullName = "Archive",
+            FolderType = MailFolderType.Archive,
+            IsAvailable = true
+        };
+        db.MailFolders.Add(nextFolder);
+        await db.SaveChangesAsync();
+        var first = await db.MailFolders.AsNoTracking().SingleAsync(folder => folder.Id == folderId);
+        var empty = new FakeRemoteMailFolder(7, new()) { SearchResult = [] };
+        var match = new FakeRemoteMailFolder(7, new() { [3] = () => SimpleMessage("match") });
+        var service = CreateService(db);
+        var progress = new MailRemoteSearchService.SearchProgress();
+
+        await service.SearchAndImportCoreAsync(accountId, [first, nextFolder], SearchQuery.All, progress,
+            (name, _) => Task.FromResult<MailClient.Infrastructure.Email.IRemoteMailFolder>(name == first.FullName ? empty : match),
+            CancellationToken.None);
+
+        Assert.Equal(1, progress.Matched);
+        Assert.Equal(1, progress.Imported);
+        Assert.True(progress.Complete);
+        Assert.Equal(nextFolder.Id, (await db.Mails.SingleAsync()).MailFolderId);
+    }
+
+    [Fact]
+    public async Task SearchCore_EmptyResults_StillHonorsCancellation()
+    {
+        await using var db = CreateDb();
+        var (accountId, folderId) = await SeedFolderAsync(db);
+        var remote = new FakeRemoteMailFolder(7, new());
+        var service = CreateService(db);
+        var progress = new MailRemoteSearchService.SearchProgress();
+        var folders = await db.MailFolders.AsNoTracking().Where(folder => folder.Id == folderId).ToListAsync();
+        using var cancellation = new CancellationTokenSource();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            service.SearchAndImportCoreAsync(accountId, folders, SearchQuery.All, progress, (_, _) =>
+            {
+                cancellation.Cancel();
+                return Task.FromResult<MailClient.Infrastructure.Email.IRemoteMailFolder>(remote);
+            }, cancellation.Token));
+
+        Assert.False(progress.Complete);
+        Assert.Equal(0, progress.Matched);
+        Assert.Equal(0, progress.Imported);
+    }
+
+    [Fact]
+    public async Task SearchCore_ChangedUidValidity_DoesNotExcludeStaleCommittedOrSkippedUids()
+    {
+        await using var db = CreateDb();
+        var (accountId, folderId) = await SeedFolderAsync(db);
+        var original = new FakeRemoteMailFolder(7, new() { [1] = () => SimpleMessage("old") });
+        await SyncAsync(db, accountId, folderId, original, [new UniqueId(1)]);
+        db.SyncSkippedUids.Add(new SyncSkippedUid { Id = Guid.NewGuid(), MailAccountId = accountId, MailFolderId = folderId, Uid = 2, Reason = "old validity" });
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+        var remote = new FakeRemoteMailFolder(8, new()
+        {
+            [1] = () => SimpleMessage("new first"),
+            [2] = () => SimpleMessage("new second")
+        });
+        var service = CreateService(db);
+        var progress = new MailRemoteSearchService.SearchProgress();
+        var folders = await db.MailFolders.AsNoTracking().Where(folder => folder.Id == folderId).ToListAsync();
+
+        await service.SearchAndImportCoreAsync(accountId, folders, SearchQuery.All, progress,
+            (_, _) => Task.FromResult<MailClient.Infrastructure.Email.IRemoteMailFolder>(remote), CancellationToken.None);
+
+        Assert.Equal(2, progress.Matched);
+        Assert.Equal(0, progress.Imported);
+        Assert.Equal("old", (await db.Mails.SingleAsync()).Subject);
+        Assert.Equal(7u, (await db.SyncStates.SingleAsync()).UidValidity);
+    }
+
+    [Fact]
     public async Task SearchCore_ImportsOnlyNewestTwentyFiveMatches_AndReportsRemaining()
     {
         await using var db = CreateDb();
