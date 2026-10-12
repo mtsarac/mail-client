@@ -178,6 +178,8 @@ adresi veya adında büyük/küçük harf duyarsız "içerir"; `fromDate`/`toDat
 alınma zamanına göre filtreler, `fromDate` dahil, `toDate` hariç; UTC ofseti
 olmayan değerler UTC kabul edilir. `labelId` yalnızca oturum açan hesabın
 sahip olduğu etiketlerle eşleşir.
+Önbellekte eşleşme sayısı sıfırsa ikinci veritabanı sorgusu yapılmadan boş sayfa
+döner; normalleştirilmiş sayfalama alanları değişmez.
 
 `/api/search/remote` sayfalama hariç aynı arama filtrelerini kabul eder;
 `q`, `from`, `to` alanlarından en az biri dolu olmalıdır. Yanıt
@@ -186,6 +188,9 @@ ve kapsamın tamamen taranıp taranmadığını bildirir. İstek başına en faz
 25 mail, 20 saniyelik süre sınırı; `complete: false` için tekrar deneyin.
 `hasAttachment` IMAP yerine sonraki önbellek aramasında uygulanır.
 Başka hesaba ait klasör id'si 404 döner.
+IMAP eşleşmesi olmayan klasörlerde yerel UID sorguları atlanır. Eşleşen klasörlerde
+yalnızca dönen UID'ler içeri alınmış ve atlanmış UID kayıtlarıyla karşılaştırılır;
+UIDVALIDITY, klasör/içeri alma sırası, iptal ve ilerleme sözleşmesi değişmez.
 
 ### Drafts
 

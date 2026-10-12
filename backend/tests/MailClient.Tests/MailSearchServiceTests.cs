@@ -12,6 +12,27 @@ namespace MailClient.Tests;
 
 public sealed class MailSearchServiceTests
 {
+    [Theory]
+    [InlineData(-1, 0, 1, 50)]
+    [InlineData(4, 200, 4, 100)]
+    public async Task Search_NoMatches_PreservesNormalizedPaging(int page, int pageSize, int expectedPage, int expectedPageSize)
+    {
+        await using var db = CreateDb();
+        var accountId = Guid.NewGuid();
+        db.Mails.Add(Message(accountId, Guid.NewGuid(), 1));
+        await db.SaveChangesAsync();
+        var service = new MailSearchService(db, FixedRuntimeSettingsStore.Operation());
+
+        var result = await service.SearchAsync(accountId,
+            new MailSearchRequest("missing", null, null, null, null, null, null, null, null, null, page, pageSize),
+            CancellationToken.None);
+
+        Assert.Empty(result.Items);
+        Assert.Equal(0, result.Total);
+        Assert.Equal(expectedPage, result.Page);
+        Assert.Equal(expectedPageSize, result.PageSize);
+    }
+
     [Fact]
     public async Task Search_PendingMove_AppearsOnlyInDestinationWithPendingMarker()
     {

@@ -104,6 +104,11 @@ public sealed class MailSearchService(AppDbContext db, RuntimeOperationSettings 
         }
 
         var total = await query.CountAsync(cancellationToken);
+        if (total == 0)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return new([], page, pageSize, total);
+        }
         var ordered = useTs
             ? query.OrderByDescending(mail => mail.ReceivedAt)
                 .ThenByDescending(mail => EF.Property<NpgsqlTsVector>(mail, "SearchVector").Rank(EF.Functions.WebSearchToTsQuery("simple", queryText!)))

@@ -127,9 +127,13 @@ public sealed class MailRemoteSearchService
             cancellationToken.ThrowIfCancellationRequested();
             var remote = await openFolder(folder.FullName, cancellationToken);
             var results = await remote.SearchAsync(query, cancellationToken);
-            var uids = results.OrderByDescending(uid => uid.Id).ToList();
+            cancellationToken.ThrowIfCancellationRequested();
+            if (results.Count == 0)
+                continue;
+            var matchedUids = results.Select(uid => uid.Id).ToArray();
             var committed = (await _db.Mails.AsNoTracking()
-                .Where(mail => mail.MailFolderId == folder.Id && mail.UidValidity == remote.UidValidity)
+                .Where(mail => mail.MailFolderId == folder.Id && mail.UidValidity == remote.UidValidity
+                    && matchedUids.Contains(mail.Uid))
                 .Select(mail => mail.Uid)
                 .ToListAsync(cancellationToken)).ToHashSet();
             var currentValidity = await _db.SyncStates.AsNoTracking()
@@ -138,11 +142,12 @@ public sealed class MailRemoteSearchService
                 .SingleOrDefaultAsync(cancellationToken);
             var skipped = currentValidity == remote.UidValidity
                 ? (await _db.SyncSkippedUids.AsNoTracking()
-                    .Where(skip => skip.MailFolderId == folder.Id)
+                    .Where(skip => skip.MailFolderId == folder.Id && matchedUids.Contains(skip.Uid))
                     .Select(skip => skip.Uid)
                     .ToListAsync(cancellationToken)).ToHashSet()
                 : [];
-            var pending = uids.Where(uid => !committed.Contains(uid.Id) && !skipped.Contains(uid.Id)).ToList();
+            var pending = results.Where(uid => !committed.Contains(uid.Id) && !skipped.Contains(uid.Id))
+                .OrderByDescending(uid => uid.Id).ToList();
             progress.Matched += pending.Count;
             matches.Add(new FolderMatches(folder, remote, pending));
         }

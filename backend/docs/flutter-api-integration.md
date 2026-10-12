@@ -483,6 +483,7 @@ Yalnızca sunucudaki önbellekli maillerde metin + filtreli arama; tüm filtrele
 - Aranabilir alanlar: konu, düz metin gövde, gönderen adresi/adı, alıcı adresi, Message-ID, katılımcı adresleri/adları ve ek dosya adları. `BodyHtml` şifreli olsa da `BodyText` arama/önizleme için okunabilir tutulur; veritabanı/disk şifrelemesiyle korunmalıdır.
 - PostgreSQL'de mevcut açık web-search sözdizimi korunur: çift tırnaklı ifade, ayrı `OR` terimi veya `-terim` içeren sorgu eski `websearch_to_tsquery` yolunu kullanır. Bu özel yol kelime/ifade eşleştirir; yerel önbellek, diğer veritabanları ve IMAP için yeni bir operatör dili eklenmez.
 - Normal aramayı hızlandırmak için `pg_trgm`, yukarıdaki alt dize sorgularındaki `lower(column)` ifadelerine GIN indeksleri sağlar (altı mail alanı, iki katılımcı alanı, ek dosya adı). Mevcut tam-metin GIN indeksi operatörlü sorgular için kalır. Dokuz ek indeks depolama ve senkronizasyon/yazma maliyetini artırır; kurulumda `pg_trgm` oluşturma yetkisi gerekir. Üç karakterden kısa veya trigram üretmeyen terimler yine doğrudur ancak seçici indeks erişimi yerine tarama gerektirebilir. Filtreler ve toplam sayı hesaplaması sayfalamadan önce uygulanır.
+- Toplam eşleşme sıfırsa boş sayfa için ikinci veritabanı sorgusu çalışmaz; `page`, `pageSize` ve `total` sözleşmesi değişmez.
 
 - `from`: gönderen adresi ya da görünen adında büyük/küçük harf duyarsız "içerir" araması.
 - `to`: herhangi bir To/Cc/Bcc alıcısının adresi ya da adında büyük/küçük harf duyarsız "içerir" araması.
@@ -495,6 +496,8 @@ Yalnızca sunucudaki önbellekli maillerde metin + filtreli arama; tüm filtrele
 Kullanıcının başlattığı IMAP SEARCH: `q`, `folderId`, `conversationId`, `from`, `to`, `fromDate`, `toDate`, `isRead`, `flagged`, `hasAttachment`, `labelId` filtrelerini alır (`page`/`pageSize` yok). `q`, `from` veya `to` alanlarından en az biri dolu olmalıdır. Generic IMAP aramasıyla eşleşen ancak henüz backend indeksinde olmayan mailleri sınırlı sayıda içeri aktarır; çağrıdan sonra sonuçları görmek için tekrar `GET /api/search` çağırın. `hasAttachment`, `labelId` ve `conversationId` uzaktan IMAP filtresi değildir; etiket ve konuşma yalnızca indekslenmiş maillere uygulanır.
 
 Normal `q` terimleri ayrı IMAP `TEXT` alt dize ölçütleri olarak AND'lenir; operatör yorumlaması eklenmez. Önceki içeri alma bütçesi, süre sınırı ve `complete`/`remaining` sözleşmesi değişmez. IMAP eşleştirme ayrıntıları sunucuya bağlıdır ve backend'in aranabilir alanlarından daha geniş MIME metnini tarayabilir; görünen sonuçlar yeniden `GET /api/search` filtresinden geçer.
+IMAP eşleşmesi olmayan klasörlerde yerel UID sorguları atlanır; eşleşen klasörlerde yalnızca IMAP'in döndürdüğü UID'ler veritabanında kontrol edilir. UIDVALIDITY denetimleri, klasör ve içeri alma sırası, iptal ve ilerleme davranışı korunur.
+
 
 ```json
 {"matched": 3, "imported": 2, "remaining": 1, "complete": false}
